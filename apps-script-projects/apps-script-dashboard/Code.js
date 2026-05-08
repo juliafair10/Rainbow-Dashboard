@@ -1,17 +1,3 @@
-/***************************************
- * CENTRAL AUTOMATION DASHBOARD - V2 (CORRECTED - WEB APP VERSION)
- *
- * This dashboard coordinates automation web apps
- * and logs their execution results.
- *
- * EXPECTED AUTOMATION RESPONSE FORMAT:
- * {
- *   status: 'Success' | 'Error',
- *   message: string (human-readable result),
- *   result: any (optional automation-specific data)
- * }
- ***************************************/
-
 const DASHBOARD_CONFIG = {
   dashboardTitle: 'Automation Dashboard',
   logSpreadsheetName: 'Automation Run Log',
