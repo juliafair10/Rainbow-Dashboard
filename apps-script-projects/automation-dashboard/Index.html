@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card-bg: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --success: #15803d;
+      --error: #b91c1c;
+      --not-run: #6b7280;
+      --button: #2563eb;
+      --button-hover: #1d4ed8;
+      --button-disabled: #93c5fd;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .title {
+      font-size: 28px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .secondary-button {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .secondary-button:hover {
+      background: #f9fafb;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .automation-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+    }
+
+    .category {
+      display: inline-block;
+      font-size: 12px;
+      color: #374151;
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      border-radius: 999px;
+      padding: 4px 9px;
+    }
+
+    .status {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 5px 9px;
+      white-space: nowrap;
+    }
+
+    .status-success {
+      color: var(--success);
+      background: #dcfce7;
+    }
+
+    .status-error {
+      color: var(--error);
+      background: #fee2e2;
+    }
+
+    .status-not-run {
+      color: var(--not-run);
+      background: #f3f4f6;
+    }
+
+    .details {
+      border-top: 1px solid var(--border);
+      margin-top: 14px;
+      padding-top: 14px;
+    }
+
+    .row {
+      margin-bottom: 10px;
+    }
+
+    .label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+
+    .value {
+      font-size: 14px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .message {
+      background: #f9fafb;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      min-height: 38px;
+    }
+
+    .actions {
+      margin-top: 16px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .run-button {
+      background: var(--button);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 96px;
+    }
+
+    .run-button:hover {
+      background: var(--button-hover);
+    }
+
+    .run-button:disabled {
+      background: var(--button-disabled);
+      cursor: not-allowed;
+    }
+
+    .loading {
+      font-size: 13px;
+      color: var(--muted);
+      display: none;
+    }
+
+    .notice {
+      display: none;
+      margin-bottom: 18px;
+      border-radius: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .notice.error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .notice.success {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+
+    <div class="header">
+      <div>
+        <h1 class="title">Automation Dashboard</h1>
+        <p class="subtitle">
+          Run automations, monitor status, and review logs.
+        </p>
+      </div>
+
+      <div class="toolbar">
+        <button class="secondary-button" onclick="refreshDashboard()">
+          Refresh
+        </button>
+
+        <button class="secondary-button" onclick="openRunLog()">
+          Open Run Log
+        </button>
+      </div>
+    </div>
+
+    <div id="notice" class="notice"></div>
+
+    <div id="automationGrid" class="grid"></div>
+
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      refreshDashboard();
+    });
+
+    function refreshDashboard() {
+      google.script.run
+        .withSuccessHandler(renderDashboard)
+        .getDashboardData();
+    }
+
+    function renderDashboard(data) {
+      const grid = document.getElementById('automationGrid');
+      grid.innerHTML = '';
+
+      data.automations.forEach(function (automation) {
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        card.innerHTML = `
+          <div class="card-top">
+            <div>
+              <div class="automation-name">${automation.name}</div>
+              <div class="category">${automation.category}</div>
+            </div>
+
+            <div class="${getStatusClass(automation.lastStatus)}">
+              ${automation.lastStatus}
+            </div>
+          </div>
+
+          <div class="details">
+
+            <div class="row">
+              <span class="label">Main Function</span>
+              <div class="value">${automation.mainFunction}</div>
+            </div>
+
+            <div class="row">
+              <span class="label">Last Run</span>
+              <div class="value">
+                ${automation.lastRunTime || 'Never'}
+              </div>
+            </div>
+
+            <div class="row">
+              <span class="label">Last Result</span>
+              <div class="message">
+                ${automation.lastMessage || 'No runs yet'}
+              </div>
+            </div>
+
+          </div>
+
+          <div class="actions">
+            <span id="loading-${automation.id}" class="loading">
+              Running...
+            </span>
+
+            <button
+              id="button-${automation.id}"
+              class="run-button"
+              onclick="runAutomation('${automation.id}')">
+              Run
+            </button>
+          </div>
+        `;
+
+        grid.appendChild(card);
+      });
+    }
+
+    function runAutomation(id) {
+      const button = document.getElementById('button-' + id);
+      const loading = document.getElementById('loading-' + id);
+
+      button.disabled = true;
+      loading.style.display = 'inline';
+
+      google.script.run
+        .withSuccessHandler(function () {
+          refreshDashboard();
+          button.disabled = false;
+          loading.style.display = 'none';
+        })
+        .withFailureHandler(function (err) {
+          alert(err.message || err);
+          button.disabled = false;
+          loading.style.display = 'none';
+        })
+        .runAutomation(id);
+    }
+
+    function openRunLog() {
+      google.script.run
+        .withSuccessHandler(function (url) {
+          window.open(url, '_blank');
+        })
+        .getRunLogUrl();
+    }
+
+    function getStatusClass(status) {
+      if (status === 'Success') {
+        return 'status status-success';
+      }
+
+      if (status === 'Error') {
+        return 'status status-error';
+      }
+
+      return 'status status-not-run';
+    }
+  </script>
+</body>
+</html>
