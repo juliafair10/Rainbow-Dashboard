@@ -1,13 +1,15 @@
 /***************************************
  * INSURANCE INTAKE AUTOMATION
  *
- * Dashboard-compatible web app automation.
+ * Dashboard-compatible standalone web app automation.
  ***************************************/
 
 const CONFIG = {
   gmailQuery: 'label:intake-insurance-assignment -label:intake-processed',
   processedLabel: 'intake-processed',
-  automationName: 'Insurance Intake Automation'
+  errorLabel: 'intake-error',
+  automationName: 'Insurance Intake Automation',
+  maxThreadsPerRun: 10
 };
 
 function doGet(e) {
@@ -21,14 +23,15 @@ function doGet(e) {
     status: 'Success',
     message: CONFIG.automationName + ' web app is live.',
     result: {
-      availableActions: ['process']
+      availableActions: ['process'],
+      query: CONFIG.gmailQuery
     }
   });
 }
 
 function processInsuranceIntake() {
   try {
-    const threads = GmailApp.search(CONFIG.gmailQuery, 0, 10);
+    const threads = GmailApp.search(CONFIG.gmailQuery, 0, CONFIG.maxThreadsPerRun);
 
     return {
       status: 'Success',
