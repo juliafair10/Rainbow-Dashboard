@@ -31,10 +31,16 @@ const DASHBOARD_CONFIG = {
       category: 'Calendar / Gmail',
       mainFunction: 'processEmailsToCalendar',
       webAppUrl: 'https://script.google.com/macros/s/AKfycbxXVe8Lg1d7Da0RdR5nJujatv2bg4hkP8OjJrktzyDlB5L30QJnk4JU9ZDzPJD5CkudJA/exec'
+    },
+    {
+      id: 'insurance-intake-automation',
+      name: 'Insurance Intake Automation',
+      category: 'Insurance / Gmail / Todoist',
+      mainFunction: 'processInsuranceIntake',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbygF8irxcjBoVFkryt8ZRIgAw1uQ_dF2hmpWPThx-RvA4I2Tjm9hD1aMnV6tlx9f5EMNQ/exec?action=process'
     }
   ]
 };
-
 const STATUS = {
   SUCCESS: 'Success',
   ERROR: 'Error',
