@@ -23,21 +23,21 @@ const DASHBOARD_CONFIG = {
       name: 'Claim Folder Automation',
       category: 'Claims / Gmail',
       mainFunction: 'processGmailLabels',
-      webAppUrl: 'https://script.google.com/macros/s/AKfycbxU3gezv9qcXA7LiNP5e7KD2pOvSaW5cAG4Jjk1nY-Uy8LE5Bibdclef2pSE1cHPndoyw/exec'
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbxU3gezv9qcXA7LiNP5e7KD2pOvSaW5cAG4Jjk1nY-Uy8LE5Bibdclef2pSE1cHPndoyw/exec'
     },
     {
       id: 'add-new-job-to-calendar',
       name: 'Add New Job to Calendar',
       category: 'Calendar / Gmail',
       mainFunction: 'processEmailsToCalendar',
-      webAppUrl: 'https://script.google.com/macros/s/AKfycbxXVe8Lg1d7Da0RdR5nJujatv2bg4hkP8OjJrktzyDlB5L30QJnk4JU9ZDzPJD5CkudJA/exec'
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbxXVe8Lg1d7Da0RdR5nJujatv2bg4hkP8OjJrktzyDlB5L30QJnk4JU9ZDzPJD5CkudJA/exec'
     },
     {
       id: 'insurance-intake-automation',
       name: 'Insurance Intake Automation',
       category: 'Insurance / Gmail / Todoist',
       mainFunction: 'processInsuranceIntake',
-      webAppUrl: 'https://script.google.com/macros/s/AKfycbygF8irxcjBoVFkryt8ZRIgAw1uQ_dF2hmpWPThx-RvA4I2Tjm9hD1aMnV6tlx9f5EMNQ/exec?action=process'
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbygF8irxcjBoVFkryt8ZRIgAw1uQ_dF2hmpWPThx-RvA4I2Tjm9hD1aMnV6tlx9f5EMNQ/exec'
     }
   ]
 };
