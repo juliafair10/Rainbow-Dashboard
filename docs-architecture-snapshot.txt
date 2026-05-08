@@ -1,0 +1,14 @@
+.
+├── apps-script-projects
+│   ├── add-new-job-to-calendar
+│   ├── apps-script-dashboard
+│   ├── automation-dashboard
+│   ├── eoj-builder
+│   ├── new-jobs
+│   ├── rbw-utils
+│   └── test-dashboard
+├── backups
+│   └── apps-script-projects-initial-backup
+└── docs-architecture-snapshot.txt
+
+11 directories, 1 file
