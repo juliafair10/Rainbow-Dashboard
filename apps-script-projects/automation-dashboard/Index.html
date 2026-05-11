@@ -72,6 +72,41 @@
       background: #f9fafb;
     }
 
+    .section-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 20px 0;
+      padding: 8px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+    }
+
+    .section-nav-button {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 8px 11px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .section-nav-button:hover {
+      background: #f8fafc;
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .section-nav-button.primary {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -897,6 +932,24 @@
 
     <div id="notice" class="notice"></div>
 
+    <div class="section-nav" aria-label="Dashboard section navigation">
+      <button class="section-nav-button primary" onclick="scrollToDashboardArea('focusWorkflow')">
+        Focus
+      </button>
+      <button class="section-nav-button" onclick="scrollToDashboardArea('operationsSummary')">
+        Operations
+      </button>
+      <button class="section-nav-button" onclick="scrollToDashboardArea('section-automations')">
+        Automations
+      </button>
+      <button class="section-nav-button" onclick="scrollToDashboardArea('section-reports')">
+        Reports
+      </button>
+      <button class="section-nav-button" onclick="scrollToDashboardArea('workflowSidebar')">
+        Planned
+      </button>
+    </div>
+
     <div class="workspace-layout">
 
       <div class="workspace-main">
@@ -1127,6 +1180,19 @@
     function selectFocusWorkflow(id) {
       selectedFocusWorkflowId = id;
       refreshDashboard();
+    }
+
+    function scrollToDashboardArea(id) {
+      const element = document.getElementById(id);
+
+      if (!element) {
+        return;
+      }
+
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
     }
 
     function renderDashboardSections(data) {
