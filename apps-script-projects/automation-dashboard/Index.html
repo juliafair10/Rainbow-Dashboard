@@ -1256,6 +1256,7 @@
       }
 
       const healthClass = getFocusWorkflowHealthClass(getAutomationStatus(primaryWorkflow));
+      const focusMetrics = buildFocusWorkflowMetrics(primaryWorkflow, data);
 
       container.innerHTML = `
         <div class="focus-workflow-card ${healthClass}">
@@ -1274,9 +1275,9 @@
           </div>
 
           <div class="focus-workflow-metrics">
-            ${buildFocusMetric('Last Run', getAutomationLastRunTime(primaryWorkflow) ? formatDisplayDateTime(getAutomationLastRunTime(primaryWorkflow)) : 'Never')}
-            ${buildFocusMetric('Workflow Status', getAutomationStatus(primaryWorkflow))}
-            ${buildFocusMetric('Category', primaryWorkflow.category || 'Workflow')}
+            ${focusMetrics.map(function(metric) {
+              return buildFocusMetric(metric.label, metric.value);
+            }).join('')}
           </div>
 
           <div class="focus-workflow-actions">
@@ -1296,6 +1297,107 @@
           ${buildFocusWorkflowContext(primaryWorkflow)}
         </div>
       `;
+    }
+
+    function buildFocusWorkflowMetrics(workflow, data) {
+      const queueHealth = getRelatedQueueHealthForWorkflow(workflow, data);
+      const lastRun = getAutomationLastRunTime(workflow)
+        ? formatDisplayDateTime(getAutomationLastRunTime(workflow))
+        : 'Never';
+
+      if (!queueHealth) {
+        return [
+          {
+            label: 'Last Run',
+            value: lastRun
+          },
+          {
+            label: 'Workflow Status',
+            value: getAutomationStatus(workflow)
+          },
+          {
+            label: 'Category',
+            value: workflow.category || 'Workflow'
+          }
+        ];
+      }
+
+      return [
+        {
+          label: 'Last Run',
+          value: lastRun
+        },
+        {
+          label: 'Queue Health',
+          value: queueHealth.health || 'Unknown'
+        },
+        {
+          label: 'Pending Folders',
+          value: queueHealth.pendingClaimFolderCount || 0
+        },
+        {
+          label: 'Retry Ready',
+          value: queueHealth.retryReadyCount || 0
+        }
+      ];
+    }
+
+    function getRelatedQueueHealthForWorkflow(workflow, data) {
+      const operationsSummary = data && data.operationsSummary
+        ? data.operationsSummary
+        : null;
+      const queueHealth = operationsSummary && operationsSummary.queueHealth
+        ? operationsSummary.queueHealth
+        : null;
+      const workflows = queueHealth && queueHealth.workflows
+        ? queueHealth.workflows
+        : null;
+
+      if (!workflows) {
+        return null;
+      }
+
+      const workflowText = [
+        workflow.id,
+        workflow.name,
+        workflow.category,
+        workflow.action
+      ].join(' ').toLowerCase();
+
+      if (workflowText.indexOf('asbestos') !== -1) {
+        return findQueueHealthWorkflow(workflows, 'asbestos');
+      }
+
+      if (workflowText.indexOf('itel') !== -1) {
+        return findQueueHealthWorkflow(workflows, 'itel');
+      }
+
+      if (workflowText.indexOf('insurance') !== -1) {
+        return findQueueHealthWorkflow(workflows, 'insurance');
+      }
+
+      return null;
+    }
+
+    function findQueueHealthWorkflow(workflows, keyword) {
+      const workflowKeys = Object.keys(workflows || {});
+
+      for (let index = 0; index < workflowKeys.length; index++) {
+        const key = workflowKeys[index];
+        const workflow = workflows[key] || {};
+        const workflowText = [
+          key,
+          workflow.name,
+          workflow.workflow,
+          workflow.id
+        ].join(' ').toLowerCase();
+
+        if (workflowText.indexOf(keyword) !== -1) {
+          return workflow;
+        }
+      }
+
+      return null;
     }
 
     function buildFocusWorkflowContext(workflow) {
@@ -1812,9 +1914,10 @@
       const queueHealthHtml = summary.queueHealth
         ? buildQueueHealthHtml(summary.queueHealth)
         : '';
+      const operationsSummaryCollapsed = getStoredOperationsSummaryCollapsedState(true);
 
       container.innerHTML = `
-        <div class="operations-summary collapsed">
+        <div class="operations-summary ${operationsSummaryCollapsed ? 'collapsed' : ''}">
           <div class="operations-summary-top">
             <div>
               <h2 class="operations-summary-title">
@@ -1832,7 +1935,7 @@
               <button
                 class="section-toggle-button"
                 onclick="toggleOperationsSummary(this)">
-                Show
+                ${operationsSummaryCollapsed ? 'Show' : 'Hide'}
               </button>
             </div>
           </div>
@@ -2054,6 +2157,50 @@
       }
     }
 
+    function getStoredOperationsSummaryCollapsedState(defaultValue) {
+      const storageKey = 'rainbowDashboard.operationsSummary.collapsed';
+
+      try {
+        const storedValue = localStorage.getItem(storageKey);
+
+        if (storedValue !== null) {
+          return storedValue === 'true';
+        }
+      } catch (error) {
+        // Continue to window.name fallback below.
+      }
+
+      try {
+        const windowState = parseJsonSafe(window.name || '{}') || {};
+
+        if (Object.prototype.hasOwnProperty.call(windowState, storageKey)) {
+          return windowState[storageKey] === true;
+        }
+      } catch (error) {
+        // Continue to default below.
+      }
+
+      return defaultValue;
+    }
+
+    function setStoredOperationsSummaryCollapsedState(isCollapsed) {
+      const storageKey = 'rainbowDashboard.operationsSummary.collapsed';
+
+      try {
+        localStorage.setItem(storageKey, String(isCollapsed));
+      } catch (error) {
+        // Continue to window.name fallback below.
+      }
+
+      try {
+        const windowState = parseJsonSafe(window.name || '{}') || {};
+        windowState[storageKey] = Boolean(isCollapsed);
+        window.name = JSON.stringify(windowState);
+      } catch (error) {
+        // Ignore storage failures so the dashboard can still render.
+      }
+    }
+
     function toggleOperationsSummary(button) {
       const panel = button.closest('.operations-summary');
 
@@ -2066,9 +2213,11 @@
       if (collapsed) {
         panel.classList.remove('collapsed');
         button.textContent = 'Hide';
+        setStoredOperationsSummaryCollapsedState(false);
       } else {
         panel.classList.add('collapsed');
         button.textContent = 'Show';
+        setStoredOperationsSummaryCollapsedState(true);
       }
     }
 
