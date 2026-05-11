@@ -146,14 +146,149 @@ function getDashboardData() {
       action: automation.action || 'process',
       lastRunTime: saved.lastRunTime || '',
       lastStatus: saved.lastStatus || STATUS.NOT_RUN,
-      lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.'
+      lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.',
+      lastRawResponse: saved.lastRawResponse || ''
     };
   });
 
   return {
     title: DASHBOARD_CONFIG.dashboardTitle,
-    automations: automations
+    automations: automations,
+    operationsSummary: buildOperationsSummary_(automations)
   };
+}
+
+function buildOperationsSummary_(automations) {
+  const watchedAutomationIds = [
+    'phase-4f-queue-health',
+    'insurance-intake-queue-health',
+    'asbestos-queue-health',
+    'itel-queue-health',
+    'retry-insurance-intake',
+    'retry-asbestos-intake',
+    'retry-itel-intake',
+    'setup-retry-triggers',
+    'delete-retry-triggers'
+  ];
+
+  const watchedAutomations = automations.filter(function(automation) {
+    return watchedAutomationIds.indexOf(automation.id) !== -1;
+  });
+
+  const statusCounts = watchedAutomations.reduce(function(counts, automation) {
+    const status = automation.lastStatus || STATUS.NOT_RUN;
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+
+  const failedAutomations = watchedAutomations.filter(function(automation) {
+    return automation.lastStatus === STATUS.ERROR;
+  });
+
+  const lastRunTimes = watchedAutomations
+    .map(function(automation) {
+      return automation.lastRunTime || '';
+    })
+    .filter(function(lastRunTime) {
+      return lastRunTime !== '';
+    })
+    .sort();
+
+  const queueHealthAutomation = automations.find(function(automation) {
+    return automation.id === 'phase-4f-queue-health';
+  });
+
+  const queueHealthSummary = buildQueueHealthSummaryFromAutomation_(queueHealthAutomation);
+
+  return {
+    title: 'Phase 4F Operations Summary',
+    watchedCount: watchedAutomations.length,
+    successCount: statusCounts[STATUS.SUCCESS] || 0,
+    errorCount: statusCounts[STATUS.ERROR] || 0,
+    notRunCount: statusCounts[STATUS.NOT_RUN] || 0,
+    overallStatus: queueHealthSummary && queueHealthSummary.overallHealth
+      ? normalizeQueueHealthToDashboardStatus_(queueHealthSummary.overallHealth)
+      : (failedAutomations.length > 0 ? STATUS.ERROR : STATUS.SUCCESS),
+    latestRunTime: lastRunTimes.length > 0 ? lastRunTimes[lastRunTimes.length - 1] : '',
+    failedAutomations: failedAutomations.map(function(automation) {
+      return {
+        id: automation.id,
+        name: automation.name,
+        lastMessage: automation.lastMessage
+      };
+    }),
+    watchedAutomationIds: watchedAutomationIds,
+    queueHealth: queueHealthSummary
+  };
+}
+
+function buildQueueHealthSummaryFromAutomation_(automation) {
+  if (!automation || !automation.lastRawResponse) {
+    return null;
+  }
+
+  const parsed = parseAutomationResponse_(automation.lastRawResponse);
+
+  if (!parsed || !parsed.result || !parsed.result.workflows) {
+    return null;
+  }
+
+  const workflows = parsed.result.workflows;
+  const workflowSummaries = {};
+  const totals = {
+    pendingClaimFolderCount: 0,
+    retryReadyCount: 0,
+    retryInProgressCount: 0,
+    retryBlockedCount: 0,
+    retryLimitReachedCount: 0,
+    retryBacklogCount: 0,
+    errorCount: 0,
+    reviewCount: 0
+  };
+
+  Object.keys(workflows).forEach(function(workflowKey) {
+    const workflow = workflows[workflowKey];
+    const metrics = workflow.metrics || {};
+
+    workflowSummaries[workflowKey] = {
+      name: workflow.workflow || workflowKey,
+      health: workflow.health || '',
+      pendingClaimFolderCount: Number(metrics.pendingClaimFolderCount || 0),
+      retryReadyCount: Number(metrics.retryReadyCount || 0),
+      retryInProgressCount: Number(metrics.retryInProgressCount || 0),
+      retryBlockedCount: Number(metrics.retryBlockedCount || 0),
+      retryLimitReachedCount: Number(metrics.retryLimitReachedCount || 0),
+      retryBacklogCount: Number(metrics.retryBacklogCount || 0),
+      errorCount: Number(metrics.errorCount || 0),
+      reviewCount: Number(metrics.reviewCount || 0)
+    };
+
+    totals.pendingClaimFolderCount += workflowSummaries[workflowKey].pendingClaimFolderCount;
+    totals.retryReadyCount += workflowSummaries[workflowKey].retryReadyCount;
+    totals.retryInProgressCount += workflowSummaries[workflowKey].retryInProgressCount;
+    totals.retryBlockedCount += workflowSummaries[workflowKey].retryBlockedCount;
+    totals.retryLimitReachedCount += workflowSummaries[workflowKey].retryLimitReachedCount;
+    totals.retryBacklogCount += workflowSummaries[workflowKey].retryBacklogCount;
+    totals.errorCount += workflowSummaries[workflowKey].errorCount;
+    totals.reviewCount += workflowSummaries[workflowKey].reviewCount;
+  });
+
+  return {
+    overallHealth: parsed.result.overallHealth || '',
+    checkedAt: parsed.result.finishedAt || parsed.result.startedAt || '',
+    totals: totals,
+    workflows: workflowSummaries
+  };
+}
+
+function normalizeQueueHealthToDashboardStatus_(health) {
+  const value = String(health || '').toLowerCase().trim();
+
+  if (value === 'critical') {
+    return STATUS.ERROR;
+  }
+
+  return STATUS.SUCCESS;
 }
 
 function runAutomation(automationId) {
@@ -401,6 +536,7 @@ function saveLatestStatus_(record) {
     properties.setProperty(prefix + 'LAST_RUN_TIME', formatDateTime_(record.endedAt));
     properties.setProperty(prefix + 'LAST_STATUS', record.status);
     properties.setProperty(prefix + 'LAST_MESSAGE', truncate_(record.message, 1000));
+    properties.setProperty(prefix + 'LAST_RAW_RESPONSE', truncate_(record.rawResponse, 20000));
   } catch (err) {
     Logger.log('ERROR: Failed to save status - ' + err.message);
   }
@@ -413,14 +549,16 @@ function getSavedStatus_(automationId, properties) {
     return {
       lastRunTime: properties.getProperty(prefix + 'LAST_RUN_TIME'),
       lastStatus: properties.getProperty(prefix + 'LAST_STATUS'),
-      lastMessage: properties.getProperty(prefix + 'LAST_MESSAGE')
+      lastMessage: properties.getProperty(prefix + 'LAST_MESSAGE'),
+      lastRawResponse: properties.getProperty(prefix + 'LAST_RAW_RESPONSE')
     };
   } catch (err) {
     Logger.log('ERROR: Failed to get saved status - ' + err.message);
     return {
       lastRunTime: null,
       lastStatus: STATUS.NOT_RUN,
-      lastMessage: 'Error loading status'
+      lastMessage: 'Error loading status',
+      lastRawResponse: ''
     };
   }
 }

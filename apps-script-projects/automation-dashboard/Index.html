@@ -221,6 +221,145 @@
       background: #f0fdf4;
       color: #166534;
     }
+
+    .operations-summary {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .operations-summary-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .operations-summary-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .operations-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .metric-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+
+    .metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .failed-list {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .failed-item {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+    }
+
+    .failed-item-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #991b1b;
+      margin-bottom: 4px;
+    }
+
+    .failed-item-message {
+      font-size: 13px;
+      color: #7f1d1d;
+    }
+
+    .queue-health-details {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .queue-health-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .workflow-health-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .workflow-health-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .workflow-health-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .workflow-health-name {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .workflow-mini-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .mini-metric {
+      background: #f9fafb;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .mini-metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .mini-metric-value {
+      font-size: 16px;
+      font-weight: 700;
+    }
   </style>
 </head>
 
@@ -248,6 +387,8 @@
 
     <div id="notice" class="notice"></div>
 
+    <div id="operationsSummary"></div>
+
     <div id="automationGrid" class="grid"></div>
 
   </div>
@@ -267,7 +408,11 @@
       const grid = document.getElementById('automationGrid');
       grid.innerHTML = '';
 
-      data.automations.forEach(function (automation) {
+      renderOperationsSummary(data.operationsSummary);
+
+      data.automations
+        .filter(shouldRenderAutomationCard)
+        .forEach(function (automation) {
         const card = document.createElement('div');
         card.className = 'card';
 
@@ -322,6 +467,187 @@
 
         grid.appendChild(card);
       });
+    }
+
+    function shouldRenderAutomationCard(automation) {
+      const hiddenOperationalSummaryIds = [
+        'phase-4f-queue-health',
+        'insurance-intake-queue-health',
+        'asbestos-queue-health',
+        'itel-queue-health'
+      ];
+
+      return hiddenOperationalSummaryIds.indexOf(automation.id) === -1;
+    }
+
+    function renderOperationsSummary(summary) {
+      const container = document.getElementById('operationsSummary');
+
+      if (!summary) {
+        container.innerHTML = '';
+        return;
+      }
+
+      const failedItemsHtml = summary.failedAutomations.length > 0
+        ? `
+          <div class="failed-list">
+            ${summary.failedAutomations.map(function(item) {
+              return `
+                <div class="failed-item">
+                  <div class="failed-item-name">${item.name}</div>
+                  <div class="failed-item-message">
+                    ${item.lastMessage || 'Unknown error'}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `
+        : '';
+
+      const queueHealthHtml = summary.queueHealth
+        ? buildQueueHealthHtml(summary.queueHealth)
+        : '';
+
+      container.innerHTML = `
+        <div class="operations-summary">
+          <div class="operations-summary-top">
+            <div>
+              <h2 class="operations-summary-title">
+                Operations Center
+              </h2>
+
+              <div class="subtitle">
+                Latest activity:
+                ${summary.latestRunTime || 'No operations runs yet'}
+              </div>
+            </div>
+
+            <div class="${getStatusClass(summary.overallStatus)}">
+              ${summary.overallStatus}
+            </div>
+          </div>
+
+          <div class="operations-metrics">
+            <div class="metric-card">
+              <span class="metric-label">Watched Operations</span>
+              <div class="metric-value">${summary.watchedCount}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Successful</span>
+              <div class="metric-value">${summary.successCount}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Errors</span>
+              <div class="metric-value">${summary.errorCount}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Not Run</span>
+              <div class="metric-value">${summary.notRunCount}</div>
+            </div>
+          </div>
+
+          ${queueHealthHtml}
+
+          ${failedItemsHtml}
+        </div>
+      `;
+    }
+
+    function buildQueueHealthHtml(queueHealth) {
+      const totals = queueHealth.totals || {};
+      const workflows = queueHealth.workflows || {};
+
+      const workflowCardsHtml = Object.keys(workflows).map(function(workflowKey) {
+        const workflow = workflows[workflowKey];
+
+        return `
+          <div class="workflow-health-card">
+            <div class="workflow-health-top">
+              <div class="workflow-health-name">${workflow.name}</div>
+              <div class="${getQueueHealthStatusClass(workflow.health)}">
+                ${workflow.health || 'Unknown'}
+              </div>
+            </div>
+
+            <div class="workflow-mini-metrics">
+              <div class="mini-metric">
+                <span class="mini-metric-label">Pending Folders</span>
+                <div class="mini-metric-value">${workflow.pendingClaimFolderCount || 0}</div>
+              </div>
+
+              <div class="mini-metric">
+                <span class="mini-metric-label">Retry Ready</span>
+                <div class="mini-metric-value">${workflow.retryReadyCount || 0}</div>
+              </div>
+
+              <div class="mini-metric">
+                <span class="mini-metric-label">Retry Limit</span>
+                <div class="mini-metric-value">${workflow.retryLimitReachedCount || 0}</div>
+              </div>
+
+              <div class="mini-metric">
+                <span class="mini-metric-label">Errors</span>
+                <div class="mini-metric-value">${workflow.errorCount || 0}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="queue-health-details">
+          <div class="queue-health-title">
+            Queue Health Snapshot
+          </div>
+
+          <div class="subtitle">
+            Overall queue health: ${queueHealth.overallHealth || 'Unknown'}
+            ${queueHealth.checkedAt ? `• Checked: ${queueHealth.checkedAt}` : ''}
+          </div>
+
+          <div class="operations-metrics">
+            <div class="metric-card">
+              <span class="metric-label">Pending Claim Folders</span>
+              <div class="metric-value">${totals.pendingClaimFolderCount || 0}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Retry Ready</span>
+              <div class="metric-value">${totals.retryReadyCount || 0}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Retry Limit Reached</span>
+              <div class="metric-value">${totals.retryLimitReachedCount || 0}</div>
+            </div>
+
+            <div class="metric-card">
+              <span class="metric-label">Errors / Reviews</span>
+              <div class="metric-value">${(totals.errorCount || 0) + (totals.reviewCount || 0)}</div>
+            </div>
+          </div>
+
+          <div class="workflow-health-grid">
+            ${workflowCardsHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    function getQueueHealthStatusClass(health) {
+      if (health === 'Healthy') {
+        return 'status status-success';
+      }
+
+      if (health === 'Critical') {
+        return 'status status-error';
+      }
+
+      return 'status status-not-run';
     }
 
     function runAutomation(id) {
