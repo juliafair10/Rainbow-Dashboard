@@ -253,6 +253,29 @@
       padding: 4px 9px;
     }
 
+    .capability-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .capability-pill {
+      display: inline-block;
+      font-size: 11px;
+      color: #475569;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+
+    .capability-pill.featured {
+      color: #1d4ed8;
+      background: #eff6ff;
+      border-color: #bfdbfe;
+    }
+
     .status {
       display: inline-block;
       font-size: 12px;
@@ -1043,7 +1066,7 @@
     }
 
     function renderDashboard(data) {
-      const visibleAutomations = (data.automations || []).filter(shouldRenderAutomationCard);
+      const visibleAutomations = getVisibleAutomations(data);
 
       if (!selectedFocusWorkflowId && visibleAutomations.length > 0) {
         selectedFocusWorkflowId = visibleAutomations[0].id;
@@ -1057,7 +1080,7 @@
 
     function renderFocusWorkflow(data) {
       const container = document.getElementById('focusWorkflow');
-      const automations = (data.automations || []).filter(shouldRenderAutomationCard);
+      const automations = getVisibleAutomations(data);
       const primaryWorkflow = automations.find(function(automation) {
         return automation.id === selectedFocusWorkflowId;
       }) || automations[0];
@@ -1108,7 +1131,7 @@
 
     function renderWorkflowSidebar(data) {
       const container = document.getElementById('workflowSidebar');
-      const automations = (data.automations || []).filter(shouldRenderAutomationCard);
+      const automations = getVisibleAutomations(data);
       const placeholders = data.placeholderWorkflows || [];
 
       container.innerHTML = `
@@ -1154,6 +1177,53 @@
               `;
             }).join('')}
           </div>
+        </div>
+      `;
+    }
+
+    function getVisibleAutomations(data) {
+      return (data.automations || [])
+        .filter(shouldRenderAutomationCard)
+        .sort(function(a, b) {
+          if (Boolean(a.featured) !== Boolean(b.featured)) {
+            return a.featured ? -1 : 1;
+          }
+
+          return (a.order || 100) - (b.order || 100);
+        });
+    }
+
+    function buildCapabilityPills(automation) {
+      const capabilities = automation.capabilities || {};
+      const pills = [];
+
+      if (automation.featured) {
+        pills.push('<span class="capability-pill featured">Featured</span>');
+      }
+
+      if (capabilities.retry) {
+        pills.push('<span class="capability-pill">Retry</span>');
+      }
+
+      if (capabilities.inspect) {
+        pills.push('<span class="capability-pill">Inspect</span>');
+      }
+
+      if (capabilities.queueHealth) {
+        pills.push('<span class="capability-pill">Queue Health</span>');
+      }
+
+      if (capabilities.report) {
+        pills.push('<span class="capability-pill">Report</span>');
+      }
+
+      if (pills.length === 0) {
+        return '';
+      }
+
+      return `
+        <div class="capability-row">
+          ${pills.join('')}
         </div>
       `;
     }
@@ -1336,6 +1406,7 @@
             <div>
               <div class="automation-name">${escapeHtml(automation.name)}</div>
               <div class="category">${escapeHtml(automation.category)}</div>
+              ${buildCapabilityPills(automation)}
             </div>
 
             ${buildStatusBadge(automation.lastStatus)}
