@@ -284,11 +284,12 @@ const AUTOMATION_REGISTRY_DEFAULTS = {
   featured: false,
   order: 100,
   capabilities: {
-    process: true,
+    process: false,
     retry: false,
     inspect: false,
     queueHealth: false,
     report: false,
+    system: false,
     placeholder: false
   }
 };
@@ -348,6 +349,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 100,
     capabilities: {
+      process: false,
       queueHealth: true
     }
   },
@@ -356,6 +358,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 110,
     capabilities: {
+      process: false,
       queueHealth: true
     }
   },
@@ -364,6 +367,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 120,
     capabilities: {
+      process: false,
       queueHealth: true
     }
   },
@@ -372,6 +376,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 130,
     capabilities: {
+      process: false,
       queueHealth: true
     }
   },
@@ -380,6 +385,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 200,
     capabilities: {
+      process: false,
       inspect: true
     }
   },
@@ -388,6 +394,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 210,
     capabilities: {
+      process: false,
       inspect: true
     }
   },
@@ -396,6 +403,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 300,
     capabilities: {
+      process: false,
       retry: true
     }
   },
@@ -404,6 +412,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 310,
     capabilities: {
+      process: false,
       retry: true
     }
   },
@@ -412,6 +421,7 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 320,
     capabilities: {
+      process: false,
       retry: true
     }
   },
@@ -420,7 +430,9 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 400,
     capabilities: {
-      retry: true
+      process: false,
+      retry: true,
+      system: true
     }
   },
   'delete-retry-triggers': {
@@ -428,7 +440,9 @@ const AUTOMATION_REGISTRY = {
     featured: false,
     order: 410,
     capabilities: {
-      retry: true
+      process: false,
+      retry: true,
+      system: true
     }
   }
 };
