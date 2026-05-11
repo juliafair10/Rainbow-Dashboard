@@ -422,29 +422,7 @@ function doGet() {
 
 
 function getDashboardData() {
-  const properties = PropertiesService.getScriptProperties();
-
-  const automations = DASHBOARD_CONFIG.automations.map(function (automation) {
-    const saved = getSavedStatus_(automation.id, properties);
-    const registry = buildAutomationRegistryEntry_(automation);
-
-    return {
-      id: automation.id,
-      name: automation.name,
-      category: automation.category,
-      dashboardRole: registry.dashboardRole,
-      section: registry.section,
-      featured: registry.featured,
-      order: registry.order,
-      capabilities: registry.capabilities,
-      mainFunction: automation.mainFunction,
-      action: automation.action || 'process',
-      lastRunTime: saved.lastRunTime || '',
-      lastStatus: saved.lastStatus || STATUS.NOT_RUN,
-      lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.',
-      lastRawResponse: saved.lastRawResponse || ''
-    };
-  });
+  const automations = buildDashboardAutomations_();
 
   return {
     title: DASHBOARD_CONFIG.dashboardTitle,
@@ -1090,6 +1068,13 @@ function testDashboardConfiguration() {
 
   Logger.log('✓ Found ' + DASHBOARD_CONFIG.automations.length + ' automation(s)');
   Logger.log('✓ Found ' + PLACEHOLDER_WORKFLOWS.length + ' placeholder workflow(s)');
+
+  const shellData = getDashboardShellData();
+  const operationsSummary = getOperationsSummaryData();
+
+  Logger.log('✓ Dashboard shell sections: ' + shellData.sections.length);
+  Logger.log('✓ Dashboard shell automations: ' + shellData.automations.length);
+  Logger.log('✓ Operations watched count: ' + operationsSummary.watchedCount);
 
   DASHBOARD_CONFIG.automations.forEach(function(automation) {
     Logger.log('  - ' + automation.name + ' (' + automation.id + ')');
