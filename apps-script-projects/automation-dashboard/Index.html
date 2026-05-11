@@ -1123,13 +1123,13 @@
               </p>
             </div>
 
-            ${buildStatusBadge(primaryWorkflow.lastStatus)}
+            ${buildStatusBadge(getAutomationStatus(primaryWorkflow))}
           </div>
 
           <div class="focus-workflow-metrics">
-            ${buildFocusMetric('Last Run', primaryWorkflow.lastRunTime ? '✓' : '—')}
-            ${buildFocusMetric('Workflow Status', primaryWorkflow.lastStatus || 'Unknown')}
-            ${buildFocusMetric('Category', primaryWorkflow.category || 'Workflow')}
+            ${buildFocusMetric('Last Run', getAutomationLastRunTime(primaryWorkflow) ? '✓' : '—')}
+            ${buildFocusMetric('Workflow Status', getAutomationStatus(primaryWorkflow))}
+            ${buildFocusMetric('Response Type', getAutomationResponseType(primaryWorkflow))}
           </div>
 
           <div class="focus-workflow-actions">
@@ -1170,7 +1170,7 @@
 
                   <div class="sidebar-workflow-meta">
                     ${escapeHtml(automation.category || 'Automation')}<br>
-                    Status: ${escapeHtml(automation.lastStatus || 'Unknown')}
+                    Status: ${escapeHtml(getAutomationStatus(automation))}
                   </div>
                 </div>
               `;
@@ -1308,6 +1308,32 @@
       `;
     }
 
+    function getAutomationResponse(automation) {
+      return automation.normalizedResponse || {
+        status: automation.lastStatus || 'Unknown',
+        message: automation.lastMessage || 'No runs yet',
+        lastRunTime: automation.lastRunTime || '',
+        responseType: 'unknown',
+        metrics: {}
+      };
+    }
+
+    function getAutomationStatus(automation) {
+      return getAutomationResponse(automation).status || automation.lastStatus || 'Unknown';
+    }
+
+    function getAutomationMessage(automation) {
+      return getAutomationResponse(automation).message || automation.lastMessage || 'No runs yet';
+    }
+
+    function getAutomationLastRunTime(automation) {
+      return getAutomationResponse(automation).lastRunTime || automation.lastRunTime || '';
+    }
+
+    function getAutomationResponseType(automation) {
+      return getAutomationResponse(automation).responseType || 'unknown';
+    }
+
     function renderDashboardSections(data) {
       const container = document.getElementById('dashboardSections');
       const sections = data.sections || buildFallbackDashboardSections(data);
@@ -1391,7 +1417,7 @@
               ${buildCapabilityPills(automation)}
             </div>
 
-            ${buildStatusBadge(automation.lastStatus)}
+            ${buildStatusBadge(getAutomationStatus(automation))}
           </div>
 
           <div class="details">
@@ -1404,14 +1430,21 @@
             <div class="row">
               <span class="label">Last Run</span>
               <div class="value">
-                ${escapeHtml(automation.lastRunTime || 'Never')}
+                ${escapeHtml(getAutomationLastRunTime(automation) || 'Never')}
+              </div>
+            </div>
+
+            <div class="row">
+              <span class="label">Response Type</span>
+              <div class="value">
+                ${escapeHtml(getAutomationResponseType(automation))}
               </div>
             </div>
 
             <div class="row">
               <span class="label">Last Result</span>
               <div class="message">
-                ${escapeHtml(automation.lastMessage || 'No runs yet')}
+                ${escapeHtml(getAutomationMessage(automation))}
               </div>
             </div>
 

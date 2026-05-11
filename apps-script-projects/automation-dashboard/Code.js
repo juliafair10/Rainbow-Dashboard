@@ -610,6 +610,7 @@ function buildDashboardAutomations_() {
   return DASHBOARD_CONFIG.automations.map(function (automation) {
     const saved = getSavedStatus_(automation.id, properties);
     const registry = buildAutomationRegistryEntry_(automation);
+    const normalizedResponse = normalizeOperationalResponse_(automation, saved, registry);
 
     return {
       id: automation.id,
@@ -625,10 +626,12 @@ function buildDashboardAutomations_() {
       lastRunTime: saved.lastRunTime || '',
       lastStatus: saved.lastStatus || STATUS.NOT_RUN,
       lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.',
-      lastRawResponse: saved.lastRawResponse || ''
+      lastRawResponse: saved.lastRawResponse || '',
+      normalizedResponse: normalizedResponse
     };
   });
 }
+
 
 function buildAutomationRegistryEntry_(automation) {
   const explicitEntry = AUTOMATION_REGISTRY[automation.id] || null;
@@ -647,6 +650,109 @@ function buildAutomationRegistryEntry_(automation) {
       ? registrySource.order
       : AUTOMATION_REGISTRY_DEFAULTS.order,
     capabilities: Object.assign(baseCapabilities, registryCapabilities)
+  };
+}
+
+function normalizeOperationalResponse_(automation, saved, registry) {
+  const parsed = parseAutomationResponse_(saved.lastRawResponse || '');
+  const result = parsed && parsed.result ? parsed.result : {};
+  const capabilities = registry.capabilities || {};
+
+  return {
+    automationId: automation.id,
+    automationName: automation.name,
+    action: automation.action || 'process',
+    section: registry.section,
+    status: saved.lastStatus || STATUS.NOT_RUN,
+    message: saved.lastMessage || 'This automation has not run from the dashboard yet.',
+    lastRunTime: saved.lastRunTime || '',
+    responseType: getOperationalResponseType_(capabilities),
+    capabilities: capabilities,
+    metrics: buildOperationalMetrics_(result, capabilities),
+    diagnostics: buildOperationalDiagnostics_(parsed, result),
+    rawResult: result
+  };
+}
+
+function getOperationalResponseType_(capabilities) {
+  if (capabilities.process) {
+    return 'process';
+  }
+
+  if (capabilities.queueHealth) {
+    return 'queueHealth';
+  }
+
+  if (capabilities.inspect) {
+    return 'inspection';
+  }
+
+  if (capabilities.system) {
+    return 'system';
+  }
+
+  if (capabilities.retry) {
+    return 'retry';
+  }
+
+  if (capabilities.report) {
+    return 'report';
+  }
+
+  return 'unknown';
+}
+
+function buildOperationalMetrics_(result, capabilities) {
+  if (!result || typeof result !== 'object') {
+    return {};
+  }
+
+  if (capabilities.queueHealth) {
+    return {
+      overallHealth: result.overallHealth || '',
+      workflowCount: result.workflows ? Object.keys(result.workflows).length : 0,
+      checkedAt: result.finishedAt || result.startedAt || ''
+    };
+  }
+
+  if (capabilities.inspect) {
+    const items = result.items || result.pendingClaimFolders || [];
+
+    return {
+      foundCount: Number(result.foundCount || items.length || 0),
+      itemCount: items.length || 0
+    };
+  }
+
+  if (capabilities.retry) {
+    return {
+      retryCount: Number(result.retryCount || result.retriedCount || result.processedCount || 0),
+      errorCount: Number(result.errorCount || 0),
+      warningCount: Number(result.warningCount || 0)
+    };
+  }
+
+  return {
+    foundCount: Number(result.foundCount || 0),
+    processedCount: Number(result.processedCount || 0),
+    errorCount: Number(result.errorCount || 0),
+    warningCount: Number(result.warningCount || 0)
+  };
+}
+
+function buildOperationalDiagnostics_(parsed, result) {
+  if (!parsed) {
+    return {
+      hasParsedResponse: false,
+      warnings: [],
+      errors: []
+    };
+  }
+
+  return {
+    hasParsedResponse: true,
+    warnings: result && result.warnings ? result.warnings : [],
+    errors: result && result.errors ? result.errors : []
   };
 }
 
@@ -1234,6 +1340,7 @@ function testDashboardConfiguration() {
     Logger.log('    Featured: ' + automation.featured);
     Logger.log('    Order: ' + automation.order);
     Logger.log('    Capabilities: ' + JSON.stringify(automation.capabilities));
+    Logger.log('    Response Type: ' + automation.normalizedResponse.responseType);
 
     const configuredAutomation = DASHBOARD_CONFIG.automations.find(function(item) {
       return item.id === automation.id;
