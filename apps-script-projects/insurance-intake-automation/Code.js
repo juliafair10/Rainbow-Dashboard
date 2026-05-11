@@ -54,9 +54,16 @@ const CONFIG = {
   itelNeedsReviewLabel: 'Itel/Needs Review',
   itelPendingClaimFolderLabel: 'Itel/Pending Claim Folder',
   itelSubfolderName: 'Itel',
+  retryReadyLabel: 'Retry/Ready',
+  retryInProgressLabel: 'Retry/In Progress',
+  retryRecoveredLabel: 'Retry/Recovered',
+  retryBlockedLabel: 'Retry/Blocked',
+  retryLimitReachedLabel: 'Retry/Limit Reached',
+  retryLogSheetName: 'Retry Log',
+  maxRetryAttempts: 3,
   automationName: 'Insurance Intake Automation',
   maxThreadsPerRun: 10,
-  phase: '4D.10',
+  phase: '4F.1',
   dryRun: false,
   labelDryRun: false,
   claimFolderMapSpreadsheetId: '1kTRyZbPW1dZgkflH31s4MewuVHEl1ExQ7o3c6ad-btQ',
@@ -192,11 +199,31 @@ function doGet(e) {
     return jsonResponse(inspectItelPendingClaimFolders());
   }
 
+  if (action === 'retryWorkflow') {
+    return jsonResponse(retryWorkflow(e && e.parameter ? e.parameter.workflow : ''));
+  }
+
+  if (action === 'retryInsuranceIntake') {
+    return jsonResponse(retryWorkflow('insuranceIntake'));
+  }
+
+  if (action === 'retryAsbestos') {
+    return jsonResponse(retryWorkflow('asbestos'));
+  }
+
+  if (action === 'retryItel') {
+    return jsonResponse(retryWorkflow('itel'));
+  }
+
+  if (action === 'setupRetryLabels') {
+    return jsonResponse(setupRetryLabels());
+  }
+
   return jsonResponse({
     status: 'Success',
     message: CONFIG.automationName + ' web app is live.',
     result: {
-      availableActions: ['process', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders'],
+      availableActions: ['process', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders', 'retryWorkflow', 'retryInsuranceIntake', 'retryAsbestos', 'retryItel', 'setupRetryLabels'],
       query: CONFIG.gmailQuery
     }
   });
@@ -216,7 +243,7 @@ function getQueueHealth() {
     result: {
       automation: CONFIG.automationName,
       phase: CONFIG.phase,
-      workflow: 'Phase 4E Queue Health',
+      workflow: 'Phase 4F Queue Health',
       readOnly: true,
       startedAt: startedAt,
       finishedAt: new Date(),
@@ -239,12 +266,15 @@ function getInsuranceIntakeQueueHealth() {
     errorQuery: 'label:"' + CONFIG.errorLabel + '"',
     reviewQuery: 'label:"' + CONFIG.needsReviewLabel + '"',
     pendingClaimFolderQuery: '',
-    retryQuery: '',
-    retryLimitReachedQuery: '',
+    retryReadyQuery: 'label:"' + CONFIG.retryReadyLabel + '" label:"' + CONFIG.errorLabel + '"',
+    retryInProgressQuery: 'label:"' + CONFIG.retryInProgressLabel + '" label:"' + CONFIG.errorLabel + '"',
+    retryRecoveredQuery: 'label:"' + CONFIG.retryRecoveredLabel + '" label:"' + CONFIG.processedLabel + '"',
+    retryBlockedQuery: 'label:"' + CONFIG.retryBlockedLabel + '" label:"' + CONFIG.errorLabel + '"',
+    retryLimitReachedQuery: 'label:"' + CONFIG.retryLimitReachedLabel + '" label:"' + CONFIG.errorLabel + '"',
     cleanupBacklogQuery: '',
     duplicateQuery: 'label:' + CONFIG.duplicateLabel,
-    staleActiveQuery: CONFIG.gmailQuery + ' older_than:2d',
-    staleReviewQuery: 'label:"' + CONFIG.needsReviewLabel + '" older_than:2d',
+    staleActiveQuery: '',
+    staleReviewQuery: '',
     stalePendingClaimFolderQuery: ''
   });
 
@@ -260,13 +290,16 @@ function getAsbestosQueueHealth() {
     errorQuery: 'label:"' + CONFIG.asbestosErrorLabel + '"',
     reviewQuery: 'label:"' + CONFIG.asbestosNeedsReviewLabel + '"',
     pendingClaimFolderQuery: 'label:"' + CONFIG.asbestosPendingClaimFolderLabel + '"',
-    retryQuery: 'label:"Asbestos/Retry"',
-    retryLimitReachedQuery: 'label:"Asbestos/Retry Limit Reached"',
+    retryReadyQuery: 'label:"' + CONFIG.retryReadyLabel + '" label:"' + CONFIG.asbestosPendingClaimFolderLabel + '"',
+    retryInProgressQuery: 'label:"' + CONFIG.retryInProgressLabel + '" label:"' + CONFIG.asbestosPendingClaimFolderLabel + '"',
+    retryRecoveredQuery: 'label:"' + CONFIG.retryRecoveredLabel + '" label:"' + CONFIG.asbestosProcessedLabel + '"',
+    retryBlockedQuery: 'label:"' + CONFIG.retryBlockedLabel + '" label:"' + CONFIG.asbestosErrorLabel + '"',
+    retryLimitReachedQuery: 'label:"' + CONFIG.retryLimitReachedLabel + '" label:"' + CONFIG.asbestosPendingClaimFolderLabel + '"',
     cleanupBacklogQuery: 'label:' + CONFIG.asbestosIntakeLabel + ' label:"' + CONFIG.asbestosProcessedLabel + '"',
     duplicateQuery: '',
-    staleActiveQuery: CONFIG.asbestosQuery + ' older_than:2d',
-    staleReviewQuery: 'label:"' + CONFIG.asbestosNeedsReviewLabel + '" older_than:2d',
-    stalePendingClaimFolderQuery: 'label:"' + CONFIG.asbestosPendingClaimFolderLabel + '" older_than:2d'
+    staleActiveQuery: '',
+    staleReviewQuery: '',
+    stalePendingClaimFolderQuery: ''
   });
 
   return buildSingleQueueHealthResponse_('Asbestos Queue Health', startedAt, workflowHealth);
@@ -281,13 +314,16 @@ function getItelQueueHealth() {
     errorQuery: 'label:"' + CONFIG.itelErrorLabel + '"',
     reviewQuery: 'label:"' + CONFIG.itelNeedsReviewLabel + '"',
     pendingClaimFolderQuery: 'label:"' + CONFIG.itelPendingClaimFolderLabel + '"',
-    retryQuery: 'label:"Itel/Retry"',
-    retryLimitReachedQuery: 'label:"Itel/Retry Limit Reached"',
+    retryReadyQuery: 'label:"' + CONFIG.retryReadyLabel + '" label:"' + CONFIG.itelPendingClaimFolderLabel + '"',
+    retryInProgressQuery: 'label:"' + CONFIG.retryInProgressLabel + '" label:"' + CONFIG.itelPendingClaimFolderLabel + '"',
+    retryRecoveredQuery: 'label:"' + CONFIG.retryRecoveredLabel + '" label:"' + CONFIG.itelProcessedLabel + '"',
+    retryBlockedQuery: 'label:"' + CONFIG.retryBlockedLabel + '" label:"' + CONFIG.itelErrorLabel + '"',
+    retryLimitReachedQuery: 'label:"' + CONFIG.retryLimitReachedLabel + '" label:"' + CONFIG.itelPendingClaimFolderLabel + '"',
     cleanupBacklogQuery: 'label:' + CONFIG.itelIntakeLabel + ' label:"' + CONFIG.itelProcessedLabel + '"',
     duplicateQuery: '',
-    staleActiveQuery: CONFIG.itelQuery + ' older_than:2d',
-    staleReviewQuery: 'label:"' + CONFIG.itelNeedsReviewLabel + '" older_than:2d',
-    stalePendingClaimFolderQuery: 'label:"' + CONFIG.itelPendingClaimFolderLabel + '" older_than:2d'
+    staleActiveQuery: '',
+    staleReviewQuery: '',
+    stalePendingClaimFolderQuery: ''
   });
 
   return buildSingleQueueHealthResponse_('Itel Queue Health', startedAt, workflowHealth);
@@ -316,7 +352,10 @@ function buildQueueHealthForWorkflow_(settings) {
     errorCount: countGmailThreadsForQueueHealth_(settings.errorQuery),
     reviewCount: countGmailThreadsForQueueHealth_(settings.reviewQuery),
     pendingClaimFolderCount: countGmailThreadsForQueueHealth_(settings.pendingClaimFolderQuery),
-    retryBacklogCount: countGmailThreadsForQueueHealth_(settings.retryQuery),
+    retryReadyCount: countGmailThreadsForQueueHealth_(settings.retryReadyQuery),
+    retryInProgressCount: countGmailThreadsForQueueHealth_(settings.retryInProgressQuery),
+    retryRecoveredCount: countGmailThreadsForQueueHealth_(settings.retryRecoveredQuery),
+    retryBlockedCount: countGmailThreadsForQueueHealth_(settings.retryBlockedQuery),
     retryLimitReachedCount: countGmailThreadsForQueueHealth_(settings.retryLimitReachedQuery),
     cleanupBacklogCount: countGmailThreadsForQueueHealth_(settings.cleanupBacklogQuery),
     duplicateCount: countGmailThreadsForQueueHealth_(settings.duplicateQuery),
@@ -325,13 +364,14 @@ function buildQueueHealthForWorkflow_(settings) {
     stalePendingClaimFolderCount: countGmailThreadsForQueueHealth_(settings.stalePendingClaimFolderQuery)
   };
 
+  metrics.retryBacklogCount = metrics.retryReadyCount + metrics.retryInProgressCount + metrics.retryBlockedCount;
   metrics.staleThreadCount = metrics.staleActiveCount + metrics.staleReviewCount + metrics.stalePendingClaimFolderCount;
-  // Queue-entry age is intentionally disabled for Phase 4E. Gmail thread dates can reflect
+  // Queue-entry age is intentionally disabled for Phase 4F. Gmail thread dates can reflect
   // very old original messages, not the date a queue label was applied.
   metrics.oldestActiveItemAgeHours = null;
   metrics.oldestReviewItemAgeHours = null;
   metrics.oldestPendingClaimFolderAgeHours = null;
-  metrics.ageCalculationNote = 'Disabled in Phase 4E because Gmail thread dates can predate current queue labels.';
+  metrics.ageCalculationNote = 'Disabled in Phase 4F because Gmail thread dates can predate current queue labels.';
 
   return {
     workflow: settings.workflow,
@@ -344,7 +384,10 @@ function buildQueueHealthForWorkflow_(settings) {
       error: settings.errorQuery,
       review: settings.reviewQuery,
       pendingClaimFolder: settings.pendingClaimFolderQuery,
-      retry: settings.retryQuery,
+      retryReady: settings.retryReadyQuery,
+      retryInProgress: settings.retryInProgressQuery,
+      retryRecovered: settings.retryRecoveredQuery,
+      retryBlocked: settings.retryBlockedQuery,
       retryLimitReached: settings.retryLimitReachedQuery,
       cleanupBacklog: settings.cleanupBacklogQuery
     },
@@ -426,6 +469,494 @@ function calculateOverallQueueHealth_(workflows) {
   }
 
   return 'Healthy';
+}
+
+// ========================
+// Recovery + Retry Orchestration
+// ========================
+
+function setupRetryLabels() {
+  const startedAt = new Date();
+  const labels = getRetryWorkflowLabels_();
+  const items = [];
+  let createdCount = 0;
+  let existingCount = 0;
+  let errors = 0;
+
+  labels.forEach(function(labelName) {
+    const item = {
+      labelName: labelName,
+      status: 'started',
+      created: false,
+      existing: false,
+      error: ''
+    };
+
+    try {
+      const existingLabel = GmailApp.getUserLabelByName(labelName);
+
+      if (existingLabel) {
+        item.status = 'already_exists';
+        item.existing = true;
+        existingCount++;
+      } else {
+        GmailApp.createLabel(labelName);
+        item.status = 'created';
+        item.created = true;
+        createdCount++;
+      }
+    } catch (error) {
+      item.status = 'error';
+      item.error = error.message;
+      errors++;
+    }
+
+    items.push(item);
+  });
+
+  return {
+    status: errors > 0 ? 'Partial Success' : 'Success',
+    message: 'Phase ' + CONFIG.phase + ' retry label setup created ' + createdCount +
+      ' label(s), found ' + existingCount + ' existing label(s), with ' + errors + ' error(s).',
+    result: {
+      automation: CONFIG.automationName,
+      phase: CONFIG.phase,
+      workflow: 'Retry Label Setup',
+      action: 'setupRetryLabels',
+      readOnly: false,
+      startedAt: startedAt,
+      finishedAt: new Date(),
+      summary: {
+        labelCount: labels.length,
+        createdCount: createdCount,
+        existingCount: existingCount,
+        errors: errors
+      },
+      items: items
+    }
+  };
+}
+
+function getRetryWorkflowLabels_() {
+  return [
+    CONFIG.retryReadyLabel,
+    CONFIG.retryInProgressLabel,
+    CONFIG.retryRecoveredLabel,
+    CONFIG.retryBlockedLabel,
+    CONFIG.retryLimitReachedLabel
+  ];
+}
+
+function retryWorkflow(workflowKey) {
+  const startedAt = new Date();
+  const settings = getRetryWorkflowSettings_(workflowKey);
+
+  if (!settings) {
+    return {
+      status: 'Error',
+      message: 'Unknown retry workflow: ' + workflowKey,
+      result: {
+        automation: CONFIG.automationName,
+        phase: CONFIG.phase,
+        workflow: 'Recovery + Retry Orchestration',
+        requestedWorkflow: workflowKey || '',
+        startedAt: startedAt,
+        finishedAt: new Date(),
+        summary: buildEmptyRetrySummary_(),
+        items: []
+      }
+    };
+  }
+
+  const summary = buildEmptyRetrySummary_();
+  const items = [];
+
+  try {
+    const candidateThreads = GmailApp.search(settings.query, 0, CONFIG.maxThreadsPerRun);
+    const retryReadyThreads = filterRetryReadyThreads_(candidateThreads, settings);
+    summary.candidateCount = candidateThreads.length;
+    summary.foundCount = retryReadyThreads.length;
+
+    for (let i = 0; i < retryReadyThreads.length; i++) {
+      const thread = retryReadyThreads[i];
+      const itemResult = retrySingleThread_(thread, settings);
+      items.push(itemResult);
+      updateRetrySummary_(summary, itemResult);
+    }
+
+    return {
+      status: summary.errors > 0 ? 'Partial Success' : 'Success',
+      message: buildRetryWorkflowMessage_(settings, summary),
+      result: {
+        automation: CONFIG.automationName,
+        phase: CONFIG.phase,
+        workflow: settings.workflow,
+        action: 'retryWorkflow',
+        retryMode: 'manual-dashboard-safe',
+        query: settings.query,
+        startedAt: startedAt,
+        finishedAt: new Date(),
+        summary: summary,
+        items: items
+      }
+    };
+  } catch (error) {
+    summary.errors++;
+
+    return {
+      status: 'Error',
+      message: error.message,
+      result: {
+        automation: CONFIG.automationName,
+        phase: CONFIG.phase,
+        workflow: settings.workflow,
+        action: 'retryWorkflow',
+        query: settings.query,
+        startedAt: startedAt,
+        finishedAt: new Date(),
+        summary: summary,
+        stack: error.stack
+      }
+    };
+  }
+}
+
+function getRetryWorkflowSettings_(workflowKey) {
+  const normalizedWorkflowKey = String(workflowKey || '').trim();
+
+  if (normalizedWorkflowKey === 'insuranceIntake') {
+    return {
+      key: 'insuranceIntake',
+      workflow: 'Insurance Intake Retry',
+      query: 'label:"' + CONFIG.errorLabel + '" -label:"' + CONFIG.retryInProgressLabel + '" -label:"' + CONFIG.retryLimitReachedLabel + '"',
+      retryReadyRequiredLabel: CONFIG.retryReadyLabel,
+      sourceLabels: [CONFIG.errorLabel, CONFIG.retryReadyLabel],
+      labelsToRemoveBeforeRetry: [CONFIG.errorLabel, CONFIG.retryReadyLabel, CONFIG.retryBlockedLabel],
+      labelsToAddBeforeRetry: [CONFIG.intakeLabel, CONFIG.retryInProgressLabel],
+      successLabel: CONFIG.processedLabel,
+      failureLabel: CONFIG.errorLabel,
+      pendingLabel: '',
+      processor: processInsuranceIntake
+    };
+  }
+
+  if (normalizedWorkflowKey === 'asbestos') {
+    return {
+      key: 'asbestos',
+      workflow: 'Asbestos Attachment Retry',
+      query: 'label:"' + CONFIG.asbestosPendingClaimFolderLabel + '" -label:"' + CONFIG.retryInProgressLabel + '" -label:"' + CONFIG.retryLimitReachedLabel + '"',
+      retryReadyRequiredLabel: CONFIG.retryReadyLabel,
+      sourceLabels: [CONFIG.asbestosPendingClaimFolderLabel, CONFIG.retryReadyLabel],
+      labelsToRemoveBeforeRetry: [CONFIG.asbestosPendingClaimFolderLabel, CONFIG.asbestosErrorLabel, CONFIG.retryReadyLabel, CONFIG.retryBlockedLabel],
+      labelsToAddBeforeRetry: [CONFIG.asbestosIntakeLabel, CONFIG.retryInProgressLabel],
+      successLabel: CONFIG.asbestosProcessedLabel,
+      failureLabel: CONFIG.asbestosErrorLabel,
+      pendingLabel: CONFIG.asbestosPendingClaimFolderLabel,
+      processor: processAsbestosAttachments
+    };
+  }
+
+  if (normalizedWorkflowKey === 'itel') {
+    return {
+      key: 'itel',
+      workflow: 'Itel Attachment Retry',
+      query: 'label:"' + CONFIG.itelPendingClaimFolderLabel + '" -label:"' + CONFIG.retryInProgressLabel + '" -label:"' + CONFIG.retryLimitReachedLabel + '"',
+      retryReadyRequiredLabel: CONFIG.retryReadyLabel,
+      sourceLabels: [CONFIG.itelPendingClaimFolderLabel, CONFIG.retryReadyLabel],
+      labelsToRemoveBeforeRetry: [CONFIG.itelPendingClaimFolderLabel, CONFIG.itelErrorLabel, CONFIG.retryReadyLabel, CONFIG.retryBlockedLabel],
+      labelsToAddBeforeRetry: [CONFIG.itelIntakeLabel, CONFIG.retryInProgressLabel],
+      successLabel: CONFIG.itelProcessedLabel,
+      failureLabel: CONFIG.itelErrorLabel,
+      pendingLabel: CONFIG.itelPendingClaimFolderLabel,
+      processor: processItelAttachments
+    };
+  }
+
+  return null;
+}
+
+function filterRetryReadyThreads_(threads, settings) {
+  if (!threads || threads.length === 0) {
+    return [];
+  }
+
+  return threads.filter(function(thread) {
+    return threadHasLabel_(thread, settings.retryReadyRequiredLabel);
+  });
+}
+
+function retrySingleThread_(thread, settings) {
+  const startedAt = new Date();
+  const itemResult = {
+    workflow: settings.workflow,
+    threadId: thread.getId(),
+    status: 'started',
+    attemptNumber: 0,
+    retryEligible: true,
+    recovered: false,
+    blocked: false,
+    limitReached: false,
+    warnings: [],
+    errors: []
+  };
+
+  try {
+    const attemptNumber = getRetryAttemptCount_(settings.key, thread.getId()) + 1;
+    itemResult.attemptNumber = attemptNumber;
+
+    if (attemptNumber > CONFIG.maxRetryAttempts) {
+      itemResult.status = 'retry_limit_reached';
+      itemResult.retryEligible = false;
+      itemResult.blocked = true;
+      itemResult.limitReached = true;
+
+      itemResult.labelResult = applyInsuranceIntakeLabels_(thread, {
+        add: [CONFIG.retryLimitReachedLabel],
+        remove: [CONFIG.retryReadyLabel, CONFIG.retryInProgressLabel]
+      });
+
+      appendRetryLogRow_(settings, thread, itemResult, startedAt);
+      return itemResult;
+    }
+
+    itemResult.preRetryLabelResult = applyInsuranceIntakeLabels_(thread, {
+      add: settings.labelsToAddBeforeRetry,
+      remove: settings.labelsToRemoveBeforeRetry
+    });
+
+    if (!itemResult.preRetryLabelResult.success) {
+      itemResult.status = 'retry_label_setup_failed';
+      itemResult.errors.push(itemResult.preRetryLabelResult.error);
+      itemResult.blocked = true;
+      appendRetryLogRow_(settings, thread, itemResult, startedAt);
+      return itemResult;
+    }
+
+    const processorResult = settings.processor();
+    itemResult.processorStatus = processorResult.status || '';
+    itemResult.processorMessage = processorResult.message || '';
+    itemResult.processorSummary = processorResult.result && processorResult.result.summary ? processorResult.result.summary : {};
+
+    const refreshedThread = GmailApp.getThreadById(thread.getId()) || thread;
+
+    if (threadHasLabel_(refreshedThread, settings.successLabel)) {
+      itemResult.status = 'retry_recovered';
+      itemResult.recovered = true;
+      itemResult.postRetryLabelResult = applyInsuranceIntakeLabels_(thread, {
+        add: [CONFIG.retryRecoveredLabel],
+        remove: [CONFIG.retryReadyLabel, CONFIG.retryInProgressLabel, CONFIG.retryBlockedLabel]
+      });
+    } else if (threadHasLabel_(refreshedThread, settings.failureLabel)) {
+      itemResult.status = attemptNumber >= CONFIG.maxRetryAttempts ? 'retry_limit_reached' : 'retry_failed_requeued';
+      itemResult.blocked = attemptNumber >= CONFIG.maxRetryAttempts;
+      itemResult.limitReached = attemptNumber >= CONFIG.maxRetryAttempts;
+      itemResult.postRetryLabelResult = applyInsuranceIntakeLabels_(thread, {
+        add: attemptNumber >= CONFIG.maxRetryAttempts ? [CONFIG.retryLimitReachedLabel] : [CONFIG.retryReadyLabel],
+        remove: [CONFIG.retryInProgressLabel]
+      });
+    } else if (settings.pendingLabel && threadHasLabel_(refreshedThread, settings.pendingLabel)) {
+      itemResult.status = attemptNumber >= CONFIG.maxRetryAttempts ? 'retry_limit_reached_pending_claim_folder' : 'retry_pending_claim_folder_requeued';
+      itemResult.blocked = attemptNumber >= CONFIG.maxRetryAttempts;
+      itemResult.limitReached = attemptNumber >= CONFIG.maxRetryAttempts;
+      itemResult.pendingClaimFolder = true;
+      itemResult.warnings.push('Retry finished but the claim folder is still unavailable, so the thread was kept visible for recovery.');
+      itemResult.postRetryLabelResult = applyInsuranceIntakeLabels_(thread, {
+        add: attemptNumber >= CONFIG.maxRetryAttempts ? [CONFIG.retryLimitReachedLabel] : [CONFIG.retryReadyLabel],
+        remove: attemptNumber >= CONFIG.maxRetryAttempts
+          ? [CONFIG.retryReadyLabel, CONFIG.retryInProgressLabel, CONFIG.retryBlockedLabel]
+          : [CONFIG.retryInProgressLabel, CONFIG.retryBlockedLabel]
+      });
+    } else {
+      itemResult.status = 'retry_result_needs_review';
+      itemResult.warnings.push('Retry finished but the thread did not receive the expected success, failure, or pending label.');
+      itemResult.postRetryLabelResult = applyInsuranceIntakeLabels_(thread, {
+        add: [CONFIG.retryBlockedLabel],
+        remove: [CONFIG.retryInProgressLabel]
+      });
+      itemResult.blocked = true;
+    }
+
+    appendRetryLogRow_(settings, thread, itemResult, startedAt);
+    return itemResult;
+  } catch (error) {
+    itemResult.status = 'retry_exception';
+    itemResult.errors.push(error.message);
+    itemResult.blocked = true;
+
+    try {
+      itemResult.exceptionLabelResult = applyInsuranceIntakeLabels_(thread, {
+        add: [settings.failureLabel, CONFIG.retryBlockedLabel],
+        remove: [CONFIG.retryInProgressLabel]
+      });
+    } catch (labelError) {
+      itemResult.warnings.push('Retry exception label update threw an exception: ' + labelError.message);
+    }
+
+    appendRetryLogRow_(settings, thread, itemResult, startedAt);
+    return itemResult;
+  }
+}
+
+function buildEmptyRetrySummary_() {
+  return {
+    candidateCount: 0,
+    foundCount: 0,
+    retriedCount: 0,
+    recoveredCount: 0,
+    blockedCount: 0,
+    limitReachedCount: 0,
+    warnings: 0,
+    errors: 0
+  };
+}
+
+function updateRetrySummary_(summary, itemResult) {
+  summary.retriedCount++;
+
+  if (itemResult.recovered) {
+    summary.recoveredCount++;
+  }
+
+  if (itemResult.blocked) {
+    summary.blockedCount++;
+  }
+
+  if (itemResult.limitReached) {
+    summary.limitReachedCount++;
+  }
+
+  summary.warnings += itemResult.warnings ? itemResult.warnings.length : 0;
+  summary.errors += itemResult.errors ? itemResult.errors.length : 0;
+}
+
+function buildRetryWorkflowMessage_(settings, summary) {
+  return 'Phase ' + CONFIG.phase + ' ' + settings.workflow + ' found ' + summary.foundCount +
+    ' retry-ready thread(s) from ' + (summary.candidateCount || 0) +
+    ' candidate thread(s), retried ' + summary.retriedCount +
+    ', recovered ' + summary.recoveredCount +
+    ', blocked ' + summary.blockedCount +
+    ', marked retry limit reached ' + summary.limitReachedCount +
+    ', with ' + summary.warnings + ' warning(s) and ' + summary.errors + ' error(s).';
+}
+
+function threadHasLabel_(thread, labelName) {
+  const labels = thread.getLabels();
+
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i].getName() === labelName) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getRetryAttemptCount_(workflowKey, threadId) {
+  const sheet = getRetryLogSheet_();
+  ensureRetryLogHeader_(sheet);
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return 0;
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, getRetryLogHeaders_().length).getValues();
+  let count = 0;
+
+  values.forEach(function(row) {
+    const rowWorkflowKey = String(row[2] || '').trim();
+    const rowThreadId = String(row[4] || '').trim();
+
+    if (rowWorkflowKey === workflowKey && rowThreadId === threadId) {
+      count++;
+    }
+  });
+
+  return count;
+}
+
+function appendRetryLogRow_(settings, thread, itemResult, startedAt) {
+  const lock = LockService.getScriptLock();
+
+  try {
+    lock.waitLock(30000);
+
+    const sheet = getRetryLogSheet_();
+    ensureRetryLogHeader_(sheet);
+
+    sheet.appendRow([
+      new Date(),
+      buildRunId_(),
+      settings.key,
+      settings.workflow,
+      thread.getId(),
+      itemResult.attemptNumber || 0,
+      itemResult.status || '',
+      itemResult.recovered === true,
+      itemResult.blocked === true,
+      itemResult.limitReached === true,
+      itemResult.processorStatus || '',
+      itemResult.processorMessage || '',
+      (itemResult.warnings || []).join(' | '),
+      (itemResult.errors || []).join(' | '),
+      startedAt,
+      new Date(),
+      CONFIG.phase
+    ]);
+  } catch (error) {
+    itemResult.warnings = itemResult.warnings || [];
+    itemResult.warnings.push('Retry log append failed: ' + error.message);
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (e) {}
+  }
+}
+
+function getRetryLogSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
+  let sheet = ss.getSheetByName(CONFIG.retryLogSheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.retryLogSheetName);
+  }
+
+  return sheet;
+}
+
+function ensureRetryLogHeader_(sheet) {
+  const headers = getRetryLogHeaders_();
+  const existingHeader = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  const hasHeader = existingHeader.some(function(value) {
+    return String(value || '').trim() !== '';
+  });
+
+  if (!hasHeader) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+}
+
+function getRetryLogHeaders_() {
+  return [
+    'Timestamp',
+    'Run ID',
+    'Workflow Key',
+    'Workflow',
+    'Thread ID',
+    'Attempt Number',
+    'Status',
+    'Recovered',
+    'Blocked',
+    'Limit Reached',
+    'Processor Status',
+    'Processor Message',
+    'Warnings',
+    'Errors',
+    'Started At',
+    'Finished At',
+    'Automation Phase'
+  ];
 }
 
 // ========================
@@ -1797,7 +2328,8 @@ function createOrSkipTodoistIntakeTask_(claimData, folderResult, thread) {
       subject: claimData.subject,
       folderId: folderResult.folderId,
       folderUrl: folderResult.folderUrl,
-      threadId: thread.getId()
+      threadId: thread.getId(),
+      intakeDate: thread.getMessages()[0].getDate()
     });
 
     result.taskId = createdTask.id || '';
@@ -1884,13 +2416,30 @@ function createTodoistIntakeTask_(payload) {
     throw new Error('Missing TODOIST_ASSIGNEE_ID_CLARENCE script property.');
   }
 
+  const intakeDate = payload.intakeDate || new Date();
+  const dueDate = new Date(intakeDate);
+  dueDate.setDate(dueDate.getDate() + 3);
+
+  const formattedDueDate = Utilities.formatDate(
+    dueDate,
+    Session.getScriptTimeZone(),
+    'MM/dd/yyyy'
+  );
+
+  const todoistDeadlineDate = Utilities.formatDate(
+    dueDate,
+    Session.getScriptTimeZone(),
+    'yyyy-MM-dd'
+  );
+
   const task = {
     content: buildTodoistIntakeTaskTitle_(payload.customerName, payload.claimNumber),
-    description: buildTodoistIntakeTaskDescription_(payload),
+    description: 'Upload 3 Day - due ' + formattedDueDate,
     project_id: todoist.projectId,
-    assignee_id: todoist.assigneeId,
+    assignee_id: Number(todoist.assigneeId),
     priority: todoist.priority,
-    due_string: todoist.dueString
+    due_date: todoistDeadlineDate,
+    deadline_date: todoistDeadlineDate
   };
 
   if (todoist.sectionId) {
@@ -1922,1818 +2471,10 @@ function buildTodoistIntakeTaskTitle_(customerName, claimNumber) {
 }
 
 function buildTodoistIntakeTaskDescription_(payload) {
-  return 'Upload 3 Day';
+  return "Upload 3 day - due (3 days from 'today')";
 }
 
-function buildPhase4CMessage_(summary) {
-  return 'Phase ' + CONFIG.phase + ' found ' + summary.foundCount +
-    ' insurance intake thread(s), parsed ' + summary.parsedCount +
-    ', skipped ' + summary.duplicatesSkipped +
-    ' duplicate(s), added ' + summary.sheetRowsAdded +
-    ' sheet row(s), detected ' + summary.totalAttachmentsDetected +
-    ' attachment(s) across ' + summary.threadsWithAttachments +
-    ' thread(s), with ' + summary.reviewNeededAttachments +
-    ' attachment(s) needing review, ' + summary.warnings +
-    ' warning(s) and ' + summary.errors + ' error(s).';
-}
-
-function detectThreadAttachments_(thread) {
-  const result = {
-    detectionEnabled: CONFIG.attachments && CONFIG.attachments.detectionEnabled === true,
-    copyEnabled: CONFIG.attachments && CONFIG.attachments.copyEnabled === true,
-    threadId: thread.getId(),
-    messageCount: 0,
-    attachmentCount: 0,
-    copyEligibleCount: 0,
-    reviewNeededCount: 0,
-    skippedCount: 0,
-    attachments: [],
-    warnings: [],
-    errors: []
-  };
-
-  if (!result.detectionEnabled) {
-    result.status = 'attachment_detection_disabled';
-    return result;
-  }
-
-  try {
-    const messages = thread.getMessages();
-    result.messageCount = messages.length;
-
-    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-      const message = messages[messageIndex];
-      const attachments = message.getAttachments({
-        includeInlineImages: false,
-        includeAttachments: true
-      });
-
-      for (let attachmentIndex = 0; attachmentIndex < attachments.length; attachmentIndex++) {
-        const attachmentRecord = buildAttachmentMetadata_(thread, message, attachments[attachmentIndex], messageIndex, attachmentIndex);
-        result.attachments.push(attachmentRecord);
-        result.attachmentCount++;
-
-        if (attachmentRecord.status === 'CopyEligible') {
-          result.copyEligibleCount++;
-        } else if (attachmentRecord.status === 'ReviewNeeded') {
-          result.reviewNeededCount++;
-        } else {
-          result.skippedCount++;
-        }
-      }
-    }
-
-    result.status = result.attachmentCount > 0 ? 'attachments_detected' : 'no_attachments_detected';
-    return result;
-  } catch (error) {
-    result.status = 'attachment_detection_error';
-    result.errors.push(error.message);
-    return result;
-  }
-}
-
-function buildAttachmentMetadata_(thread, message, attachment, messageIndex, attachmentIndex) {
-  const name = attachment.getName() || 'unnamed-attachment';
-  const contentType = attachment.getContentType() || 'unknown';
-  const sizeBytes = attachment.getBytes().length;
-  const classification = classifyAttachment_(name, contentType, sizeBytes);
-  const attachmentIdentity = buildAttachmentIdentity_(thread.getId(), message.getId(), name, contentType, sizeBytes);
-
-  return {
-    threadId: thread.getId(),
-    messageId: message.getId(),
-    messageIndex: messageIndex,
-    messageDate: message.getDate(),
-    messageFrom: message.getFrom(),
-    attachmentIndex: attachmentIndex,
-    attachmentName: name,
-    contentType: contentType,
-    sizeBytes: sizeBytes,
-    attachmentIdentity: attachmentIdentity,
-    fingerprint: buildAttachmentFingerprint_(thread.getId(), message.getId(), name, contentType, sizeBytes),
-    copyEligible: classification.copyEligible,
-    reviewNeeded: classification.reviewNeeded,
-    status: classification.status,
-    reviewReason: classification.reviewReason,
-    copyAttempted: false,
-    copiedFileId: null,
-    copiedFileUrl: null,
-    duplicateFileDetected: false,
-    duplicateMatchFileId: null,
-    error: null
-  };
-}
-
-function classifyAttachment_(name, contentType, sizeBytes) {
-  const maxBytes = CONFIG.attachments && CONFIG.attachments.maxAttachmentBytes ? CONFIG.attachments.maxAttachmentBytes : 25000000;
-  const allowedMimeTypes = CONFIG.attachments && CONFIG.attachments.allowedMimeTypes ? CONFIG.attachments.allowedMimeTypes : [];
-  const reviewMimeTypes = CONFIG.attachments && CONFIG.attachments.reviewMimeTypes ? CONFIG.attachments.reviewMimeTypes : [];
-
-  if (!name || name === 'unnamed-attachment') {
-    return {
-      status: 'ReviewNeeded',
-      copyEligible: false,
-      reviewNeeded: true,
-      reviewReason: 'Attachment has no usable filename.'
-    };
-  }
-
-  if (!sizeBytes || sizeBytes <= 0) {
-    return {
-      status: 'ReviewNeeded',
-      copyEligible: false,
-      reviewNeeded: true,
-      reviewReason: 'Attachment is empty or has an unreadable size.'
-    };
-  }
-
-  if (sizeBytes > maxBytes) {
-    return {
-      status: 'ReviewNeeded',
-      copyEligible: false,
-      reviewNeeded: true,
-      reviewReason: 'Attachment exceeds configured max size of ' + maxBytes + ' bytes.'
-    };
-  }
-
-  if (allowedMimeTypes.indexOf(contentType) !== -1) {
-    return {
-      status: 'CopyEligible',
-      copyEligible: true,
-      reviewNeeded: false,
-      reviewReason: null
-    };
-  }
-
-  if (reviewMimeTypes.indexOf(contentType) !== -1) {
-    return {
-      status: 'ReviewNeeded',
-      copyEligible: false,
-      reviewNeeded: true,
-      reviewReason: 'Attachment MIME type requires manual review: ' + contentType
-    };
-  }
-
-  return {
-    status: 'ReviewNeeded',
-    copyEligible: false,
-    reviewNeeded: true,
-    reviewReason: 'Attachment MIME type is not allowlisted: ' + contentType
-  };
-}
-
-function buildAttachmentIdentity_(threadId, messageId, name, contentType, sizeBytes) {
-  return [
-    threadId || '',
-    messageId || '',
-    name || '',
-    contentType || '',
-    String(sizeBytes || 0)
-  ].join('|');
-}
-
-function buildAttachmentFingerprint_(threadId, messageId, name, contentType, sizeBytes) {
-  return [
-    threadId || '',
-    messageId || '',
-    name || '',
-    contentType || '',
-    String(sizeBytes || 0)
-  ].join('|');
-}
-
-
-function copyEligibleAttachments_(context) {
-  const attachmentResult = context.attachmentResult;
-  const vendorSubfolderResult = context.vendorSubfolderResult || {};
-
-  const result = {
-    copyEnabled: CONFIG.attachments && CONFIG.attachments.copyEnabled === true,
-    duplicateCheckEnabled: CONFIG.attachments && CONFIG.attachments.duplicateCheckEnabled === true,
-    copyAttemptedCount: 0,
-    copiedCount: 0,
-    duplicateFileCount: 0,
-    skippedCount: 0,
-    errorCount: 0,
-    copiedFiles: [],
-    duplicateFiles: [],
-    skippedFiles: [],
-    errors: []
-  };
-
-  if (!result.copyEnabled) {
-    result.success = true;
-    result.skipped = true;
-    result.reason = 'Attachment copying disabled.';
-    return result;
-  }
-
-  if (!attachmentResult || !attachmentResult.attachments || attachmentResult.attachments.length === 0) {
-    result.success = true;
-    result.skipped = true;
-    result.reason = 'No attachments to copy.';
-    return result;
-  }
-
-  if (!vendorSubfolderResult.folderId) {
-    result.success = false;
-    result.skipped = false;
-    result.error = 'Missing destination folder ID for attachment copy.';
-    return result;
-  }
-
-  try {
-    const destinationFolder = DriveApp.getFolderById(vendorSubfolderResult.folderId);
-    const messages = context.thread.getMessages();
-
-    attachmentResult.attachments.forEach(function(attachmentRecord) {
-      if (attachmentRecord.copyEligible !== true) {
-        attachmentRecord.copyAttempted = false;
-        attachmentRecord.copyStatus = 'SkippedNotEligible';
-        result.skippedCount++;
-        result.skippedFiles.push(attachmentRecord.attachmentName);
-        return;
-      }
-
-      result.copyAttemptedCount++;
-      attachmentRecord.copyAttempted = true;
-
-      const safeFileName = buildSafeAttachmentFileName_(attachmentRecord);
-      attachmentRecord.targetFileName = safeFileName;
-
-      const existingFile = result.duplicateCheckEnabled
-        ? findChildFileByName_(destinationFolder, safeFileName)
-        : null;
-
-      if (existingFile) {
-        attachmentRecord.copyStatus = 'DuplicateFileDetected';
-        attachmentRecord.duplicateFileDetected = true;
-        attachmentRecord.duplicateMatchFileId = existingFile.getId();
-        attachmentRecord.copiedFileId = existingFile.getId();
-        attachmentRecord.copiedFileUrl = existingFile.getUrl();
-        result.duplicateFileCount++;
-        result.duplicateFiles.push({
-          attachmentName: attachmentRecord.attachmentName,
-          targetFileName: safeFileName,
-          fileId: existingFile.getId(),
-          fileUrl: existingFile.getUrl()
-        });
-        return;
-      }
-
-      const sourceMessage = messages[attachmentRecord.messageIndex];
-      const sourceAttachments = sourceMessage.getAttachments({
-        includeInlineImages: false,
-        includeAttachments: true
-      });
-      const sourceAttachment = sourceAttachments[attachmentRecord.attachmentIndex];
-
-      if (!sourceAttachment) {
-        attachmentRecord.copyStatus = 'CopyError';
-        attachmentRecord.error = 'Source attachment no longer available at recorded index.';
-        result.errorCount++;
-        result.errors.push(attachmentRecord.error);
-        return;
-      }
-
-      const blob = sourceAttachment.copyBlob().setName(safeFileName);
-      const copiedFile = destinationFolder.createFile(blob);
-      const verificationResult = verifyCopiedDriveFile_(copiedFile, safeFileName);
-
-      attachmentRecord.copyVerification = verificationResult;
-
-      if (!verificationResult.success) {
-        attachmentRecord.copyStatus = 'CopyVerificationFailed';
-        attachmentRecord.error = verificationResult.error;
-        result.errorCount++;
-        result.errors.push(verificationResult.error);
-        return;
-      }
-
-      attachmentRecord.copyStatus = 'CopiedVerified';
-      attachmentRecord.copiedFileId = copiedFile.getId();
-      attachmentRecord.copiedFileUrl = copiedFile.getUrl();
-      result.copiedCount++;
-      result.copiedFiles.push({
-        attachmentName: attachmentRecord.attachmentName,
-        targetFileName: safeFileName,
-        fileId: copiedFile.getId(),
-        fileUrl: copiedFile.getUrl(),
-        verificationStatus: verificationResult.status
-      });
-    });
-
-    result.success = result.errorCount === 0;
-
-    if (!result.success) {
-      result.error = result.errors.join(' | ');
-    }
-
-    return result;
-  } catch (error) {
-    result.success = false;
-    result.error = error.message;
-    result.errors.push(error.message);
-    return result;
-  }
-}
-
-function buildSafeAttachmentFileName_(attachmentRecord) {
-  const messageDate = attachmentRecord.messageDate ? new Date(attachmentRecord.messageDate) : new Date();
-  const datePrefix = Utilities.formatDate(messageDate, Session.getScriptTimeZone(), 'yyyyMMdd');
-  const originalName = sanitizeFileName_(attachmentRecord.attachmentName || 'attachment');
-
-  return datePrefix + ' - ' + originalName;
-}
-
-function sanitizeFileName_(fileName) {
-  return String(fileName || 'attachment')
-    .replace(/[\\/:*?"<>|#%{}~&]/g, '-')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-function findChildFileByName_(parentFolder, fileName) {
-  const files = parentFolder.getFilesByName(fileName);
-  return files.hasNext() ? files.next() : null;
-}
-
-function verifyCopiedDriveFile_(file, expectedFileName) {
-  try {
-    if (!CONFIG.attachments || CONFIG.attachments.copyVerificationEnabled !== true) {
-      return {
-        success: true,
-        skipped: true,
-        status: 'CopyVerificationDisabled'
-      };
-    }
-
-    if (!file) {
-      return {
-        success: false,
-        skipped: false,
-        status: 'CopyVerificationFailed',
-        error: 'Copied file object was not returned by Drive.'
-      };
-    }
-
-    const fileId = file.getId();
-    const fileName = file.getName();
-    const fileUrl = file.getUrl();
-
-    if (!fileId) {
-      return {
-        success: false,
-        skipped: false,
-        status: 'CopyVerificationFailed',
-        error: 'Copied file is missing a Drive file ID.'
-      };
-    }
-
-    if (!fileUrl) {
-      return {
-        success: false,
-        skipped: false,
-        status: 'CopyVerificationFailed',
-        error: 'Copied file is missing a Drive file URL.'
-      };
-    }
-
-    if (expectedFileName && fileName !== expectedFileName) {
-      return {
-        success: false,
-        skipped: false,
-        status: 'CopyVerificationFailed',
-        error: 'Copied file name mismatch. Expected "' + expectedFileName + '" but found "' + fileName + '".'
-      };
-    }
-
-    return {
-      success: true,
-      skipped: false,
-      status: 'CopiedVerified',
-      fileId: fileId,
-      fileName: fileName,
-      fileUrl: fileUrl,
-      verifiedAt: new Date()
-    };
-  } catch (error) {
-    return {
-      success: false,
-      skipped: false,
-      status: 'CopyVerificationFailed',
-      error: error.message
-    };
-  }
-}
-
-
-function updateAttachmentSummary_(summary, attachmentResult) {
-  if (!attachmentResult || !attachmentResult.detectionEnabled) {
-    return;
-  }
-
-  if (attachmentResult.attachmentCount > 0) {
-    summary.threadsWithAttachments++;
-  }
-
-  summary.totalAttachmentsDetected += attachmentResult.attachmentCount || 0;
-  summary.copyEligibleAttachments += attachmentResult.copyEligibleCount || 0;
-  summary.reviewNeededAttachments += attachmentResult.reviewNeededCount || 0;
-  summary.skippedAttachments += attachmentResult.skippedCount || 0;
-
-  if (attachmentResult.errors && attachmentResult.errors.length > 0) {
-    summary.warnings += attachmentResult.errors.length;
-  }
-}
-
-function appendAttachmentLogRows_(context) {
-  const attachmentResult = context.attachmentResult;
-
-  if (!CONFIG.attachments || CONFIG.attachments.loggingEnabled !== true) {
-    return {
-      success: true,
-      skipped: true,
-      reason: 'Attachment logging disabled.'
-    };
-  }
-
-  if (!attachmentResult || !attachmentResult.attachments || attachmentResult.attachments.length === 0) {
-    return {
-      success: true,
-      skipped: true,
-      reason: 'No attachments to log.'
-    };
-  }
-
-  const lock = LockService.getScriptLock();
-
-  try {
-    lock.waitLock(30000);
-
-    const sheet = getAttachmentLogSheet_();
-    ensureAttachmentLogHeader_(sheet);
-
-    const existingAttachmentIdentities = getExistingAttachmentIdentities_(sheet);
-    const runId = buildRunId_();
-    const rows = [];
-    let duplicateCount = 0;
-
-    attachmentResult.attachments.forEach(function(attachmentRecord) {
-      const attachmentLogIdentity = getAttachmentLogIdentity_(attachmentRecord);
-      const duplicateLogged = existingAttachmentIdentities.indexOf(attachmentLogIdentity) !== -1 ||
-        (attachmentRecord.fingerprint && existingAttachmentIdentities.indexOf(attachmentRecord.fingerprint) !== -1);
-
-      if (duplicateLogged) {
-        duplicateCount++;
-        attachmentRecord.duplicateLogDetected = true;
-        attachmentRecord.attachmentLogStatus = 'DuplicateLogSkipped';
-        return;
-      }
-
-      attachmentRecord.duplicateLogDetected = false;
-      attachmentRecord.attachmentLogStatus = 'Logged';
-
-      rows.push(buildAttachmentLogRow_(context, attachmentRecord, runId, false));
-    });
-
-    if (rows.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-    }
-
-    return {
-      success: true,
-      skipped: false,
-      runId: runId,
-      rowsAdded: rows.length,
-      duplicateLogCount: duplicateCount,
-      duplicateRowsSkipped: duplicateCount
-    };
-  } catch (error) {
-    return {
-      success: false,
-      skipped: false,
-      error: error.message
-    };
-  } finally {
-    try {
-      lock.releaseLock();
-    } catch (e) {}
-  }
-}
-
-function getAttachmentLogSheet_() {
-  const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
-  let sheet = ss.getSheetByName(CONFIG.attachmentLogSheetName);
-
-  if (!sheet) {
-    sheet = ss.insertSheet(CONFIG.attachmentLogSheetName);
-  }
-
-  return sheet;
-}
-
-function ensureAttachmentLogHeader_(sheet) {
-  const headers = getAttachmentLogHeaders_();
-  const existingHeader = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  const hasHeader = existingHeader.some(function(value) {
-    return String(value || '').trim() !== '';
-  });
-
-  if (!hasHeader) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.setFrozenRows(1);
-  }
-}
-
-function getAttachmentLogHeaders_() {
-  return [
-    'Timestamp',
-    'Run ID',
-    'Workflow',
-    'Vendor',
-    'Claim Number',
-    'Customer Name',
-    'Thread ID',
-    'Message ID',
-    'Message Date',
-    'Sender',
-    'Subject',
-    'Claim Folder ID',
-    'Claim Folder URL',
-    'Vendor Folder ID',
-    'Vendor Folder URL',
-    'Attachment Name',
-    'Attachment MIME Type',
-    'Attachment Size Bytes',
-    'Attachment Identity',
-    'Attachment Status',
-    'Copy Eligible',
-    'Review Needed',
-    'Review Reason',
-    'Duplicate Log Detected',
-    'Copy Attempted',
-    'Copied File ID',
-    'Copied File URL',
-    'Error',
-    'Automation Phase'
-  ];
-}
-
-function getExistingAttachmentIdentities_(sheet) {
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow < 2) {
-    return [];
-  }
-
-  const attachmentIdentityColumn = 19;
-  const values = sheet.getRange(2, attachmentIdentityColumn, lastRow - 1, 1).getValues();
-
-  return values
-    .map(function(row) {
-      return String(row[0] || '').trim();
-    })
-    .filter(function(value) {
-      return value !== '';
-    });
-}
-function getAttachmentLogIdentity_(attachmentRecord) {
-  if (!attachmentRecord) {
-    return '';
-  }
-
-  return attachmentRecord.attachmentIdentity || attachmentRecord.fingerprint || '';
-}
-
-
-function buildAttachmentLogRow_(context, attachmentRecord, runId, duplicateLogged) {
-  const claimData = context.claimData || {};
-  const folderResult = context.folderResult || {};
-  const vendorSubfolderResult = context.vendorSubfolderResult || {};
-
-  return [
-    new Date(),
-    runId,
-    context.workflow || '',
-    context.vendor || '',
-    claimData.claimNumber || '',
-    claimData.customerName || '',
-    attachmentRecord.threadId || '',
-    attachmentRecord.messageId || '',
-    attachmentRecord.messageDate || '',
-    attachmentRecord.messageFrom || '',
-    claimData.subject || '',
-    folderResult.folderId || '',
-    folderResult.folderUrl || '',
-    vendorSubfolderResult.folderId || '',
-    vendorSubfolderResult.folderUrl || '',
-    attachmentRecord.attachmentName || '',
-    attachmentRecord.contentType || '',
-    attachmentRecord.sizeBytes || 0,
-    getAttachmentLogIdentity_(attachmentRecord),
-    attachmentRecord.copyStatus || attachmentRecord.attachmentLogStatus || attachmentRecord.status || '',
-    attachmentRecord.copyEligible === true,
-    attachmentRecord.reviewNeeded === true,
-    attachmentRecord.reviewReason || '',
-    duplicateLogged === true,
-    attachmentRecord.copyAttempted === true,
-    attachmentRecord.copiedFileId || '',
-    attachmentRecord.copiedFileUrl || '',
-    attachmentRecord.error || '',
-    CONFIG.phase
-  ];
-}
-
-function buildRunId_() {
-  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss') + '-' + Utilities.getUuid().slice(0, 8);
-}
-
-function writeAttachmentManifest_(context) {
-  if (!CONFIG.attachments || CONFIG.attachments.manifestEnabled !== true) {
-    return {
-      success: true,
-      skipped: true,
-      reason: 'Attachment manifest disabled.'
-    };
-  }
-
-  const attachmentResult = context.attachmentResult;
-  const vendorSubfolderResult = context.vendorSubfolderResult || {};
-
-  if (!attachmentResult || !attachmentResult.attachments || attachmentResult.attachments.length === 0) {
-    return {
-      success: true,
-      skipped: true,
-      reason: 'No attachments to write to manifest.'
-    };
-  }
-
-  if (!vendorSubfolderResult.folderId) {
-    return {
-      success: false,
-      skipped: false,
-      error: 'Missing vendor folder ID for attachment manifest.'
-    };
-  }
-
-  try {
-    const vendorFolder = DriveApp.getFolderById(vendorSubfolderResult.folderId);
-    const manifestFileName = CONFIG.attachments.manifestFileName || 'attachment-manifest.json';
-    const existingManifestFile = findChildFileByName_(vendorFolder, manifestFileName);
-    const existingManifest = existingManifestFile ? readManifestFile_(existingManifestFile) : null;
-    const manifest = buildUpdatedAttachmentManifest_(context, existingManifest);
-    const manifestJson = JSON.stringify(manifest, null, 2);
-
-    if (existingManifestFile) {
-      existingManifestFile.setContent(manifestJson);
-
-      return {
-        success: true,
-        skipped: false,
-        created: false,
-        updated: true,
-        manifestFileName: manifestFileName,
-        manifestFileId: existingManifestFile.getId(),
-        manifestFileUrl: existingManifestFile.getUrl(),
-        attachmentCount: manifest.attachments.length
-      };
-    }
-
-    const createdFile = vendorFolder.createFile(manifestFileName, manifestJson, MimeType.PLAIN_TEXT);
-
-    return {
-      success: true,
-      skipped: false,
-      created: true,
-      updated: false,
-      manifestFileName: manifestFileName,
-      manifestFileId: createdFile.getId(),
-      manifestFileUrl: createdFile.getUrl(),
-      attachmentCount: manifest.attachments.length
-    };
-  } catch (error) {
-    return {
-      success: false,
-      skipped: false,
-      error: error.message
-    };
-  }
-}
-
-function readManifestFile_(manifestFile) {
-  try {
-    const content = manifestFile.getBlob().getDataAsString();
-
-    if (!content) {
-      return null;
-    }
-
-    return JSON.parse(content);
-  } catch (error) {
-    return {
-      manifestReadWarning: error.message,
-      attachments: []
-    };
-  }
-}
-
-function buildUpdatedAttachmentManifest_(context, existingManifest) {
-  const claimData = context.claimData || {};
-  const folderResult = context.folderResult || {};
-  const vendorSubfolderResult = context.vendorSubfolderResult || {};
-  const attachmentResult = context.attachmentResult || {};
-  const existingAttachments = existingManifest && existingManifest.attachments ? existingManifest.attachments : [];
-  const attachmentMap = {};
-
-  existingAttachments.forEach(function(record) {
-    const identityKey = record && (record.attachmentIdentity || record.fingerprint);
-
-    if (identityKey) {
-      attachmentMap[identityKey] = record;
-    }
-  });
-
-  attachmentResult.attachments.forEach(function(attachmentRecord) {
-    const identityKey = attachmentRecord.attachmentIdentity || attachmentRecord.fingerprint;
-
-    if (!identityKey) {
-      return;
-    }
-
-    attachmentMap[identityKey] = buildManifestAttachmentRecord_(attachmentRecord);
-  });
-
-  const attachments = Object.keys(attachmentMap)
-    .sort()
-    .map(function(key) {
-      return attachmentMap[key];
-    });
-
-  return {
-    manifestVersion: CONFIG.attachments.manifestSchemaVersion || 2,
-    automationPhase: CONFIG.phase,
-    workflow: context.workflow || '',
-    vendor: context.vendor || '',
-    claimNumber: claimData.claimNumber || '',
-    customerName: claimData.customerName || '',
-    claimFolderId: folderResult.folderId || '',
-    claimFolderUrl: folderResult.folderUrl || '',
-    vendorFolderId: vendorSubfolderResult.folderId || '',
-    vendorFolderUrl: vendorSubfolderResult.folderUrl || '',
-    sourceThreadId: context.thread && context.thread.getId ? context.thread.getId() : '',
-    subject: claimData.subject || '',
-    createdAt: existingManifest && existingManifest.createdAt ? existingManifest.createdAt : new Date(),
-    lastUpdatedAt: new Date(),
-    attachmentCount: attachments.length,
-    attachments: attachments
-  };
-}
-
-function buildManifestAttachmentRecord_(attachmentRecord) {
-  return {
-    attachmentIdentity: attachmentRecord.attachmentIdentity || attachmentRecord.fingerprint || '',
-    fingerprint: attachmentRecord.fingerprint || '',
-    originalName: attachmentRecord.attachmentName || '',
-    storedName: attachmentRecord.targetFileName || '',
-    mimeType: attachmentRecord.contentType || '',
-    sizeBytes: attachmentRecord.sizeBytes || 0,
-    sourceThreadId: attachmentRecord.threadId || '',
-    sourceMessageId: attachmentRecord.messageId || '',
-    sourceMessageDate: attachmentRecord.messageDate || '',
-    sourceSender: attachmentRecord.messageFrom || '',
-    copyEligible: attachmentRecord.copyEligible === true,
-    reviewNeeded: attachmentRecord.reviewNeeded === true,
-    reviewReason: attachmentRecord.reviewReason || '',
-    copyAttempted: attachmentRecord.copyAttempted === true,
-    copyStatus: attachmentRecord.copyStatus || attachmentRecord.status || '',
-    duplicateFileDetected: attachmentRecord.duplicateFileDetected === true,
-    duplicateMatchFileId: attachmentRecord.duplicateMatchFileId || '',
-    fileId: attachmentRecord.copiedFileId || '',
-    fileUrl: attachmentRecord.copiedFileUrl || '',
-    error: attachmentRecord.error || '',
-    updatedAt: new Date()
-  };
-}
-
-function checkOrCreateClaimFolder_(claimData) {
-  if (!CONFIG.createClaimFolders) {
-    return {
-      success: true,
-      phase: CONFIG.phase,
-      skipped: true,
-      folderId: '',
-      folderUrl: '',
-      note: 'Claim folder creation/checking is disabled. Set CONFIG.createClaimFolders to true after configuring claimFolderParentFolderId.'
-    };
-  }
-
-  if (!CONFIG.claimFolderParentFolderId || CONFIG.claimFolderParentFolderId === 'PASTE_CLAIM_FOLDER_PARENT_FOLDER_ID_HERE') {
-    return {
-      success: false,
-      phase: CONFIG.phase,
-      folderId: '',
-      folderUrl: '',
-      error: 'Set CONFIG.claimFolderParentFolderId before enabling claim folder creation/checking.'
-    };
-  }
-
-  try {
-    const parentFolder = DriveApp.getFolderById(CONFIG.claimFolderParentFolderId);
-    const yearFolder = getOrCreateCurrentYearFolder_(parentFolder);
-    const folderName = buildClaimFolderName_(claimData);
-    const existingFolder = findChildFolderByName_(yearFolder.folder, folderName);
-
-    if (existingFolder) {
-      return {
-        success: true,
-        phase: CONFIG.phase,
-        created: false,
-        existing: true,
-        matchedBy: 'exact_folder_name',
-        year: yearFolder.year,
-        yearFolderCreated: yearFolder.created,
-        yearFolderId: yearFolder.folder.getId(),
-        yearFolderUrl: yearFolder.folder.getUrl(),
-        folderName: folderName,
-        folderId: existingFolder.getId(),
-        folderUrl: existingFolder.getUrl()
-      };
-    }
-
-    const existingFolderByClaimNumber = findChildFolderByClaimNumber_(yearFolder.folder, claimData.claimNumber);
-
-    if (existingFolderByClaimNumber) {
-      return {
-        success: true,
-        phase: CONFIG.phase,
-        created: false,
-        existing: true,
-        matchedBy: 'claim_number_in_folder_name',
-        year: yearFolder.year,
-        yearFolderCreated: yearFolder.created,
-        yearFolderId: yearFolder.folder.getId(),
-        yearFolderUrl: yearFolder.folder.getUrl(),
-        folderName: existingFolderByClaimNumber.getName(),
-        requestedFolderName: folderName,
-        folderId: existingFolderByClaimNumber.getId(),
-        folderUrl: existingFolderByClaimNumber.getUrl()
-      };
-    }
-
-    if (!claimData.customerName) {
-      return {
-        success: false,
-        phase: CONFIG.phase,
-        status: 'pending_claim_folder',
-        created: false,
-        existing: false,
-        matchedBy: 'claim_number_not_found_and_customer_missing',
-        year: yearFolder.year,
-        yearFolderCreated: yearFolder.created,
-        yearFolderId: yearFolder.folder.getId(),
-        yearFolderUrl: yearFolder.folder.getUrl(),
-        requestedFolderName: folderName,
-        folderId: '',
-        folderUrl: '',
-        error: 'No existing claim folder found by claim number, and customer name is missing. Not creating UNKNOWN CUSTOMER folder.'
-      };
-    }
-
-    const createdFolder = yearFolder.folder.createFolder(folderName);
-
-    return {
-      success: true,
-      phase: CONFIG.phase,
-      created: true,
-      existing: false,
-      matchedBy: 'created_new_folder',
-      year: yearFolder.year,
-      yearFolderCreated: yearFolder.created,
-      yearFolderId: yearFolder.folder.getId(),
-      yearFolderUrl: yearFolder.folder.getUrl(),
-      folderName: folderName,
-      folderId: createdFolder.getId(),
-      folderUrl: createdFolder.getUrl()
-    };
-  } catch (error) {
-    return {
-      success: false,
-      phase: CONFIG.phase,
-      folderId: '',
-      folderUrl: '',
-      error: error.message
-    };
-  }
-}
-
-function findExistingClaimFolderForVendor_(claimData) {
-  if (!CONFIG.claimFolderParentFolderId || CONFIG.claimFolderParentFolderId === 'PASTE_CLAIM_FOLDER_PARENT_FOLDER_ID_HERE') {
-    return {
-      success: false,
-      phase: CONFIG.phase,
-      status: 'folder_check_failed',
-      created: false,
-      existing: false,
-      folderId: '',
-      folderUrl: '',
-      error: 'Set CONFIG.claimFolderParentFolderId before checking vendor claim folders.'
-    };
-  }
-
-  try {
-    const parentFolder = DriveApp.getFolderById(CONFIG.claimFolderParentFolderId);
-    const currentYearFolder = getOrCreateCurrentYearFolder_(parentFolder);
-    const claimNumber = claimData.claimNumber || '';
-    const normalizedClaimNumber = normalizeClaimNumberForMatch_(claimNumber);
-    const searchedFolders = [];
-
-    const currentYearMatch = findChildFolderByClaimNumber_(currentYearFolder.folder, claimNumber);
-    searchedFolders.push(currentYearFolder.folder.getName());
-
-    if (currentYearMatch) {
-      return {
-        success: true,
-        phase: CONFIG.phase,
-        created: false,
-        existing: true,
-        matchedBy: 'claim_number_in_current_year_folder_name',
-        vendorLookupOnly: true,
-        year: currentYearFolder.year,
-        yearFolderCreated: currentYearFolder.created,
-        yearFolderId: currentYearFolder.folder.getId(),
-        yearFolderUrl: currentYearFolder.folder.getUrl(),
-        folderName: currentYearMatch.getName(),
-        requestedClaimNumber: claimNumber,
-        normalizedRequestedClaimNumber: normalizedClaimNumber,
-        folderId: currentYearMatch.getId(),
-        folderUrl: currentYearMatch.getUrl(),
-        searchedFolders: searchedFolders
-      };
-    }
-
-    const currentYearNameMatch = findChildFolderByCustomerName_(currentYearFolder.folder, claimData.customerName);
-
-    if (currentYearNameMatch) {
-      return {
-        success: true,
-        phase: CONFIG.phase,
-        created: false,
-        existing: true,
-        matchedBy: 'customer_name_in_current_year_folder_name',
-        vendorLookupOnly: true,
-        year: currentYearFolder.year,
-        yearFolderCreated: currentYearFolder.created,
-        yearFolderId: currentYearFolder.folder.getId(),
-        yearFolderUrl: currentYearFolder.folder.getUrl(),
-        folderName: currentYearNameMatch.getName(),
-        requestedClaimNumber: claimNumber,
-        normalizedRequestedClaimNumber: normalizedClaimNumber,
-        requestedCustomerName: claimData.customerName || '',
-        normalizedRequestedCustomerName: normalizeNameForMatch_(claimData.customerName),
-        folderId: currentYearNameMatch.getId(),
-        folderUrl: currentYearNameMatch.getUrl(),
-        searchedFolders: searchedFolders
-      };
-    }
-
-    const claimFolderMapMatch = findClaimFolderFromMapByClaimNumberOrName_(claimNumber, claimData.customerName);
-
-    if (claimFolderMapMatch) {
-      return {
-        success: true,
-        phase: CONFIG.phase,
-        created: false,
-        existing: true,
-        matchedBy: claimFolderMapMatch.matchedBy,
-        vendorLookupOnly: true,
-        year: claimFolderMapMatch.year || currentYearFolder.year,
-        yearFolderCreated: currentYearFolder.created,
-        yearFolderId: currentYearFolder.folder.getId(),
-        yearFolderUrl: currentYearFolder.folder.getUrl(),
-        folderName: claimFolderMapMatch.folderName,
-        requestedClaimNumber: claimNumber,
-        normalizedRequestedClaimNumber: normalizedClaimNumber,
-        requestedCustomerName: claimData.customerName || '',
-        normalizedRequestedCustomerName: normalizeNameForMatch_(claimData.customerName),
-        folderId: claimFolderMapMatch.folderId,
-        folderUrl: claimFolderMapMatch.folderUrl,
-        claimFolderMapRowNumber: claimFolderMapMatch.rowNumber,
-        searchedFolders: searchedFolders
-      };
-    }
-
-    const yearFolders = parentFolder.getFolders();
-
-    while (yearFolders.hasNext()) {
-      const yearFolder = yearFolders.next();
-      const yearFolderName = yearFolder.getName();
-
-      if (yearFolder.getId() === currentYearFolder.folder.getId()) {
-        continue;
-      }
-
-      searchedFolders.push(yearFolderName);
-
-      const crossYearMatch = findChildFolderByClaimNumber_(yearFolder, claimNumber);
-
-      if (crossYearMatch) {
-        return {
-          success: true,
-          phase: CONFIG.phase,
-          created: false,
-          existing: true,
-          matchedBy: 'claim_number_in_any_year_folder_name',
-          vendorLookupOnly: true,
-          year: yearFolderName,
-          yearFolderCreated: false,
-          yearFolderId: yearFolder.getId(),
-          yearFolderUrl: yearFolder.getUrl(),
-          folderName: crossYearMatch.getName(),
-          requestedClaimNumber: claimNumber,
-          normalizedRequestedClaimNumber: normalizedClaimNumber,
-          requestedCustomerName: claimData.customerName || '',
-          normalizedRequestedCustomerName: normalizeNameForMatch_(claimData.customerName),
-          folderId: crossYearMatch.getId(),
-          folderUrl: crossYearMatch.getUrl(),
-          searchedFolders: searchedFolders
-        };
-      }
-
-      const crossYearNameMatch = findChildFolderByCustomerName_(yearFolder, claimData.customerName);
-
-      if (crossYearNameMatch) {
-        return {
-          success: true,
-          phase: CONFIG.phase,
-          created: false,
-          existing: true,
-          matchedBy: 'customer_name_in_any_year_folder_name',
-          vendorLookupOnly: true,
-          year: yearFolderName,
-          yearFolderCreated: false,
-          yearFolderId: yearFolder.getId(),
-          yearFolderUrl: yearFolder.getUrl(),
-          folderName: crossYearNameMatch.getName(),
-          requestedClaimNumber: claimNumber,
-          normalizedRequestedClaimNumber: normalizedClaimNumber,
-          requestedCustomerName: claimData.customerName || '',
-          normalizedRequestedCustomerName: normalizeNameForMatch_(claimData.customerName),
-          folderId: crossYearNameMatch.getId(),
-          folderUrl: crossYearNameMatch.getUrl(),
-          searchedFolders: searchedFolders
-        };
-      }
-    }
-
-    return {
-      success: false,
-      phase: CONFIG.phase,
-      status: 'pending_claim_folder',
-      created: false,
-      existing: false,
-      matchedBy: 'claim_number_not_found',
-      vendorLookupOnly: true,
-      year: currentYearFolder.year,
-      yearFolderCreated: currentYearFolder.created,
-      yearFolderId: currentYearFolder.folder.getId(),
-      yearFolderUrl: currentYearFolder.folder.getUrl(),
-      requestedClaimNumber: claimNumber,
-      normalizedRequestedClaimNumber: normalizedClaimNumber,
-      requestedCustomerName: claimData.customerName || '',
-      normalizedRequestedCustomerName: normalizeNameForMatch_(claimData.customerName),
-      searchedFolders: searchedFolders,
-      folderId: '',
-      folderUrl: '',
-      error: 'No existing claim folder found by claim number in current year folder, Claim Folder Map, or other year folders. Vendor workflow will not create a main claim folder.'
-    };
-  } catch (error) {
-    return {
-      success: false,
-      phase: CONFIG.phase,
-      status: 'folder_check_failed',
-      created: false,
-      existing: false,
-      vendorLookupOnly: true,
-      folderId: '',
-      folderUrl: '',
-      error: error.message
-    };
-  }
-}
-
-function checkOrCreateVendorSubfolder_(claimFolderId, subfolderName) {
-  if (!claimFolderId) {
-    return {
-      success: false,
-      subfolderName: subfolderName,
-      folderId: '',
-      folderUrl: '',
-      error: 'Missing claim folder ID for vendor subfolder creation.'
-    };
-  }
-
-  try {
-    const claimFolder = DriveApp.getFolderById(claimFolderId);
-    const cleanSubfolderName = sanitizeFolderName_(subfolderName);
-    const existingSubfolder = findChildFolderByName_(claimFolder, cleanSubfolderName);
-
-    if (existingSubfolder) {
-      return {
-        success: true,
-        created: false,
-        existing: true,
-        subfolderName: cleanSubfolderName,
-        folderId: existingSubfolder.getId(),
-        folderUrl: existingSubfolder.getUrl()
-      };
-    }
-
-    const createdSubfolder = claimFolder.createFolder(cleanSubfolderName);
-
-    return {
-      success: true,
-      created: true,
-      existing: false,
-      subfolderName: cleanSubfolderName,
-      folderId: createdSubfolder.getId(),
-      folderUrl: createdSubfolder.getUrl()
-    };
-  } catch (error) {
-    return {
-      success: false,
-      subfolderName: subfolderName,
-      folderId: '',
-      folderUrl: '',
-      error: error.message
-    };
-  }
-}
-
-function getOrCreateCurrentYearFolder_(parentFolder) {
-  const year = String(new Date().getFullYear());
-  const existingYearFolder = findChildFolderByName_(parentFolder, year);
-
-  if (existingYearFolder) {
-    return {
-      year: year,
-      created: false,
-      folder: existingYearFolder
-    };
-  }
-
-  const createdYearFolder = parentFolder.createFolder(year);
-
-  return {
-    year: year,
-    created: true,
-    folder: createdYearFolder
-  };
-}
-
-function buildClaimFolderName_(claimData) {
-  const customerName = claimData.customerName || 'UNKNOWN CUSTOMER';
-  const claimNumber = claimData.claimNumber || 'NO CLAIM NUMBER';
-
-  return sanitizeFolderName_(claimNumber + ' - ' + customerName.toUpperCase());
-}
-
-function sanitizeFolderName_(folderName) {
-  return String(folderName)
-    .replace(/[\\/:*?"<>|#%{}~&]/g, '-')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-function findChildFolderByName_(parentFolder, folderName) {
-  const folders = parentFolder.getFoldersByName(folderName);
-  return folders.hasNext() ? folders.next() : null;
-}
-
-function findChildFolderByClaimNumber_(parentFolder, claimNumber) {
-  const cleanClaimNumber = String(claimNumber || '').trim();
-  const normalizedClaimNumber = normalizeClaimNumberForMatch_(cleanClaimNumber);
-  const digitsOnlyClaimNumber = cleanClaimNumber.replace(/\D/g, '');
-
-  if (!cleanClaimNumber) {
-    return null;
-  }
-
-  const folders = parentFolder.getFolders();
-
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    const folderName = folder.getName();
-    const normalizedFolderName = normalizeClaimNumberForMatch_(folderName);
-    const folderDigitsOnly = folderName.replace(/\D/g, '');
-
-    if (folderName.indexOf(cleanClaimNumber) !== -1) {
-      return folder;
-    }
-
-    if (normalizedClaimNumber && normalizedFolderName.indexOf(normalizedClaimNumber) !== -1) {
-      return folder;
-    }
-
-    if (digitsOnlyClaimNumber && folderDigitsOnly.indexOf(digitsOnlyClaimNumber) !== -1) {
-      return folder;
-    }
-  }
-
-  return null;
-}
-
-function findChildFolderByCustomerName_(parentFolder, customerName) {
-  const normalizedCustomerName = normalizeNameForMatch_(customerName);
-
-  if (!normalizedCustomerName) {
-    return null;
-  }
-
-  const folders = parentFolder.getFolders();
-
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    const folderName = folder.getName();
-    const normalizedFolderName = normalizeNameForMatch_(folderName);
-
-    if (normalizedFolderName.indexOf(normalizedCustomerName) !== -1) {
-      return folder;
-    }
-  }
-
-  return null;
-}
-
-function normalizeNameForMatch_(value) {
-  return String(value || '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
-}
-
-function normalizeClaimNumberForMatch_(value) {
-  return String(value || '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
-}
-
-function appendClaimFolderMapRow_(claimData, folderResult, thread) {
-  const rowData = [
-    claimData.customerName || '',
-    claimData.claimNumber || '',
-    folderResult.year || String(new Date().getFullYear()),
-    folderResult.folderUrl || '',
-    folderResult.folderId || '',
-    true,
-    '',
-    new Date(),
-    buildClaimFolderNotes_(claimData, folderResult, thread)
-  ];
-
-  if (CONFIG.dryRun) {
-    return {
-      success: true,
-      dryRun: true,
-      sheetUpdated: false,
-      rowData: rowData
-    };
-  }
-
-  const lock = LockService.getScriptLock();
-
-  try {
-    lock.waitLock(30000);
-
-    const sheet = getClaimFolderMapSheet_();
-    sheet.appendRow(rowData);
-
-    return {
-      success: true,
-      dryRun: false,
-      sheetUpdated: true,
-      rowNumber: sheet.getLastRow()
-    };
-  } catch (error) {
-    return {
-      success: false,
-      dryRun: CONFIG.dryRun,
-      sheetUpdated: false,
-      error: error.message
-    };
-  } finally {
-    try {
-      lock.releaseLock();
-    } catch (e) {}
-  }
-}
-
-function buildClaimFolderNotes_(claimData, folderResult, thread) {
-  const notes = [];
-
-  notes.push('Created by Insurance Intake Automation');
-  notes.push('Phase: ' + CONFIG.phase);
-
-  if (folderResult.created) {
-    notes.push('Folder Created');
-  }
-
-  if (folderResult.existing) {
-    notes.push('Existing Folder Reused');
-  }
-
-  if (thread && thread.getId) {
-    notes.push('Thread ID: ' + thread.getId());
-  }
-
-  if (claimData.subject) {
-    notes.push('Subject: ' + claimData.subject);
-  }
-
-  return notes.join(' | ');
-}
-
-function getGmailLabelForAdd_(labelName) {
-  if (isRequiredExistingGmailLabel_(labelName)) {
-    return getRequiredGmailLabel_(labelName);
-  }
-
-  return getOrCreateGmailLabel_(labelName);
-}
-
-function isRequiredExistingGmailLabel_(labelName) {
-  const requiredLabels = [
-    CONFIG.processedLabel,
-    CONFIG.errorLabel,
-    CONFIG.duplicateLabel,
-    CONFIG.needsReviewLabel,
-    CONFIG.asbestosProcessedLabel,
-    CONFIG.asbestosErrorLabel,
-    CONFIG.asbestosNeedsReviewLabel,
-    CONFIG.asbestosPendingClaimFolderLabel,
-    CONFIG.itelProcessedLabel,
-    CONFIG.itelErrorLabel,
-    CONFIG.itelNeedsReviewLabel,
-    CONFIG.itelPendingClaimFolderLabel
-  ];
-
-  return requiredLabels.indexOf(labelName) !== -1;
-}
-
-function getRequiredGmailLabel_(labelName) {
-  const label = GmailApp.getUserLabelByName(labelName);
-
-  if (!label) {
-    throw new Error('Required Gmail label does not exist: ' + labelName);
-  }
-
-  return label;
-}
-
-function getAsbestosWorkflowStateLabelsToRemove_() {
-  return [
-    CONFIG.asbestosIntakeLabel,
-    CONFIG.asbestosNeedsReviewLabel,
-    CONFIG.asbestosPendingClaimFolderLabel,
-    CONFIG.asbestosErrorLabel,
-    CONFIG.asbestosProcessedLabelLegacy
-  ];
-}
-
-function getItelWorkflowStateLabelsToRemove_() {
-  return [
-    CONFIG.itelIntakeLabel,
-    CONFIG.itelNeedsReviewLabel,
-    CONFIG.itelPendingClaimFolderLabel,
-    CONFIG.itelErrorLabel,
-    CONFIG.itelProcessedLabelLegacy
-  ];
-}
-
-function applyInsuranceIntakeLabels_(thread, labelPlan) {
-  if (CONFIG.labelDryRun) {
-    return {
-      success: true,
-      dryRun: true,
-      labelsAdded: [],
-      labelsRemoved: [],
-      wouldAdd: labelPlan.add || [],
-      wouldRemove: labelPlan.remove || []
-    };
-  }
-
-  const labelsAdded = [];
-  const labelsRemoved = [];
-  const removeFailures = [];
-  const addFailures = [];
-
-  try {
-    const addLabels = labelPlan.add || [];
-    const removeLabels = labelPlan.remove || [];
-
-    // Add destination labels first. Source labels are removed only after destination labels are verified.
-    addLabels.forEach(function(labelName) {
-      const label = getGmailLabelForAdd_(labelName);
-      thread.addLabel(label);
-      labelsAdded.push(labelName);
-    });
-
-    // Verify additions before removals so a processed/review/error label must stick before source labels are removed.
-    addLabels.forEach(function(labelName) {
-      const alreadyApplied = thread.getLabels().some(function(label) {
-        return label.getName() === labelName;
-      });
-
-      if (!alreadyApplied) {
-        const label = getGmailLabelForAdd_(labelName);
-        thread.addLabel(label);
-      }
-    });
-
-    addLabels.forEach(function(labelName) {
-      const stillMissing = !thread.getLabels().some(function(label) {
-        return label.getName() === labelName;
-      });
-
-      if (stillMissing) {
-        addFailures.push(labelName);
-      }
-    });
-
-    if (addFailures.length > 0) {
-      return {
-        success: false,
-        dryRun: false,
-        labelsAdded: labelsAdded,
-        labelsRemoved: labelsRemoved,
-        addFailures: addFailures,
-        removeFailures: removeFailures,
-        error: 'Failed to add label(s): ' + addFailures.join(', ')
-      };
-    }
-
-    // Remove source labels only after destination labels have been verified.
-    removeLabels.forEach(function(labelName) {
-      const labelsToRemove = [labelName];
-
-      if (labelName === CONFIG.asbestosIntakeLabel) {
-        labelsToRemove.push(CONFIG.asbestosProcessedLabelLegacy);
-      }
-
-      if (labelName === CONFIG.itelIntakeLabel) {
-        labelsToRemove.push(CONFIG.itelProcessedLabelLegacy);
-      }
-
-      labelsToRemove.forEach(function(removalLabelName) {
-        const label = GmailApp.getUserLabelByName(removalLabelName);
-
-        if (label) {
-          thread.removeLabel(label);
-          labelsRemoved.push(removalLabelName);
-        }
-      });
-    });
-
-    // Verify removals. Gmail can occasionally show stale label state unless we force a second pass.
-    removeLabels.forEach(function(labelName) {
-      const labelsToRemove = [labelName];
-
-      if (labelName === CONFIG.asbestosIntakeLabel) {
-        labelsToRemove.push(CONFIG.asbestosProcessedLabelLegacy);
-      }
-
-      if (labelName === CONFIG.itelIntakeLabel) {
-        labelsToRemove.push(CONFIG.itelProcessedLabelLegacy);
-      }
-
-      labelsToRemove.forEach(function(removalLabelName) {
-        const stillApplied = thread.getLabels().some(function(label) {
-          return label.getName() === removalLabelName;
-        });
-
-        if (stillApplied) {
-          const label = GmailApp.getUserLabelByName(removalLabelName);
-
-          if (label) {
-            thread.removeLabel(label);
-          }
-        }
-      });
-    });
-
-    removeLabels.forEach(function(labelName) {
-      const labelsToCheck = [labelName];
-
-      if (labelName === CONFIG.asbestosIntakeLabel) {
-        labelsToCheck.push(CONFIG.asbestosProcessedLabelLegacy);
-      }
-
-      if (labelName === CONFIG.itelIntakeLabel) {
-        labelsToCheck.push(CONFIG.itelProcessedLabelLegacy);
-      }
-
-      labelsToCheck.forEach(function(checkLabelName) {
-        const stillApplied = thread.getLabels().some(function(label) {
-          return label.getName() === checkLabelName;
-        });
-
-        if (stillApplied) {
-          removeFailures.push(checkLabelName);
-        }
-      });
-    });
-
-    if (removeFailures.length > 0) {
-      return {
-        success: false,
-        dryRun: false,
-        labelsAdded: labelsAdded,
-        labelsRemoved: labelsRemoved,
-        addFailures: addFailures,
-        removeFailures: removeFailures,
-        error: 'Failed to remove label(s): ' + removeFailures.join(', ')
-      };
-    }
-
-    return {
-      success: true,
-      dryRun: false,
-      labelsAdded: labelsAdded,
-      labelsRemoved: labelsRemoved,
-      addFailures: addFailures,
-      removeFailures: removeFailures
-    };
-  } catch (error) {
-    return {
-      success: false,
-      dryRun: CONFIG.labelDryRun,
-      labelsAdded: labelsAdded,
-      labelsRemoved: labelsRemoved,
-      addFailures: addFailures,
-      removeFailures: removeFailures,
-      error: error.message
-    };
-  }
-}
-
-function getOrCreateGmailLabel_(labelName) {
-  return GmailApp.getUserLabelByName(labelName) || GmailApp.createLabel(labelName);
-}
-
-function claimFolderMapHasDuplicate_(claimData, thread) {
-  if (CONFIG.claimFolderMapSpreadsheetId === 'PASTE_CLAIM_FOLDER_MAP_SPREADSHEET_ID_HERE') {
-    return {
-      duplicate: false,
-      dryRunSkipped: true,
-      reason: 'Claim Folder Map spreadsheet ID not configured yet.'
-    };
-  }
-
-  const sheet = getClaimFolderMapSheet_();
-  const values = sheet.getDataRange().getValues();
-  const threadId = thread.getId();
-  const claimNumber = claimData.claimNumber;
-
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i];
-    const existingClaimNumber = String(row[1] || '').trim();
-    const existingNotes = String(row[8] || '').trim();
-    const existingThreadId = existingNotes.indexOf('Thread ID: ' + threadId) !== -1 ? threadId : '';
-
-    if (claimNumber && existingClaimNumber === String(claimNumber).trim()) {
-      return {
-        duplicate: true,
-        reason: 'claim_number_exists',
-        rowNumber: i + 1
-      };
-    }
-
-    if (existingThreadId && existingThreadId === threadId) {
-      return {
-        duplicate: true,
-        reason: 'gmail_thread_id_exists',
-        rowNumber: i + 1
-      };
-    }
-  }
-
-  return {
-    duplicate: false
-  };
-}
-
-function getClaimFolderMapSheet_() {
-  if (CONFIG.claimFolderMapSpreadsheetId === 'PASTE_CLAIM_FOLDER_MAP_SPREADSHEET_ID_HERE') {
-    throw new Error('Set CONFIG.claimFolderMapSpreadsheetId before enabling real Claim Folder Map updates.');
-  }
-
-  const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
-  const sheet = ss.getSheetByName(CONFIG.claimFolderMapSheetName);
-
-  if (!sheet) {
-    throw new Error('Claim Folder Map sheet not found: ' + CONFIG.claimFolderMapSheetName);
-  }
-
-  return sheet;
-}
-
-function parseInsuranceIntakeThread(thread) {
-  const messages = thread.getMessages();
-  const latestMessage = messages[messages.length - 1];
-  const subject = latestMessage.getSubject() || '';
-  const plainBody = latestMessage.getPlainBody() || '';
-  const combinedText = subject + '\n' + plainBody;
-
-  return {
-    threadId: thread.getId(),
-    messageCount: messages.length,
-    subject: subject,
-    from: latestMessage.getFrom(),
-    date: latestMessage.getDate(),
-    claimNumber: extractClaimNumber(combinedText),
-    customerName: extractCustomerName(combinedText)
-  };
-}
-
-function extractClaimNumber(text) {
-  const patterns = [
-    /\((\d{6,})\s*-\s*[^\)]+\)/i,
-    /order\(s\)\s*(\d{6,})/i,
-    /order\s*(?:number|#|no\.?|num\.?)?\s*[:#-]?\s*(\d{6,})/i,
-    /claim\s*(?:number|#|no\.?|num\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{4,})/i,
-    /claim\s*[:#-]\s*([A-Z0-9][A-Z0-9-]{4,})/i,
-    /clm\s*#?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{4,})/i,
-    /\b(\d{6,})\b/i,
-    /\b([A-Z]{1,4}-?\d{5,})\b/i
-  ];
-
-  return extractFirstMatch(text, patterns);
-}
-
-function extractCustomerName(text) {
-  const patterns = [
-    /\((\d{6,})\s*-\s*([^\)]+)\)/i,
-    /order\(s\)\s*\d{6,}\s*\((\d{6,})\s*-\s*([^\)]+)\)/i,
-    /EMSL\s+report,\s*invoice,\s*COC\s+for\s+order\(s\)\s*\d{6,}\s*\(\d{6,}\s*-\s*([^\)]+)\)/i,
-    /ITEL\s+Lab\s+Report\s*-\s*([^\n\r-]+?)\s*-\s*Clm\s*#/i,
-    /customer\s*name\s*[:#-]?\s*([^\n\r]+)/i,
-    /insured\s*name\s*[:#-]?\s*([^\n\r]+)/i,
-    /policyholder\s*name\s*[:#-]?\s*([^\n\r]+)/i,
-    /claimant\s*name\s*[:#-]?\s*([^\n\r]+)/i,
-    /customer\s*[:#-]\s*([^\n\r]+)/i,
-    /insured\s*[:#-]\s*([^\n\r]+)/i,
-    /claimant\s*[:#-]\s*([^\n\r]+)/i
-  ];
-
-  for (let i = 0; i < patterns.length; i++) {
-    const match = text.match(patterns[i]);
-
-    if (!match) {
-      continue;
-    }
-
-    const extractedName = match[2] || match[1];
-
-    if (extractedName) {
-      return cleanExtractedName(extractedName);
-    }
-  }
-
-  return null;
-}
-
-function extractFirstMatch(text, patterns) {
-  for (let i = 0; i < patterns.length; i++) {
-    const match = text.match(patterns[i]);
-
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-  }
-
-  return null;
-}
-
-function cleanExtractedName(name) {
-  const cleaned = String(name || '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/[,;|].*$/, function(match) {
-      return match.indexOf(',') === 0 ? match : '';
-    })
-    .trim();
-
-  const commaNameMatch = cleaned.match(/^([^,]+),\s*(.+)$/);
-
-  if (commaNameMatch) {
-    return (commaNameMatch[2] + ' ' + commaNameMatch[1])
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-  }
-
-  return cleaned;
-}
-
-function testProcessInsuranceIntake() {
-  Logger.log(JSON.stringify(processInsuranceIntake(), null, 2));
-}
-
-function testProcessAsbestosAttachments() {
-  Logger.log(JSON.stringify(processAsbestosAttachments(), null, 2));
-}
-
-function testCleanupProcessedAsbestosLabels() {
-  Logger.log(JSON.stringify(cleanupProcessedAsbestosLabels(), null, 2));
-}
-
-function testAsbestosSubjectParsingExample() {
-  const subject = 'EMSL report, invoice, COC for order(s) 072604367 (072604367 - KAMALRAJ ARUMUGAM)';
-
-  Logger.log(JSON.stringify({
-    subject: subject,
-    claimNumber: extractClaimNumber(subject),
-    customerName: extractCustomerName(subject)
-  }, null, 2));
-}
-
-// Temporary backward-compatible test wrappers.
-function testProcessEmslAttachments() {
-  Logger.log(JSON.stringify(processAsbestosAttachments(), null, 2));
-}
-
-function testCleanupProcessedEmslLabels() {
-  Logger.log(JSON.stringify(cleanupProcessedAsbestosLabels(), null, 2));
-}
-
-function testProcessItelAttachments() {
-  Logger.log(JSON.stringify(processItelAttachments(), null, 2));
-}
-
-function testCleanupProcessedItelLabels() {
-  Logger.log(JSON.stringify(cleanupProcessedItelLabels(), null, 2));
-}
-
-function jsonResponse(payload) {
-  return ContentService
-    .createTextOutput(JSON.stringify(payload))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function findClaimFolderFromMapByClaimNumberOrName_(claimNumber, customerName) {
-  const normalizedClaimNumber = normalizeClaimNumberForMatch_(claimNumber);
-  const normalizedCustomerName = normalizeNameForMatch_(customerName);
-
-  if (!normalizedClaimNumber && !normalizedCustomerName) {
-    return null;
-  }
-
-  try {
-    const sheet = getClaimFolderMapSheet_();
-    const values = sheet.getDataRange().getValues();
-
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      const rowCustomerName = String(row[0] || '').trim();
-      const rowClaimNumber = String(row[1] || '').trim();
-      const rowFolderUrl = String(row[3] || '').trim();
-      const rowFolderId = String(row[4] || '').trim();
-      const rowYear = String(row[2] || '').trim();
-
-      if (!rowFolderId) {
-        continue;
-      }
-
-      const rowNormalizedClaimNumber = normalizeClaimNumberForMatch_(rowClaimNumber);
-      const rowNormalizedCustomerName = normalizeNameForMatch_(rowCustomerName);
-      const claimMatches = normalizedClaimNumber && rowNormalizedClaimNumber === normalizedClaimNumber;
-      const nameMatches = normalizedCustomerName && rowNormalizedCustomerName && rowNormalizedCustomerName.indexOf(normalizedCustomerName) !== -1;
-
-      if (claimMatches || nameMatches) {
-        let folderName = '';
-
-        try {
-          folderName = DriveApp.getFolderById(rowFolderId).getName();
-        } catch (folderError) {
-          folderName = rowCustomerName && rowClaimNumber ? rowClaimNumber + ' - ' + rowCustomerName : rowClaimNumber || rowCustomerName;
-        }
-
-        return {
-          rowNumber: i + 1,
-          matchedBy: claimMatches ? 'claim_folder_map_claim_number' : 'claim_folder_map_customer_name',
-          claimNumber: rowClaimNumber,
-          customerName: rowCustomerName,
-          year: rowYear,
-          folderName: folderName,
-          folderId: rowFolderId,
-          folderUrl: rowFolderUrl
-        };
-      }
-    }
-  } catch (error) {
-    Logger.log('Claim Folder Map lookup failed: ' + error.message);
-  }
-
-  return null;
-}
-
-function findClaimFolderFromMapByClaimNumber_(claimNumber) {
-  return findClaimFolderFromMapByClaimNumberOrName_(claimNumber, '');
-}
+function buildTodoistDeadlineDate_(daysFromToday) {
+  const deadline = new Date();
+  deadline.setDate(deadline.getDate() + daysFromToday);
+  return Utilities.formatDate(deadline, Session.getScriptTimeZone(), 'yyyy-MM-dd');}
