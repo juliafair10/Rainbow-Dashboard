@@ -23,7 +23,80 @@ const DASHBOARD_CONFIG = {
       name: 'Insurance Intake Automation',
       category: 'Insurance / Gmail / Todoist',
       mainFunction: 'processInsuranceIntake',
-      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbygF8irxcjBoVFkryt8ZRIgAw1uQ_dF2hmpWPThx-RvA4I2Tjm9hD1aMnV6tlx9f5EMNQ/exec'
+      action: 'process',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'asbestos-attachment-intake',
+      name: 'Asbestos Attachment Intake',
+      category: 'Vendor Attachments / Gmail / Drive',
+      mainFunction: 'processAsbestosAttachments',
+      action: 'processAsbestos',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'itel-attachment-intake',
+      name: 'Itel Attachment Intake',
+      category: 'Vendor Attachments / Gmail / Drive',
+      mainFunction: 'processItelAttachments',
+      action: 'processItel',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'phase-4f-queue-health',
+      name: 'Phase 4F Queue Health',
+      category: 'Operations / Monitoring',
+      mainFunction: 'getQueueHealth',
+      action: 'queueHealth',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'asbestos-queue-health',
+      name: 'Asbestos Queue Health',
+      category: 'Operations / Monitoring',
+      mainFunction: 'getAsbestosQueueHealth',
+      action: 'queueHealthAsbestos',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'itel-queue-health',
+      name: 'Itel Queue Health',
+      category: 'Operations / Monitoring',
+      mainFunction: 'getItelQueueHealth',
+      action: 'queueHealthItel',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'retry-insurance-intake',
+      name: 'Retry Insurance Intake',
+      category: 'Recovery / Retry',
+      mainFunction: 'retryWorkflow',
+      action: 'retryInsuranceIntake',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'retry-asbestos-intake',
+      name: 'Retry Asbestos',
+      category: 'Recovery / Retry',
+      mainFunction: 'retryWorkflow',
+      action: 'retryAsbestos',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'retry-itel-intake',
+      name: 'Retry Itel',
+      category: 'Recovery / Retry',
+      mainFunction: 'retryWorkflow',
+      action: 'retryItel',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'insurance-intake-queue-health',
+      name: 'Insurance Intake Queue Health',
+      category: 'Operations / Monitoring',
+      mainFunction: 'getInsuranceIntakeQueueHealth',
+      action: 'queueHealthInsuranceIntake',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
     }
   ]
 };
@@ -54,6 +127,7 @@ function getDashboardData() {
       name: automation.name,
       category: automation.category,
       mainFunction: automation.mainFunction,
+      action: automation.action || 'process',
       lastRunTime: saved.lastRunTime || '',
       lastStatus: saved.lastStatus || STATUS.NOT_RUN,
       lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.'
@@ -86,7 +160,7 @@ function runAutomation(automationId) {
     validateAutomationUrl_(automation.webAppUrl);
 
     const url = buildAutomationUrl_(automation.webAppUrl, {
-      action: 'process',
+      action: automation.action || 'process',
       source: 'dashboard',
       automationId: automation.id,
       runId: Utilities.getUuid()
@@ -166,6 +240,11 @@ function validateConfiguration_() {
     if (!automation.id || !automation.name || !automation.webAppUrl) {
       throw new Error('Automation missing required fields: id, name, webAppUrl');
     }
+
+    if (!automation.action) {
+      automation.action = 'process';
+    }
+
     validateAutomationUrl_(automation.webAppUrl);
   });
 }
@@ -429,6 +508,7 @@ function testDashboardConfiguration() {
 
   DASHBOARD_CONFIG.automations.forEach(function(automation) {
     Logger.log('  - ' + automation.name + ' (' + automation.id + ')');
+    Logger.log('    Action: ' + (automation.action || 'process'));
     Logger.log('    URL: ' + automation.webAppUrl);
   });
 
@@ -449,4 +529,21 @@ function clearAllSavedStatuses() {
   });
 
   Logger.log('Cleared ' + cleared + ' status properties');
+}
+
+
+function clearLegacyEmslDashboardStatus() {
+  const properties = PropertiesService.getScriptProperties();
+  const allProps = properties.getProperties();
+  const legacyPrefix = 'AUTOMATION_STATUS_emsl-attachment-intake_';
+
+  let cleared = 0;
+  Object.keys(allProps).forEach(function(key) {
+    if (key.indexOf(legacyPrefix) === 0) {
+      properties.deleteProperty(key);
+      cleared++;
+    }
+  });
+
+  Logger.log('Cleared ' + cleared + ' legacy EMSL dashboard status properties');
 }
