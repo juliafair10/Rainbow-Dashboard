@@ -530,6 +530,29 @@
       background: #dbeafe;
     }
 
+    .inspection-row-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 110px;
+    }
+
+    .inspection-retry-button {
+      border: 1px solid #fed7aa;
+      background: #fff7ed;
+      color: #9a3412;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .inspection-retry-button:hover {
+      background: #ffedd5;
+    }
+
     .inspection-empty {
       padding: 12px;
       border: 1px solid var(--border);
@@ -1165,7 +1188,7 @@
                 <th>Subject</th>
                 <th>Parse Issues</th>
                 <th>Recommended Next Step</th>
-                <th>Open</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1184,7 +1207,7 @@
                     <td>${escapeHtml(item.subject || '')}</td>
                     <td>${formatParseErrors(item.parseErrors)}</td>
                     <td>${escapeHtml(item.recommendedNextStep || '')}</td>
-                    <td>${buildGmailLink(item)}</td>
+                    <td>${buildInspectionRowActions(actionId, item)}</td>
                   </tr>
                 `;
               }).join('')}
@@ -1193,6 +1216,36 @@
         </div>
       `;
     }
+    function buildInspectionRowActions(actionId, item) {
+      const retryActionId = getRetryActionIdForInspectionAction(actionId);
+
+      return `
+        <div class="inspection-row-actions">
+          ${buildGmailLink(item)}
+          ${retryActionId ? `
+            <button
+              type="button"
+              class="inspection-retry-button"
+              onclick="runAutomation('${retryActionId}')">
+              Retry Workflow
+            </button>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    function getRetryActionIdForInspectionAction(actionId) {
+      if (actionId === 'inspect-asbestos-pending-claim-folders') {
+        return 'retry-asbestos-intake';
+      }
+
+      if (actionId === 'inspect-itel-pending-claim-folders') {
+        return 'retry-itel-intake';
+      }
+
+      return '';
+    }
+
 
 
     function buildGmailLink(item) {
