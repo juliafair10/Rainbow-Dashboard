@@ -420,6 +420,7 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+
 function getDashboardData() {
   const properties = PropertiesService.getScriptProperties();
 
@@ -452,6 +453,49 @@ function getDashboardData() {
     placeholderWorkflows: PLACEHOLDER_WORKFLOWS,
     operationsSummary: buildOperationsSummary_(automations)
   };
+}
+
+function getDashboardShellData() {
+  const automations = buildDashboardAutomations_();
+
+  return {
+    title: DASHBOARD_CONFIG.dashboardTitle,
+    sections: buildDashboardSections_(automations),
+    automations: automations,
+    placeholderWorkflows: PLACEHOLDER_WORKFLOWS
+  };
+}
+
+function getOperationsSummaryData() {
+  const automations = buildDashboardAutomations_();
+
+  return buildOperationsSummary_(automations);
+}
+
+function buildDashboardAutomations_() {
+  const properties = PropertiesService.getScriptProperties();
+
+  return DASHBOARD_CONFIG.automations.map(function (automation) {
+    const saved = getSavedStatus_(automation.id, properties);
+    const registry = buildAutomationRegistryEntry_(automation);
+
+    return {
+      id: automation.id,
+      name: automation.name,
+      category: automation.category,
+      dashboardRole: registry.dashboardRole,
+      section: registry.section,
+      featured: registry.featured,
+      order: registry.order,
+      capabilities: registry.capabilities,
+      mainFunction: automation.mainFunction,
+      action: automation.action || 'process',
+      lastRunTime: saved.lastRunTime || '',
+      lastStatus: saved.lastStatus || STATUS.NOT_RUN,
+      lastMessage: saved.lastMessage || 'This automation has not run from the dashboard yet.',
+      lastRawResponse: saved.lastRawResponse || ''
+    };
+  });
 }
 
 function buildAutomationRegistryEntry_(automation) {

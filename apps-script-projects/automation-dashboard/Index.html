@@ -1064,12 +1064,13 @@
       google.script.run
         .withSuccessHandler(function(data) {
           latestDashboardData = data;
-          renderDashboard(data);
+          renderDashboardShell(data);
+          refreshOperationsSummaryData();
         })
-        .getDashboardData();
+        .getDashboardShellData();
     }
 
-    function renderDashboard(data) {
+    function renderDashboardShell(data) {
       const visibleAutomations = getVisibleAutomations(data);
 
       if (!selectedFocusWorkflowId && visibleAutomations.length > 0) {
@@ -1079,10 +1080,22 @@
       renderFocusWorkflow(data, visibleAutomations);
       renderWorkflowSidebar(data, visibleAutomations);
 
-      window.setTimeout(function() {
-        renderOperationsSummary(data.operationsSummary);
-        renderDashboardSections(data);
-      }, 0);
+      renderDashboardSections(data);
+    }
+
+    function refreshOperationsSummaryData() {
+      google.script.run
+        .withSuccessHandler(function(summary) {
+          if (latestDashboardData) {
+            latestDashboardData.operationsSummary = summary;
+          }
+
+          renderOperationsSummary(summary);
+        })
+        .withFailureHandler(function(err) {
+          showNotice('error', err.message || err || 'Operations data failed to load.');
+        })
+        .getOperationsSummaryData();
     }
 
     function renderFocusWorkflow(data, visibleAutomations) {
