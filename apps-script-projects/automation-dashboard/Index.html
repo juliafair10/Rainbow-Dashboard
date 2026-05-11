@@ -1297,59 +1297,13 @@
 
     function renderDashboardSections(data) {
       const container = document.getElementById('dashboardSections');
-      const sections = normalizeDashboardSections(
-        data.sections || buildFallbackDashboardSections(data)
-      );
+      const sections = data.sections || buildFallbackDashboardSections(data);
 
       container.innerHTML = sections.map(function(section) {
         return buildDashboardSectionHtml(section);
       }).join('');
     }
 
-    function normalizeDashboardSections(sections) {
-      const normalizedSections = (sections || []).map(function(section) {
-        return {
-          id: section.id,
-          name: section.name,
-          description: section.description,
-          activeAutomations: (section.activeAutomations || []).slice(),
-          placeholderWorkflows: (section.placeholderWorkflows || []).slice()
-        };
-      });
-
-      const operationsSection = normalizedSections.find(function(section) {
-        return section.id === 'operations';
-      });
-
-      const automationsSection = normalizedSections.find(function(section) {
-        return section.id === 'automations';
-      });
-
-      if (!operationsSection || !automationsSection) {
-        return normalizedSections;
-      }
-
-      const retryAutomations = operationsSection.activeAutomations.filter(isRetryAutomation);
-
-      if (retryAutomations.length === 0) {
-        return normalizedSections;
-      }
-
-      operationsSection.activeAutomations = operationsSection.activeAutomations.filter(function(automation) {
-        return !isRetryAutomation(automation);
-      });
-
-      automationsSection.activeAutomations = automationsSection.activeAutomations.concat(retryAutomations);
-
-      return normalizedSections;
-    }
-
-    function isRetryAutomation(automation) {
-      const name = String(automation && automation.name ? automation.name : '').toLowerCase();
-      const id = String(automation && automation.id ? automation.id : '').toLowerCase();
-
-      return name.indexOf('retry') !== -1 || id.indexOf('retry') !== -1;
-    }
 
     function buildFallbackDashboardSections(data) {
       const automations = data.automations || [];
