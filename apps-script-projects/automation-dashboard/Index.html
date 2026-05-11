@@ -1034,6 +1034,7 @@
     let noticeTimeoutId = null;
     let operationsActionResultTimeoutId = null;
     let selectedFocusWorkflowId = null;
+    let latestDashboardData = null;
 
     function isOperationsActionId(id) {
       return OPERATIONS_ACTIONS.some(function(action) {
@@ -1061,7 +1062,10 @@
 
     function refreshDashboard() {
       google.script.run
-        .withSuccessHandler(renderDashboard)
+        .withSuccessHandler(function(data) {
+          latestDashboardData = data;
+          renderDashboard(data);
+        })
         .getDashboardData();
     }
 
@@ -1072,15 +1076,18 @@
         selectedFocusWorkflowId = visibleAutomations[0].id;
       }
 
-      renderFocusWorkflow(data);
-      renderWorkflowSidebar(data);
-      renderOperationsSummary(data.operationsSummary);
-      renderDashboardSections(data);
+      renderFocusWorkflow(data, visibleAutomations);
+      renderWorkflowSidebar(data, visibleAutomations);
+
+      window.setTimeout(function() {
+        renderOperationsSummary(data.operationsSummary);
+        renderDashboardSections(data);
+      }, 0);
     }
 
-    function renderFocusWorkflow(data) {
+    function renderFocusWorkflow(data, visibleAutomations) {
       const container = document.getElementById('focusWorkflow');
-      const automations = getVisibleAutomations(data);
+      const automations = visibleAutomations || getVisibleAutomations(data);
       const primaryWorkflow = automations.find(function(automation) {
         return automation.id === selectedFocusWorkflowId;
       }) || automations[0];
@@ -1129,9 +1136,9 @@
       `;
     }
 
-    function renderWorkflowSidebar(data) {
+    function renderWorkflowSidebar(data, visibleAutomations) {
       const container = document.getElementById('workflowSidebar');
-      const automations = getVisibleAutomations(data);
+      const automations = visibleAutomations || getVisibleAutomations(data);
       const placeholders = data.placeholderWorkflows || [];
 
       container.innerHTML = `
@@ -1230,6 +1237,14 @@
 
     function selectFocusWorkflow(id) {
       selectedFocusWorkflowId = id;
+
+      if (latestDashboardData) {
+        const visibleAutomations = getVisibleAutomations(latestDashboardData);
+        renderFocusWorkflow(latestDashboardData, visibleAutomations);
+        renderWorkflowSidebar(latestDashboardData, visibleAutomations);
+        return;
+      }
+
       refreshDashboard();
     }
 
