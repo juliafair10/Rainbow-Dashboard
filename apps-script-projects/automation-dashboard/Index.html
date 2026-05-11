@@ -1827,7 +1827,14 @@
               </div>
             </div>
 
-            ${buildStatusBadge(summary.overallStatus)}
+            <div class="operations-summary-controls">
+              ${buildStatusBadge(summary.overallStatus)}
+              <button
+                class="section-toggle-button"
+                onclick="toggleOperationsSummary(this)">
+                Show
+              </button>
+            </div>
           </div>
 
           <div class="operations-summary-content">
@@ -1844,12 +1851,6 @@
 
             ${failedItemsHtml}
           </div>
-
-          <button
-            class="collapsible-toggle"
-            onclick="toggleOperationsSummary(this)">
-            Show Operational Details
-          </button>
         </div>
       `;
 
@@ -2064,10 +2065,10 @@
 
       if (collapsed) {
         panel.classList.remove('collapsed');
-        button.textContent = 'Hide Operational Details';
+        button.textContent = 'Hide';
       } else {
         panel.classList.add('collapsed');
-        button.textContent = 'Show Operational Details';
+        button.textContent = 'Show';
       }
     }
 
