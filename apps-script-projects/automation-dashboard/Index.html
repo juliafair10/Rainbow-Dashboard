@@ -78,6 +78,114 @@
       gap: 18px;
     }
 
+    .dashboard-section {
+      margin-bottom: 28px;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 14px;
+      margin: 6px 0 14px 0;
+    }
+
+    .section-title {
+      font-size: 21px;
+      font-weight: 700;
+      margin: 0 0 4px 0;
+    }
+
+    .section-description {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+      margin: 0;
+    }
+
+    .section-counts {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .placeholder-card {
+      background: #fbfbfc;
+      border: 1px dashed #cbd5e1;
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .placeholder-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .placeholder-name {
+      font-size: 17px;
+      font-weight: 700;
+      margin: 0 0 6px 0;
+    }
+
+    .placeholder-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .placeholder-pill {
+      display: inline-block;
+      font-size: 11px;
+      color: #475569;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+
+    .placeholder-description {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 10px 0 12px 0;
+    }
+
+    .placeholder-capabilities {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+
+    .placeholder-capabilities-title {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .placeholder-capabilities-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #374151;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .coming-soon-button {
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-weight: 700;
+      cursor: not-allowed;
+      min-width: 110px;
+    }
+
     .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -611,7 +719,7 @@
 
     <div id="operationsSummary"></div>
 
-    <div id="automationGrid" class="grid"></div>
+    <div id="dashboardSections"></div>
 
   </div>
 
@@ -689,26 +797,93 @@
     }
 
     function renderDashboard(data) {
-      const grid = document.getElementById('automationGrid');
-      grid.innerHTML = '';
-
       renderOperationsSummary(data.operationsSummary);
+      renderDashboardSections(data);
+    }
 
-      data.automations
-        .filter(shouldRenderAutomationCard)
-        .forEach(function (automation) {
-        const card = document.createElement('div');
-        card.className = 'card';
+    function renderDashboardSections(data) {
+      const container = document.getElementById('dashboardSections');
+      const sections = data.sections || buildFallbackDashboardSections(data);
 
-        card.innerHTML = `
+      container.innerHTML = sections.map(function(section) {
+        return buildDashboardSectionHtml(section);
+      }).join('');
+    }
+
+    function buildFallbackDashboardSections(data) {
+      const automations = data.automations || [];
+      const placeholderWorkflows = data.placeholderWorkflows || [];
+
+      return [
+        {
+          id: 'automations',
+          name: 'Automations',
+          description: 'Active workflow automations that process Gmail, Drive, Calendar, and job data.',
+          activeAutomations: automations,
+          placeholderWorkflows: []
+        },
+        {
+          id: 'reports',
+          name: 'Reports',
+          description: 'Reporting workflows and future report automation placeholders.',
+          activeAutomations: [],
+          placeholderWorkflows: placeholderWorkflows.filter(function(workflow) {
+            return workflow.section === 'reports';
+          })
+        },
+        {
+          id: 'operations',
+          name: 'Operations',
+          description: 'Daily operational controls, queue health, recovery, and inspection tools.',
+          activeAutomations: [],
+          placeholderWorkflows: placeholderWorkflows.filter(function(workflow) {
+            return workflow.section === 'operations';
+          })
+        }
+      ];
+    }
+
+    function buildDashboardSectionHtml(section) {
+      const activeAutomations = (section.activeAutomations || []).filter(shouldRenderAutomationCard);
+      const placeholderWorkflows = section.placeholderWorkflows || [];
+      const cardsHtml = activeAutomations.map(buildAutomationCardHtml)
+        .concat(placeholderWorkflows.map(buildPlaceholderWorkflowCardHtml))
+        .join('');
+
+      if (!cardsHtml) {
+        return '';
+      }
+
+      return `
+        <section class="dashboard-section" id="section-${section.id}">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">${escapeHtml(section.name)}</h2>
+              <p class="section-description">${escapeHtml(section.description || '')}</p>
+            </div>
+            <div class="section-counts">
+              ${activeAutomations.length} active • ${placeholderWorkflows.length} planned
+            </div>
+          </div>
+
+          <div class="grid">
+            ${cardsHtml}
+          </div>
+        </section>
+      `;
+    }
+
+    function buildAutomationCardHtml(automation) {
+      return `
+        <div class="card">
           <div class="card-top">
             <div>
-              <div class="automation-name">${automation.name}</div>
-              <div class="category">${automation.category}</div>
+              <div class="automation-name">${escapeHtml(automation.name)}</div>
+              <div class="category">${escapeHtml(automation.category)}</div>
             </div>
 
             <div class="${getStatusClass(automation.lastStatus)}">
-              ${automation.lastStatus}
+              ${escapeHtml(automation.lastStatus)}
             </div>
           </div>
 
@@ -716,20 +891,20 @@
 
             <div class="row">
               <span class="label">Main Function</span>
-              <div class="value">${automation.mainFunction}</div>
+              <div class="value">${escapeHtml(automation.mainFunction)}</div>
             </div>
 
             <div class="row">
               <span class="label">Last Run</span>
               <div class="value">
-                ${automation.lastRunTime || 'Never'}
+                ${escapeHtml(automation.lastRunTime || 'Never')}
               </div>
             </div>
 
             <div class="row">
               <span class="label">Last Result</span>
               <div class="message">
-                ${automation.lastMessage || 'No runs yet'}
+                ${escapeHtml(automation.lastMessage || 'No runs yet')}
               </div>
             </div>
 
@@ -747,10 +922,46 @@
               Run
             </button>
           </div>
-        `;
+        </div>
+      `;
+    }
 
-        grid.appendChild(card);
-      });
+    function buildPlaceholderWorkflowCardHtml(workflow) {
+      const capabilities = workflow.plannedCapabilities || [];
+
+      return `
+        <div class="placeholder-card">
+          <div class="placeholder-top">
+            <div>
+              <div class="placeholder-name">${escapeHtml(workflow.name)}</div>
+              <div class="category">${escapeHtml(workflow.category || 'Planned Workflow')}</div>
+              <div class="placeholder-meta">
+                <span class="placeholder-pill">${escapeHtml(workflow.status || 'Planned')}</span>
+                <span class="placeholder-pill">${escapeHtml(workflow.frequency || 'Future')}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="placeholder-description">
+            ${escapeHtml(workflow.description || '')}
+          </div>
+
+          <div class="placeholder-capabilities">
+            <div class="placeholder-capabilities-title">Planned capabilities</div>
+            <ul class="placeholder-capabilities-list">
+              ${capabilities.map(function(capability) {
+                return `<li>${escapeHtml(capability)}</li>`;
+              }).join('')}
+            </ul>
+          </div>
+
+          <div class="actions">
+            <button class="coming-soon-button" disabled>
+              Coming Soon
+            </button>
+          </div>
+        </div>
+      `;
     }
 
     function shouldRenderAutomationCard(automation) {

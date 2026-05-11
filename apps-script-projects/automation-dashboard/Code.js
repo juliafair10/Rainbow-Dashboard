@@ -149,6 +149,135 @@ const DASHBOARD_CONFIG = {
   ]
 };
 
+const DASHBOARD_SECTIONS = [
+  {
+    id: 'operations',
+    name: 'Operations',
+    description: 'Daily operational controls, queue health, recovery, and inspection tools.',
+    order: 1
+  },
+  {
+    id: 'automations',
+    name: 'Automations',
+    description: 'Active workflow automations that process Gmail, Drive, Calendar, and job data.',
+    order: 2
+  },
+  {
+    id: 'reports',
+    name: 'Reports',
+    description: 'Reporting workflows and future report automation placeholders.',
+    order: 3
+  },
+  {
+    id: 'system',
+    name: 'System',
+    description: 'Logs, deployment support, diagnostics, and platform utilities.',
+    order: 4
+  }
+];
+
+const PLACEHOLDER_WORKFLOWS = [
+  {
+    id: 'clarence-bonus-report',
+    name: 'Clarence Bonus Report',
+    section: 'reports',
+    category: 'Monthly Reporting',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Monthly',
+    description: 'Future workflow for consolidating QB and Fusion exports into monthly Rainbow reporting outputs.',
+    plannedCapabilities: [
+      'Import QB export',
+      'Import Fusion export',
+      'Consolidate matched jobs',
+      'Write monthly Google Sheet tab',
+      'Generate Excel and HTML reports',
+      'Create Todoist reminders'
+    ]
+  },
+  {
+    id: 'monthly-consolidation-report',
+    name: 'Monthly Consolidation Report',
+    section: 'reports',
+    category: 'Monthly Reporting',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Monthly',
+    description: 'Future monthly reporting workflow for consolidated job and financial activity reporting.',
+    plannedCapabilities: [
+      'Import monthly exports',
+      'Normalize report data',
+      'Generate summary metrics',
+      'Upload report outputs'
+    ]
+  },
+  {
+    id: 'open-jobs-activity-report',
+    name: 'Open Jobs Activity Report',
+    section: 'reports',
+    category: 'Job Intelligence',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Daily / Weekly',
+    description: 'Future workflow that scans daily open jobs emails and identifies jobs with no recent activity or weekly status exceptions.',
+    plannedCapabilities: [
+      'Scan Gmail for daily open jobs email',
+      'Extract spreadsheet attachment rows',
+      'Apply configurable no-activity thresholds',
+      'Apply status exception rules',
+      'Generate daily and weekly watchlists',
+      'Optionally create Todoist follow-ups'
+    ]
+  },
+  {
+    id: 'production-metrics-report',
+    name: 'Production Metrics',
+    section: 'reports',
+    category: 'Performance Reporting',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Future',
+    description: 'Future reporting workflow for production volume, activity, and team performance metrics.',
+    plannedCapabilities: [
+      'Collect production data',
+      'Calculate performance metrics',
+      'Render dashboard summaries'
+    ]
+  },
+  {
+    id: 'job-profitability-report',
+    name: 'Job Profitability',
+    section: 'reports',
+    category: 'Financial Reporting',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Future',
+    description: 'Future reporting workflow for profitability review and job-level financial analysis.',
+    plannedCapabilities: [
+      'Collect job financial data',
+      'Calculate profitability metrics',
+      'Generate exception lists'
+    ]
+  },
+  {
+    id: 'eoj-completion-audit',
+    name: 'EOJ Completion Audit',
+    section: 'operations',
+    category: 'EOJ / Compliance',
+    dashboardRole: 'placeholder',
+    status: 'Planned',
+    frequency: 'Daily',
+    description: 'Future operational audit that scans yesterday’s calendar jobs and identifies missing EOJ submissions.',
+    plannedCapabilities: [
+      'Scan yesterday’s Google Calendar entries',
+      'Extract job identifiers',
+      'Compare against EOJ submissions',
+      'List missing EOJs',
+      'Optionally create follow-up tasks'
+    ]
+  }
+];
+
 const STATUS = {
   SUCCESS: 'Success',
   ERROR: 'Error',
@@ -186,9 +315,58 @@ function getDashboardData() {
 
   return {
     title: DASHBOARD_CONFIG.dashboardTitle,
+    sections: buildDashboardSections_(automations),
     automations: automations,
+    placeholderWorkflows: PLACEHOLDER_WORKFLOWS,
     operationsSummary: buildOperationsSummary_(automations)
   };
+}
+
+function buildDashboardSections_(automations) {
+  return DASHBOARD_SECTIONS
+    .slice()
+    .sort(function(a, b) {
+      return a.order - b.order;
+    })
+    .map(function(section) {
+      const activeAutomations = automations.filter(function(automation) {
+        return getAutomationSectionId_(automation) === section.id;
+      });
+
+      const placeholderWorkflows = PLACEHOLDER_WORKFLOWS.filter(function(workflow) {
+        return workflow.section === section.id;
+      });
+
+      return {
+        id: section.id,
+        name: section.name,
+        description: section.description,
+        order: section.order,
+        activeAutomationCount: activeAutomations.length,
+        placeholderWorkflowCount: placeholderWorkflows.length,
+        activeAutomations: activeAutomations,
+        placeholderWorkflows: placeholderWorkflows
+      };
+    });
+}
+
+function getAutomationSectionId_(automation) {
+  const role = automation.dashboardRole || 'business';
+  const category = String(automation.category || '').toLowerCase();
+
+  if (role === 'monitoring' || role === 'operations') {
+    return 'operations';
+  }
+
+  if (category.indexOf('report') !== -1) {
+    return 'reports';
+  }
+
+  if (category.indexOf('system') !== -1 || category.indexOf('deployment') !== -1) {
+    return 'system';
+  }
+
+  return 'automations';
 }
 
 function buildOperationsSummary_(automations) {
@@ -690,6 +868,7 @@ function testDashboardConfiguration() {
   }
 
   Logger.log('✓ Found ' + DASHBOARD_CONFIG.automations.length + ' automation(s)');
+  Logger.log('✓ Found ' + PLACEHOLDER_WORKFLOWS.length + ' placeholder workflow(s)');
 
   DASHBOARD_CONFIG.automations.forEach(function(automation) {
     Logger.log('  - ' + automation.name + ' (' + automation.id + ')');
