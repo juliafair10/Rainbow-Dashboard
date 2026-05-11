@@ -61,9 +61,10 @@ const CONFIG = {
   retryLimitReachedLabel: 'Retry/Limit Reached',
   retryLogSheetName: 'Retry Log',
   maxRetryAttempts: 3,
+  scheduledRetryTriggerHour: 7,
   automationName: 'Insurance Intake Automation',
   maxThreadsPerRun: 10,
-  phase: '4F.1',
+  phase: '4F.2',
   dryRun: false,
   labelDryRun: false,
   claimFolderMapSpreadsheetId: '1kTRyZbPW1dZgkflH31s4MewuVHEl1ExQ7o3c6ad-btQ',
@@ -219,11 +220,19 @@ function doGet(e) {
     return jsonResponse(setupRetryLabels());
   }
 
+  if (action === 'setupRetryTriggers') {
+    return jsonResponse(setupRetryTriggers());
+  }
+
+  if (action === 'deleteRetryTriggers') {
+    return jsonResponse(deleteRetryTriggers());
+  }
+
   return jsonResponse({
     status: 'Success',
     message: CONFIG.automationName + ' web app is live.',
     result: {
-      availableActions: ['process', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders', 'retryWorkflow', 'retryInsuranceIntake', 'retryAsbestos', 'retryItel', 'setupRetryLabels'],
+      availableActions: ['process', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders', 'retryWorkflow', 'retryInsuranceIntake', 'retryAsbestos', 'retryItel', 'setupRetryLabels', 'setupRetryTriggers', 'deleteRetryTriggers'],
       query: CONFIG.gmailQuery
     }
   });
@@ -544,6 +553,173 @@ function getRetryWorkflowLabels_() {
     CONFIG.retryRecoveredLabel,
     CONFIG.retryBlockedLabel,
     CONFIG.retryLimitReachedLabel
+  ];
+}
+
+function scheduledRetryInsuranceIntake() {
+  return retryWorkflow('insuranceIntake');
+}
+
+function scheduledRetryAsbestos() {
+  return retryWorkflow('asbestos');
+}
+
+function scheduledRetryItel() {
+  return retryWorkflow('itel');
+}
+
+function setupRetryTriggers() {
+  const startedAt = new Date();
+  const triggerDefinitions = getRetryTriggerDefinitions_();
+  const existingTriggers = ScriptApp.getProjectTriggers();
+  const items = [];
+  let createdCount = 0;
+  let existingCount = 0;
+  let errors = 0;
+
+  triggerDefinitions.forEach(function(definition) {
+    const item = {
+      handlerFunction: definition.handlerFunction,
+      workflow: definition.workflow,
+      status: 'started',
+      created: false,
+      existing: false,
+      error: ''
+    };
+
+    try {
+      const alreadyExists = existingTriggers.some(function(trigger) {
+        return trigger.getHandlerFunction && trigger.getHandlerFunction() === definition.handlerFunction;
+      });
+
+      if (alreadyExists) {
+        item.status = 'already_exists';
+        item.existing = true;
+        existingCount++;
+      } else {
+        ScriptApp.newTrigger(definition.handlerFunction)
+          .timeBased()
+          .everyDays(1)
+          .atHour(CONFIG.scheduledRetryTriggerHour)
+          .create();
+
+        item.status = 'created';
+        item.created = true;
+        createdCount++;
+      }
+    } catch (error) {
+      item.status = 'error';
+      item.error = error.message;
+      errors++;
+    }
+
+    items.push(item);
+  });
+
+  return {
+    status: errors > 0 ? 'Partial Success' : 'Success',
+    message: 'Phase ' + CONFIG.phase + ' scheduled retry trigger setup created ' + createdCount +
+      ' trigger(s), found ' + existingCount + ' existing trigger(s), with ' + errors + ' error(s).',
+    result: {
+      automation: CONFIG.automationName,
+      phase: CONFIG.phase,
+      workflow: 'Scheduled Retry Trigger Setup',
+      action: 'setupRetryTriggers',
+      readOnly: false,
+      cadence: 'daily',
+      triggerHour: CONFIG.scheduledRetryTriggerHour,
+      startedAt: startedAt,
+      finishedAt: new Date(),
+      summary: {
+        triggerCount: triggerDefinitions.length,
+        createdCount: createdCount,
+        existingCount: existingCount,
+        errors: errors
+      },
+      items: items
+    }
+  };
+}
+
+function deleteRetryTriggers() {
+  const startedAt = new Date();
+  const retryHandlerFunctions = getRetryTriggerDefinitions_().map(function(definition) {
+    return definition.handlerFunction;
+  });
+  const triggers = ScriptApp.getProjectTriggers();
+  const items = [];
+  let deletedCount = 0;
+  let skippedCount = 0;
+  let errors = 0;
+
+  triggers.forEach(function(trigger) {
+    const handlerFunction = trigger.getHandlerFunction ? trigger.getHandlerFunction() : '';
+    const item = {
+      handlerFunction: handlerFunction,
+      status: 'started',
+      deleted: false,
+      skipped: false,
+      error: ''
+    };
+
+    if (retryHandlerFunctions.indexOf(handlerFunction) === -1) {
+      item.status = 'skipped_non_retry_trigger';
+      item.skipped = true;
+      skippedCount++;
+      items.push(item);
+      return;
+    }
+
+    try {
+      ScriptApp.deleteTrigger(trigger);
+      item.status = 'deleted';
+      item.deleted = true;
+      deletedCount++;
+    } catch (error) {
+      item.status = 'error';
+      item.error = error.message;
+      errors++;
+    }
+
+    items.push(item);
+  });
+
+  return {
+    status: errors > 0 ? 'Partial Success' : 'Success',
+    message: 'Phase ' + CONFIG.phase + ' scheduled retry trigger cleanup deleted ' + deletedCount +
+      ' trigger(s), skipped ' + skippedCount + ' non-retry trigger(s), with ' + errors + ' error(s).',
+    result: {
+      automation: CONFIG.automationName,
+      phase: CONFIG.phase,
+      workflow: 'Scheduled Retry Trigger Cleanup',
+      action: 'deleteRetryTriggers',
+      readOnly: false,
+      startedAt: startedAt,
+      finishedAt: new Date(),
+      summary: {
+        deletedCount: deletedCount,
+        skippedCount: skippedCount,
+        errors: errors
+      },
+      items: items
+    }
+  };
+}
+
+function getRetryTriggerDefinitions_() {
+  return [
+    {
+      workflow: 'Insurance Intake Retry',
+      handlerFunction: 'scheduledRetryInsuranceIntake'
+    },
+    {
+      workflow: 'Asbestos Attachment Retry',
+      handlerFunction: 'scheduledRetryAsbestos'
+    },
+    {
+      workflow: 'Itel Attachment Retry',
+      handlerFunction: 'scheduledRetryItel'
+    }
   ];
 }
 
@@ -2477,4 +2653,12 @@ function buildTodoistIntakeTaskDescription_(payload) {
 function buildTodoistDeadlineDate_(daysFromToday) {
   const deadline = new Date();
   deadline.setDate(deadline.getDate() + daysFromToday);
-  return Utilities.formatDate(deadline, Session.getScriptTimeZone(), 'yyyy-MM-dd');}
+  return Utilities.formatDate(deadline, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+}
+
+function jsonResponse(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
