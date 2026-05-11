@@ -144,6 +144,26 @@
       white-space: nowrap;
     }
 
+    .section-toggle-button {
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--button);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .section-toggle-button:hover {
+      background: #f8fafc;
+    }
+
+    .dashboard-section.collapsed .grid {
+      display: none;
+    }
+
     .placeholder-card {
       background: #fbfbfc;
       border: 1px dashed #cbd5e1;
@@ -224,50 +244,52 @@
     .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px;
-      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+      cursor: pointer;
     }
 
     .card-top {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 14px;
+      gap: 10px;
+      margin-bottom: 10px;
     }
 
     .automation-name {
-      font-size: 18px;
+      font-size: 15px;
       font-weight: 700;
-      margin: 0 0 6px 0;
+      margin: 0 0 5px 0;
+      line-height: 1.25;
     }
 
     .category {
       display: inline-block;
-      font-size: 12px;
+      font-size: 11px;
       color: #374151;
       background: #eef2ff;
       border: 1px solid #c7d2fe;
       border-radius: 999px;
-      padding: 4px 9px;
+      padding: 3px 8px;
     }
 
     .capability-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 10px;
+      gap: 5px;
+      margin-top: 8px;
     }
 
     .capability-pill {
       display: inline-block;
-      font-size: 11px;
+      font-size: 10px;
       color: #475569;
       background: #f8fafc;
       border: 1px solid #cbd5e1;
       border-radius: 999px;
-      padding: 4px 8px;
+      padding: 3px 7px;
     }
 
     .capability-pill.featured {
@@ -302,12 +324,12 @@
 
     .details {
       border-top: 1px solid var(--border);
-      margin-top: 14px;
-      padding-top: 14px;
+      margin-top: 10px;
+      padding-top: 10px;
     }
 
     .row {
-      margin-bottom: 10px;
+      margin-bottom: 7px;
     }
 
     .label {
@@ -326,28 +348,33 @@
     .message {
       background: #f9fafb;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      min-height: 38px;
+      border-radius: 8px;
+      padding: 8px;
+      min-height: 0;
+      max-height: 52px;
+      overflow: hidden;
+      font-size: 12px;
+      line-height: 1.35;
     }
 
     .actions {
-      margin-top: 16px;
+      margin-top: 10px;
       display: flex;
       justify-content: flex-end;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
     }
 
     .run-button {
       background: var(--button);
       color: #ffffff;
       border: none;
-      border-radius: 10px;
-      padding: 10px 16px;
+      border-radius: 8px;
+      padding: 8px 12px;
       font-weight: 700;
       cursor: pointer;
-      min-width: 96px;
+      min-width: 74px;
+      font-size: 12px;
     }
 
     .run-button:hover {
@@ -447,6 +474,63 @@
       gap: 10px;
       flex-wrap: wrap;
       margin-top: 18px;
+    }
+
+    .focus-workflow-context {
+      margin-top: 18px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .focus-context-title {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .focus-context-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .focus-context-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .focus-context-card-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .focus-context-card-text {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+      margin-bottom: 10px;
+    }
+
+    .focus-context-button {
+      width: 100%;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .focus-context-button:hover {
+      background: #dbeafe;
     }
 
     .focus-workflow-button {
@@ -1129,7 +1213,7 @@
           <div class="focus-workflow-metrics">
             ${buildFocusMetric('Last Run', getAutomationLastRunTime(primaryWorkflow) ? '✓' : '—')}
             ${buildFocusMetric('Workflow Status', getAutomationStatus(primaryWorkflow))}
-            ${buildFocusMetric('Response Type', getAutomationResponseType(primaryWorkflow))}
+            ${buildFocusMetric('Category', primaryWorkflow.category || 'Workflow')}
           </div>
 
           <div class="focus-workflow-actions">
@@ -1145,8 +1229,68 @@
               Refresh Workspace
             </button>
           </div>
+
+          ${buildFocusWorkflowContext(primaryWorkflow)}
         </div>
       `;
+    }
+
+    function buildFocusWorkflowContext(workflow) {
+      const relatedActions = getRelatedOperationsActions(workflow);
+
+      if (relatedActions.length === 0) {
+        return '';
+      }
+
+      return `
+        <div class="focus-workflow-context">
+          <div class="focus-context-title">Related operational tools</div>
+          <div class="focus-context-grid">
+            ${relatedActions.map(function(action) {
+              return `
+                <div class="focus-context-card">
+                  <div class="focus-context-card-title">${escapeHtml(action.name)}</div>
+                  <div class="focus-context-card-text">${escapeHtml(action.description)}</div>
+                  <button
+                    class="focus-context-button"
+                    onclick="runAutomation('${action.id}')">
+                    Run Tool
+                  </button>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function getRelatedOperationsActions(workflow) {
+      const workflowText = [
+        workflow.id,
+        workflow.name,
+        workflow.category,
+        workflow.action
+      ].join(' ').toLowerCase();
+
+      if (workflowText.indexOf('asbestos') !== -1) {
+        return OPERATIONS_ACTIONS.filter(function(action) {
+          return action.id.indexOf('asbestos') !== -1;
+        });
+      }
+
+      if (workflowText.indexOf('itel') !== -1) {
+        return OPERATIONS_ACTIONS.filter(function(action) {
+          return action.id.indexOf('itel') !== -1;
+        });
+      }
+
+      if (workflowText.indexOf('insurance') !== -1) {
+        return OPERATIONS_ACTIONS.filter(function(action) {
+          return action.id.indexOf('insurance') !== -1;
+        });
+      }
+
+      return [];
     }
 
     function renderWorkflowSidebar(data, visibleAutomations) {
@@ -1388,8 +1532,19 @@
         return '';
       }
 
+      const shouldCollapse =
+        section.id === 'automations' ||
+        section.id === 'operations' ||
+        section.id === 'reports';
+      const sectionClass = shouldCollapse
+        ? 'dashboard-section collapsed'
+        : 'dashboard-section';
+      const toggleHtml = shouldCollapse
+        ? `<button class="section-toggle-button" onclick="toggleDashboardSection('${section.id}', this)">Show</button>`
+        : '';
+
       return `
-        <section class="dashboard-section" id="section-${section.id}">
+        <section class="${sectionClass}" id="section-${section.id}">
           <div class="section-header">
             <div>
               <h2 class="section-title">${escapeHtml(section.name)}</h2>
@@ -1397,6 +1552,7 @@
             </div>
             <div class="section-counts">
               ${activeAutomations.length} active • ${placeholderWorkflows.length} planned
+              ${toggleHtml}
             </div>
           </div>
 
@@ -1405,6 +1561,24 @@
           </div>
         </section>
       `;
+    }
+
+    function toggleDashboardSection(sectionId, button) {
+      const section = document.getElementById('section-' + sectionId);
+
+      if (!section) {
+        return;
+      }
+
+      const isCollapsed = section.classList.contains('collapsed');
+
+      if (isCollapsed) {
+        section.classList.remove('collapsed');
+        button.textContent = 'Hide';
+      } else {
+        section.classList.add('collapsed');
+        button.textContent = 'Show';
+      }
     }
 
     function buildAutomationCardHtml(automation) {
@@ -1423,11 +1597,6 @@
           <div class="details">
 
             <div class="row">
-              <span class="label">Main Function</span>
-              <div class="value">${escapeHtml(automation.mainFunction)}</div>
-            </div>
-
-            <div class="row">
               <span class="label">Last Run</span>
               <div class="value">
                 ${escapeHtml(getAutomationLastRunTime(automation) || 'Never')}
@@ -1435,14 +1604,7 @@
             </div>
 
             <div class="row">
-              <span class="label">Response Type</span>
-              <div class="value">
-                ${escapeHtml(getAutomationResponseType(automation))}
-              </div>
-            </div>
-
-            <div class="row">
-              <span class="label">Last Result</span>
+              <span class="label">Latest Result</span>
               <div class="message">
                 ${escapeHtml(getAutomationMessage(automation))}
               </div>
