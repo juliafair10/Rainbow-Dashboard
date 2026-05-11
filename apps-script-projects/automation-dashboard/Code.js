@@ -278,6 +278,133 @@ const PLACEHOLDER_WORKFLOWS = [
   }
 ];
 
+const AUTOMATION_REGISTRY_DEFAULTS = {
+  section: 'automations',
+  dashboardRole: 'business',
+  featured: false,
+  order: 100,
+  capabilities: {
+    process: true,
+    retry: false,
+    inspect: false,
+    queueHealth: false,
+    report: false,
+    placeholder: false
+  }
+};
+
+const AUTOMATION_REGISTRY_RULES = [
+  {
+    match: 'insurance',
+    section: 'automations',
+    featured: true,
+    order: 10,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  {
+    match: 'asbestos',
+    section: 'automations',
+    featured: true,
+    order: 20,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  {
+    match: 'itel',
+    section: 'automations',
+    featured: true,
+    order: 30,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  {
+    match: 'claim',
+    section: 'automations',
+    featured: false,
+    order: 40,
+    capabilities: {
+      process: true,
+      retry: false,
+      inspect: false,
+      queueHealth: false
+    }
+  },
+  {
+    match: 'calendar',
+    section: 'automations',
+    featured: false,
+    order: 50,
+    capabilities: {
+      process: true,
+      retry: false,
+      inspect: false,
+      queueHealth: false
+    }
+  },
+  {
+    match: 'queue-health',
+    section: 'operations',
+    featured: false,
+    order: 200,
+    capabilities: {
+      process: false,
+      retry: false,
+      inspect: false,
+      queueHealth: true
+    }
+  },
+  {
+    match: 'inspect',
+    section: 'operations',
+    featured: false,
+    order: 210,
+    capabilities: {
+      process: false,
+      retry: false,
+      inspect: true,
+      queueHealth: false
+    }
+  },
+  {
+    match: 'retry',
+    section: 'automations',
+    featured: false,
+    order: 220,
+    capabilities: {
+      process: false,
+      retry: true,
+      inspect: false,
+      queueHealth: false
+    }
+  },
+  {
+    match: 'report',
+    section: 'reports',
+    featured: false,
+    order: 300,
+    capabilities: {
+      process: false,
+      retry: false,
+      inspect: false,
+      queueHealth: false,
+      report: true
+    }
+  }
+];
+
 const STATUS = {
   SUCCESS: 'Success',
   ERROR: 'Error',
@@ -298,12 +425,17 @@ function getDashboardData() {
 
   const automations = DASHBOARD_CONFIG.automations.map(function (automation) {
     const saved = getSavedStatus_(automation.id, properties);
+    const registry = buildAutomationRegistryEntry_(automation);
 
     return {
       id: automation.id,
       name: automation.name,
       category: automation.category,
-      dashboardRole: automation.dashboardRole || 'business',
+      dashboardRole: registry.dashboardRole,
+      section: registry.section,
+      featured: registry.featured,
+      order: registry.order,
+      capabilities: registry.capabilities,
       mainFunction: automation.mainFunction,
       action: automation.action || 'process',
       lastRunTime: saved.lastRunTime || '',
@@ -322,6 +454,44 @@ function getDashboardData() {
   };
 }
 
+function buildAutomationRegistryEntry_(automation) {
+  const matchingRule = findAutomationRegistryRule_(automation);
+  const baseCapabilities = Object.assign({}, AUTOMATION_REGISTRY_DEFAULTS.capabilities);
+  const ruleCapabilities = matchingRule && matchingRule.capabilities
+    ? matchingRule.capabilities
+    : {};
+
+  return {
+    section: matchingRule && matchingRule.section
+      ? matchingRule.section
+      : AUTOMATION_REGISTRY_DEFAULTS.section,
+    dashboardRole: matchingRule && matchingRule.dashboardRole
+      ? matchingRule.dashboardRole
+      : (automation.dashboardRole || AUTOMATION_REGISTRY_DEFAULTS.dashboardRole),
+    featured: matchingRule && typeof matchingRule.featured === 'boolean'
+      ? matchingRule.featured
+      : AUTOMATION_REGISTRY_DEFAULTS.featured,
+    order: matchingRule && typeof matchingRule.order === 'number'
+      ? matchingRule.order
+      : AUTOMATION_REGISTRY_DEFAULTS.order,
+    capabilities: Object.assign(baseCapabilities, ruleCapabilities)
+  };
+}
+
+function findAutomationRegistryRule_(automation) {
+  const searchableText = [
+    automation.id,
+    automation.name,
+    automation.category,
+    automation.mainFunction,
+    automation.action
+  ].join(' ').toLowerCase();
+
+  return AUTOMATION_REGISTRY_RULES.find(function(rule) {
+    return searchableText.indexOf(String(rule.match || '').toLowerCase()) !== -1;
+  }) || null;
+}
+
 function buildDashboardSections_(automations) {
   return DASHBOARD_SECTIONS
     .slice()
@@ -329,9 +499,13 @@ function buildDashboardSections_(automations) {
       return a.order - b.order;
     })
     .map(function(section) {
-      const activeAutomations = automations.filter(function(automation) {
-        return getAutomationSectionId_(automation) === section.id;
-      });
+      const activeAutomations = automations
+        .filter(function(automation) {
+          return getAutomationSectionId_(automation) === section.id;
+        })
+        .sort(function(a, b) {
+          return (a.order || 100) - (b.order || 100);
+        });
 
       const placeholderWorkflows = PLACEHOLDER_WORKFLOWS.filter(function(workflow) {
         return workflow.section === section.id;
@@ -351,6 +525,9 @@ function buildDashboardSections_(automations) {
 }
 
 function getAutomationSectionId_(automation) {
+  if (automation.section) {
+    return automation.section;
+  }
   const role = automation.dashboardRole || 'business';
   const category = String(automation.category || '').toLowerCase();
 

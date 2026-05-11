@@ -1080,32 +1080,13 @@
               </p>
             </div>
 
-            <div class="${getStatusClass(primaryWorkflow.lastStatus)}">
-              ${escapeHtml(primaryWorkflow.lastStatus || 'Unknown')}
-            </div>
+            ${buildStatusBadge(primaryWorkflow.lastStatus)}
           </div>
 
           <div class="focus-workflow-metrics">
-            <div class="focus-metric">
-              <span class="focus-metric-label">Last Run</span>
-              <div class="focus-metric-value">
-                ${primaryWorkflow.lastRunTime ? '✓' : '—'}
-              </div>
-            </div>
-
-            <div class="focus-metric">
-              <span class="focus-metric-label">Workflow Status</span>
-              <div class="focus-metric-value">
-                ${escapeHtml(primaryWorkflow.lastStatus || 'Unknown')}
-              </div>
-            </div>
-
-            <div class="focus-metric">
-              <span class="focus-metric-label">Category</span>
-              <div class="focus-metric-value">
-                ${escapeHtml(primaryWorkflow.category || 'Workflow')}
-              </div>
-            </div>
+            ${buildFocusMetric('Last Run', primaryWorkflow.lastRunTime ? '✓' : '—')}
+            ${buildFocusMetric('Workflow Status', primaryWorkflow.lastStatus || 'Unknown')}
+            ${buildFocusMetric('Category', primaryWorkflow.category || 'Workflow')}
           </div>
 
           <div class="focus-workflow-actions">
@@ -1195,13 +1176,94 @@
       });
     }
 
+    function buildStatusBadge(status) {
+      return `
+        <div class="${getStatusClass(status)}">
+          ${escapeHtml(status || 'Unknown')}
+        </div>
+      `;
+    }
+
+    function buildQueueHealthBadge(health) {
+      return `
+        <div class="${getQueueHealthStatusClass(health)}">
+          ${escapeHtml(health || 'Unknown')}
+        </div>
+      `;
+    }
+
+    function buildMetricCard(label, value) {
+      return `
+        <div class="metric-card">
+          <span class="metric-label">${escapeHtml(label)}</span>
+          <div class="metric-value">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function buildFocusMetric(label, value) {
+      return `
+        <div class="focus-metric">
+          <span class="focus-metric-label">${escapeHtml(label)}</span>
+          <div class="focus-metric-value">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
     function renderDashboardSections(data) {
       const container = document.getElementById('dashboardSections');
-      const sections = data.sections || buildFallbackDashboardSections(data);
+      const sections = normalizeDashboardSections(
+        data.sections || buildFallbackDashboardSections(data)
+      );
 
       container.innerHTML = sections.map(function(section) {
         return buildDashboardSectionHtml(section);
       }).join('');
+    }
+
+    function normalizeDashboardSections(sections) {
+      const normalizedSections = (sections || []).map(function(section) {
+        return {
+          id: section.id,
+          name: section.name,
+          description: section.description,
+          activeAutomations: (section.activeAutomations || []).slice(),
+          placeholderWorkflows: (section.placeholderWorkflows || []).slice()
+        };
+      });
+
+      const operationsSection = normalizedSections.find(function(section) {
+        return section.id === 'operations';
+      });
+
+      const automationsSection = normalizedSections.find(function(section) {
+        return section.id === 'automations';
+      });
+
+      if (!operationsSection || !automationsSection) {
+        return normalizedSections;
+      }
+
+      const retryAutomations = operationsSection.activeAutomations.filter(isRetryAutomation);
+
+      if (retryAutomations.length === 0) {
+        return normalizedSections;
+      }
+
+      operationsSection.activeAutomations = operationsSection.activeAutomations.filter(function(automation) {
+        return !isRetryAutomation(automation);
+      });
+
+      automationsSection.activeAutomations = automationsSection.activeAutomations.concat(retryAutomations);
+
+      return normalizedSections;
+    }
+
+    function isRetryAutomation(automation) {
+      const name = String(automation && automation.name ? automation.name : '').toLowerCase();
+      const id = String(automation && automation.id ? automation.id : '').toLowerCase();
+
+      return name.indexOf('retry') !== -1 || id.indexOf('retry') !== -1;
     }
 
     function buildFallbackDashboardSections(data) {
@@ -1276,9 +1338,7 @@
               <div class="category">${escapeHtml(automation.category)}</div>
             </div>
 
-            <div class="${getStatusClass(automation.lastStatus)}">
-              ${escapeHtml(automation.lastStatus)}
-            </div>
+            ${buildStatusBadge(automation.lastStatus)}
           </div>
 
           <div class="details">
@@ -1416,31 +1476,14 @@
               </div>
             </div>
 
-            <div class="${getStatusClass(summary.overallStatus)}">
-              ${summary.overallStatus}
-            </div>
+            ${buildStatusBadge(summary.overallStatus)}
           </div>
 
           <div class="operations-metrics">
-            <div class="metric-card">
-              <span class="metric-label">Watched Operations</span>
-              <div class="metric-value">${summary.watchedCount}</div>
-            </div>
-
-            <div class="metric-card">
-              <span class="metric-label">Successful</span>
-              <div class="metric-value">${summary.successCount}</div>
-            </div>
-
-            <div class="metric-card">
-              <span class="metric-label">Errors</span>
-              <div class="metric-value">${summary.errorCount}</div>
-            </div>
-
-            <div class="metric-card">
-              <span class="metric-label">Not Run</span>
-              <div class="metric-value">${summary.notRunCount}</div>
-            </div>
+            ${buildMetricCard('Watched Operations', summary.watchedCount)}
+            ${buildMetricCard('Successful', summary.successCount)}
+            ${buildMetricCard('Errors', summary.errorCount)}
+            ${buildMetricCard('Not Run', summary.notRunCount)}
           </div>
 
           ${queueHealthHtml}
@@ -1541,9 +1584,7 @@
           <div class="workflow-health-card">
             <div class="workflow-health-top">
               <div class="workflow-health-name">${workflow.name}</div>
-              <div class="${getQueueHealthStatusClass(workflow.health)}">
-                ${workflow.health || 'Unknown'}
-              </div>
+              ${buildQueueHealthBadge(workflow.health)}
             </div>
 
             <div class="workflow-mini-metrics">
