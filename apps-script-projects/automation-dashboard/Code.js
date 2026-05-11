@@ -91,6 +91,22 @@ const DASHBOARD_CONFIG = {
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
     },
     {
+      id: 'setup-retry-triggers',
+      name: 'Setup Scheduled Retry Triggers',
+      category: 'Recovery / Retry Operations',
+      mainFunction: 'setupRetryTriggers',
+      action: 'setupRetryTriggers',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'delete-retry-triggers',
+      name: 'Delete Scheduled Retry Triggers',
+      category: 'Recovery / Retry Operations',
+      mainFunction: 'deleteRetryTriggers',
+      action: 'deleteRetryTriggers',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
       id: 'insurance-intake-queue-health',
       name: 'Insurance Intake Queue Health',
       category: 'Operations / Monitoring',
