@@ -339,6 +339,172 @@
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
     }
 
+    .workspace-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.9fr);
+      gap: 22px;
+      align-items: start;
+      margin-bottom: 26px;
+    }
+
+    .workspace-main,
+    .workspace-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .focus-workflow-card {
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .focus-workflow-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .focus-workflow-title {
+      font-size: 26px;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+    }
+
+    .focus-workflow-subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+      max-width: 620px;
+    }
+
+    .focus-workflow-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+
+    .focus-workflow-button {
+      background: var(--button);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .focus-workflow-button.secondary {
+      background: #ffffff;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .focus-workflow-button.secondary:hover {
+      background: #f8fafc;
+    }
+
+    .focus-workflow-button:hover {
+      background: var(--button-hover);
+    }
+
+    .focus-workflow-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .focus-metric {
+      background: rgba(255,255,255,0.8);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .focus-metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .focus-metric-value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .sidebar-panel {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+    }
+
+    .sidebar-panel-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 12px 0;
+    }
+
+    .sidebar-workflow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .sidebar-workflow-item {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .sidebar-workflow-name {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .sidebar-workflow-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .collapsible-toggle {
+      margin-top: 16px;
+      border: none;
+      background: transparent;
+      color: var(--button);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .operations-summary.collapsed .operations-metrics,
+    .operations-summary.collapsed .queue-health-details,
+    .operations-summary.collapsed .operations-actions-panel,
+    .operations-summary.collapsed .failed-list {
+      display: none;
+    }
+
+    @media (max-width: 960px) {
+      .workspace-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .operations-summary-top {
       display: flex;
       justify-content: space-between;
@@ -717,9 +883,21 @@
 
     <div id="notice" class="notice"></div>
 
-    <div id="operationsSummary"></div>
+    <div class="workspace-layout">
 
-    <div id="dashboardSections"></div>
+      <div class="workspace-main">
+        <div id="focusWorkflow"></div>
+
+        <div id="operationsSummary"></div>
+
+        <div id="dashboardSections"></div>
+      </div>
+
+      <div class="workspace-sidebar">
+        <div id="workflowSidebar"></div>
+      </div>
+
+    </div>
 
   </div>
 
@@ -797,8 +975,128 @@
     }
 
     function renderDashboard(data) {
+      renderFocusWorkflow(data);
+      renderWorkflowSidebar(data);
       renderOperationsSummary(data.operationsSummary);
       renderDashboardSections(data);
+    }
+
+    function renderFocusWorkflow(data) {
+      const container = document.getElementById('focusWorkflow');
+      const automations = (data.automations || []).filter(shouldRenderAutomationCard);
+      const primaryWorkflow = automations[0];
+
+      if (!primaryWorkflow) {
+        container.innerHTML = '';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="focus-workflow-card">
+          <div class="focus-workflow-top">
+            <div>
+              <h2 class="focus-workflow-title">
+                ${escapeHtml(primaryWorkflow.name)}
+              </h2>
+
+              <p class="focus-workflow-subtitle">
+                Focused operational workspace for monitoring queue activity, retries, diagnostics, and workflow execution.
+              </p>
+            </div>
+
+            <div class="${getStatusClass(primaryWorkflow.lastStatus)}">
+              ${escapeHtml(primaryWorkflow.lastStatus || 'Unknown')}
+            </div>
+          </div>
+
+          <div class="focus-workflow-metrics">
+            <div class="focus-metric">
+              <span class="focus-metric-label">Last Run</span>
+              <div class="focus-metric-value">
+                ${primaryWorkflow.lastRunTime ? '✓' : '—'}
+              </div>
+            </div>
+
+            <div class="focus-metric">
+              <span class="focus-metric-label">Workflow Status</span>
+              <div class="focus-metric-value">
+                ${escapeHtml(primaryWorkflow.lastStatus || 'Unknown')}
+              </div>
+            </div>
+
+            <div class="focus-metric">
+              <span class="focus-metric-label">Category</span>
+              <div class="focus-metric-value">
+                ${escapeHtml(primaryWorkflow.category || 'Workflow')}
+              </div>
+            </div>
+          </div>
+
+          <div class="focus-workflow-actions">
+            <button
+              class="focus-workflow-button"
+              onclick="runAutomation('${primaryWorkflow.id}')">
+              Run Workflow
+            </button>
+
+            <button
+              class="focus-workflow-button secondary"
+              onclick="refreshOperationsDashboard()">
+              Refresh Workspace
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderWorkflowSidebar(data) {
+      const container = document.getElementById('workflowSidebar');
+      const automations = (data.automations || []).filter(shouldRenderAutomationCard);
+      const placeholders = data.placeholderWorkflows || [];
+
+      container.innerHTML = `
+        <div class="sidebar-panel">
+          <h3 class="sidebar-panel-title">Workflow Overview</h3>
+
+          <div class="sidebar-workflow-list">
+            ${automations.map(function(automation) {
+              return `
+                <div class="sidebar-workflow-item">
+                  <div class="sidebar-workflow-name">
+                    ${escapeHtml(automation.name)}
+                  </div>
+
+                  <div class="sidebar-workflow-meta">
+                    ${escapeHtml(automation.category || 'Automation')}<br>
+                    Status: ${escapeHtml(automation.lastStatus || 'Unknown')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="sidebar-panel">
+          <h3 class="sidebar-panel-title">Planned Workflows</h3>
+
+          <div class="sidebar-workflow-list">
+            ${placeholders.map(function(workflow) {
+              return `
+                <div class="sidebar-workflow-item">
+                  <div class="sidebar-workflow-name">
+                    ${escapeHtml(workflow.name)}
+                  </div>
+
+                  <div class="sidebar-workflow-meta">
+                    ${escapeHtml(workflow.frequency || 'Future')}<br>
+                    ${escapeHtml(workflow.status || 'Planned')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
     }
 
     function renderDashboardSections(data) {
@@ -1009,7 +1307,7 @@
         : '';
 
       container.innerHTML = `
-        <div class="operations-summary">
+        <div class="operations-summary collapsed">
           <div class="operations-summary-top">
             <div>
               <h2 class="operations-summary-title">
@@ -1054,6 +1352,12 @@
           ${buildOperationsActionsHtml()}
 
           ${failedItemsHtml}
+
+          <button
+            class="collapsible-toggle"
+            onclick="toggleOperationsSummary(this)">
+            Show Operational Details
+          </button>
         </div>
       `;
 
@@ -1209,6 +1513,24 @@
           </div>
         </div>
       `;
+    }
+
+    function toggleOperationsSummary(button) {
+      const panel = button.closest('.operations-summary');
+
+      if (!panel) {
+        return;
+      }
+
+      const collapsed = panel.classList.contains('collapsed');
+
+      if (collapsed) {
+        panel.classList.remove('collapsed');
+        button.textContent = 'Hide Operational Details';
+      } else {
+        panel.classList.add('collapsed');
+        button.textContent = 'Show Operational Details';
+      }
     }
 
     function formatDisplayDateTime(value) {
