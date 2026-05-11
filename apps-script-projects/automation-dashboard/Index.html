@@ -437,6 +437,111 @@
       background: #fef2f2;
       color: #991b1b;
     }
+
+    .inspection-results-panel {
+      display: none;
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .inspection-results-panel.visible {
+      display: block;
+    }
+
+    .inspection-results-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .inspection-summary {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .inspection-table-wrapper {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #ffffff;
+    }
+
+    .inspection-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .inspection-table th,
+    .inspection-table td {
+      text-align: left;
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .inspection-table th {
+      color: var(--muted);
+      background: #f9fafb;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .inspection-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .inspection-row-warning td {
+      background: #fffbeb;
+    }
+
+    .inspection-row-critical td {
+      background: #fef2f2;
+    }
+
+    .inspection-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .inspection-parse-errors {
+      color: #991b1b;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .inspection-empty {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #ffffff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .operations-detail-panel {
+      margin-top: 18px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .operations-detail-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .operations-detail-empty {
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      background: #fafafa;
+    }
   </style>
 </head>
 
@@ -509,6 +614,7 @@
     ];
 
     let lastOperationsActionResult = null;
+    let lastInspectionResult = null;
     let noticeTimeoutId = null;
     let operationsActionResultTimeoutId = null;
 
@@ -708,6 +814,14 @@
       } else {
         lastOperationsActionResult = null;
       }
+
+      if (lastInspectionResult) {
+        renderInspectionResults(
+          lastInspectionResult.actionId,
+          lastInspectionResult.result,
+          true
+        );
+      }
     }
 
     function buildOperationsActionsHtml() {
@@ -716,10 +830,22 @@
       return `
         <div class="operations-actions-panel">
           <div class="operations-actions-title">
-            Recovery Actions
+            Recovery Tools
           </div>
 
           <div id="operationsActionResult" class="operations-action-result"></div>
+
+          <div class="operations-detail-panel">
+            <div class="operations-detail-title">
+              Operational Details
+            </div>
+
+            <div id="inspectionResultsPanel" class="inspection-results-panel visible">
+              <div class="operations-detail-empty">
+                No operational inspection details loaded yet.
+              </div>
+            </div>
+          </div>
 
           <div class="operations-actions-grid">
             ${actions.map(function(action) {
@@ -890,11 +1016,17 @@
             : 'Action completed successfully.';
 
           if (isOperationsActionId(id)) {
-            lastOperationsActionResult = {
-              type: 'success',
-              message: message,
-              expiresAt: Date.now() + 12000
-            };
+            const isInspectionAction = isInspectionActionId(id);
+
+            if (!isInspectionAction) {
+              lastOperationsActionResult = {
+                type: 'success',
+                message: message,
+                expiresAt: Date.now() + 12000
+              };
+            }
+
+            renderInspectionResults(id, result, false);
           } else {
             showNotice('success', message);
           }
@@ -931,6 +1063,166 @@
           }
         })
         .runAutomation(id);
+    }
+
+    function renderInspectionResults(actionId, result, fromRefresh) {
+      const panel = document.getElementById('inspectionResultsPanel');
+
+      if (!panel) {
+        return;
+      }
+
+      if (!isInspectionActionId(actionId)) {
+        panel.className = 'inspection-results-panel visible';
+        panel.innerHTML = `
+          <div class="operations-detail-empty">
+            No operational inspection details loaded yet.
+          </div>
+        `;
+        lastInspectionResult = null;
+        return;
+      }
+
+
+      if (!fromRefresh) {
+        lastInspectionResult = {
+          actionId: actionId,
+          result: result
+        };
+      }
+
+      const payload = result && result.rawResponse
+        ? parseJsonSafe(result.rawResponse)
+        : null;
+      const items = payload && payload.result && payload.result.items
+        ? payload.result.items
+        : [];
+      const summary = payload && payload.result && payload.result.summary
+        ? payload.result.summary
+        : {};
+
+      panel.className = 'inspection-results-panel visible';
+      panel.innerHTML = buildInspectionResultsHtml(actionId, items, summary);
+    }
+
+    function isInspectionActionId(actionId) {
+      return actionId === 'inspect-asbestos-pending-claim-folders' ||
+        actionId === 'inspect-itel-pending-claim-folders';
+    }
+
+    function parseJsonSafe(value) {
+      try {
+        return JSON.parse(value);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function buildInspectionResultsHtml(actionId, items, summary) {
+      const title = actionId === 'inspect-asbestos-pending-claim-folders'
+        ? 'Asbestos Pending Folder Inspection'
+        : 'Itel Pending Folder Inspection';
+      const foundCount = summary.foundCount || items.length || 0;
+
+      if (!items || items.length === 0) {
+        return `
+          <div class="inspection-results-title">${title}</div>
+          <div class="operations-detail-empty">
+            No pending claim folder items were returned. Found count: ${foundCount}.
+          </div>
+        `;
+      }
+
+      return `
+        <div class="inspection-results-title">${title}</div>
+        <div class="inspection-summary">
+          Found ${foundCount} pending item(s). Showing ${items.length} item(s).
+        </div>
+        <div class="inspection-table-wrapper">
+          <table class="inspection-table">
+            <thead>
+              <tr>
+                <th>Workflow</th>
+                <th>Claim / Customer</th>
+                <th>Sender / Messages</th>
+                <th>Subject</th>
+                <th>Parse Issues</th>
+                <th>Recommended Next Step</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(function(item) {
+                return `
+                  <tr class="${getInspectionRowClass(item)}">
+                    <td>${escapeHtml(item.workflow || '')}</td>
+                    <td>
+                      <div>${escapeHtml(item.claimNumber || 'Missing claim number')}</div>
+                      <div class="inspection-meta">${escapeHtml(item.customerName || 'Unknown customer')}</div>
+                    </td>
+                    <td>
+                      <div>${escapeHtml(item.sender || 'Unknown sender')}</div>
+                      <div class="inspection-meta">Messages: ${escapeHtml(item.messageCount || 0)}</div>
+                    </td>
+                    <td>${escapeHtml(item.subject || '')}</td>
+                    <td>${formatParseErrors(item.parseErrors)}</td>
+                    <td>${escapeHtml(item.recommendedNextStep || '')}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+
+    function getInspectionRowClass(item) {
+      const parseErrors = item && item.parseErrors ? item.parseErrors : [];
+      const hasParseErrors = Array.isArray(parseErrors)
+        ? parseErrors.length > 0
+        : String(parseErrors || '').trim() !== '';
+      const missingClaim = !item || !item.claimNumber;
+
+      if (hasParseErrors || missingClaim) {
+        return 'inspection-row-critical';
+      }
+
+      return 'inspection-row-warning';
+    }
+
+    function formatParseErrors(parseErrors) {
+      if (!parseErrors) {
+        return '<span class="inspection-meta">None reported</span>';
+      }
+
+      if (Array.isArray(parseErrors)) {
+        if (parseErrors.length === 0) {
+          return '<span class="inspection-meta">None reported</span>';
+        }
+
+        return '<div class="inspection-parse-errors">' +
+          parseErrors.map(function(error) {
+            return escapeHtml(error);
+          }).join('<br>') +
+          '</div>';
+      }
+
+      const text = String(parseErrors || '').trim();
+
+      if (!text) {
+        return '<span class="inspection-meta">None reported</span>';
+      }
+
+      return '<div class="inspection-parse-errors">' + escapeHtml(text) + '</div>';
+    }
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     }
 
     function showOperationsActionResult(type, message) {

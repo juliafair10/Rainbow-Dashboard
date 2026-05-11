@@ -392,7 +392,8 @@ function runAutomation(automationId) {
     lastStatus: status,
     lastMessage: message,
     message: message,
-    durationMs: durationMs
+    durationMs: durationMs,
+    rawResponse: rawResponse
   };
 }
 
