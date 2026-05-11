@@ -513,6 +513,23 @@
       line-height: 1.4;
     }
 
+    .inspection-gmail-link {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .inspection-gmail-link:hover {
+      background: #dbeafe;
+    }
+
     .inspection-empty {
       padding: 12px;
       border: 1px solid var(--border);
@@ -1148,6 +1165,7 @@
                 <th>Subject</th>
                 <th>Parse Issues</th>
                 <th>Recommended Next Step</th>
+                <th>Open</th>
               </tr>
             </thead>
             <tbody>
@@ -1166,6 +1184,7 @@
                     <td>${escapeHtml(item.subject || '')}</td>
                     <td>${formatParseErrors(item.parseErrors)}</td>
                     <td>${escapeHtml(item.recommendedNextStep || '')}</td>
+                    <td>${buildGmailLink(item)}</td>
                   </tr>
                 `;
               }).join('')}
@@ -1175,6 +1194,28 @@
       `;
     }
 
+
+    function buildGmailLink(item) {
+      const threadId = item && item.threadId
+        ? String(item.threadId).trim()
+        : '';
+
+      if (!threadId) {
+        return '<span class="inspection-meta">Unavailable</span>';
+      }
+
+      const gmailUrl = 'https://mail.google.com/mail/u/0/#all/' + encodeURIComponent(threadId);
+
+      return `
+        <a
+          class="inspection-gmail-link"
+          href="${gmailUrl}"
+          target="_blank"
+          rel="noopener noreferrer">
+          Open Gmail
+        </a>
+      `;
+    }
 
     function getInspectionRowClass(item) {
       const parseErrors = item && item.parseErrors ? item.parseErrors : [];
