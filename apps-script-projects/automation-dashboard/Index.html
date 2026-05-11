@@ -442,9 +442,22 @@
     .focus-workflow-card {
       background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
       border: 1px solid var(--border);
+      border-left: 5px solid #cbd5e1;
       border-radius: 18px;
       padding: 24px;
       box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .focus-workflow-card.health-success {
+      border-left-color: #22c55e;
+    }
+
+    .focus-workflow-card.health-error {
+      border-left-color: #ef4444;
+    }
+
+    .focus-workflow-card.health-not-run {
+      border-left-color: #94a3b8;
     }
 
     .focus-workflow-top {
@@ -648,10 +661,7 @@
       padding: 0;
     }
 
-    .operations-summary.collapsed .operations-metrics,
-    .operations-summary.collapsed .queue-health-details,
-    .operations-summary.collapsed .operations-actions-panel,
-    .operations-summary.collapsed .failed-list {
+    .operations-summary.collapsed .operations-summary-content {
       display: none;
     }
 
@@ -667,6 +677,12 @@
       align-items: center;
       gap: 12px;
       margin-bottom: 16px;
+    }
+
+    .operations-summary-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     .operations-summary-title {
@@ -1012,6 +1028,44 @@
       font-size: 13px;
       background: #fafafa;
     }
+
+    .operations-subsection {
+      margin-top: 18px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .operations-subsection-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .operations-subsection-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .operations-subsection-toggle {
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--button);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .operations-subsection-toggle:hover {
+      background: #f8fafc;
+    }
+
+    .operations-subsection.collapsed .operations-subsection-content {
+      display: none;
+    }
   </style>
 </head>
 
@@ -1147,9 +1201,16 @@
     function refreshDashboard() {
       google.script.run
         .withSuccessHandler(function(data) {
-          latestDashboardData = data;
-          renderDashboardShell(data);
-          refreshOperationsSummaryData();
+          try {
+            latestDashboardData = data;
+            renderDashboardShell(data);
+            refreshOperationsSummaryData();
+          } catch (error) {
+            showNotice('error', 'Dashboard render failed: ' + (error.message || error));
+          }
+        })
+        .withFailureHandler(function(err) {
+          showNotice('error', 'Dashboard data failed to load: ' + (err.message || err));
         })
         .getDashboardShellData();
     }
@@ -1194,8 +1255,10 @@
         return;
       }
 
+      const healthClass = getFocusWorkflowHealthClass(getAutomationStatus(primaryWorkflow));
+
       container.innerHTML = `
-        <div class="focus-workflow-card">
+        <div class="focus-workflow-card ${healthClass}">
           <div class="focus-workflow-top">
             <div>
               <h2 class="focus-workflow-title">
@@ -1211,7 +1274,7 @@
           </div>
 
           <div class="focus-workflow-metrics">
-            ${buildFocusMetric('Last Run', getAutomationLastRunTime(primaryWorkflow) ? '✓' : '—')}
+            ${buildFocusMetric('Last Run', getAutomationLastRunTime(primaryWorkflow) ? formatDisplayDateTime(getAutomationLastRunTime(primaryWorkflow)) : 'Never')}
             ${buildFocusMetric('Workflow Status', getAutomationStatus(primaryWorkflow))}
             ${buildFocusMetric('Category', primaryWorkflow.category || 'Workflow')}
           </div>
@@ -1219,7 +1282,7 @@
           <div class="focus-workflow-actions">
             <button
               class="focus-workflow-button"
-              onclick="runAutomation('${primaryWorkflow.id}')">
+              onclick="runAutomation('${primaryWorkflow.id}', event)">
               Run Workflow
             </button>
 
@@ -1253,7 +1316,7 @@
                   <div class="focus-context-card-text">${escapeHtml(action.description)}</div>
                   <button
                     class="focus-context-button"
-                    onclick="runAutomation('${action.id}')">
+                    onclick="runAutomation('${action.id}', event)">
                     Run Tool
                   </button>
                 </div>
@@ -1426,6 +1489,18 @@
       `;
     }
 
+    function getFocusWorkflowHealthClass(status) {
+      if (status === 'Success') {
+        return 'health-success';
+      }
+
+      if (status === 'Error') {
+        return 'health-error';
+      }
+
+      return 'health-not-run';
+    }
+
     function buildQueueHealthBadge(health) {
       return `
         <div class="${getQueueHealthStatusClass(health)}">
@@ -1532,15 +1607,13 @@
         return '';
       }
 
-      const shouldCollapse =
-        section.id === 'automations' ||
-        section.id === 'operations' ||
-        section.id === 'reports';
-      const sectionClass = shouldCollapse
+      const shouldCollapse = shouldCollapseDashboardSection(section.id);
+      const isCollapsed = getStoredDashboardSectionCollapsedState(section.id, shouldCollapse);
+      const sectionClass = isCollapsed
         ? 'dashboard-section collapsed'
         : 'dashboard-section';
       const toggleHtml = shouldCollapse
-        ? `<button class="section-toggle-button" onclick="toggleDashboardSection('${section.id}', this)">Show</button>`
+        ? `<button class="section-toggle-button" onclick="toggleDashboardSection('${section.id}', this)">${isCollapsed ? 'Show' : 'Hide'}</button>`
         : '';
 
       return `
@@ -1563,6 +1636,34 @@
       `;
     }
 
+    function shouldCollapseDashboardSection(sectionId) {
+      return sectionId === 'automations' ||
+        sectionId === 'operations' ||
+        sectionId === 'reports';
+    }
+
+    function getStoredDashboardSectionCollapsedState(sectionId, defaultValue) {
+      try {
+        const storedValue = localStorage.getItem('rainbowDashboard.section.' + sectionId + '.collapsed');
+
+        if (storedValue === null) {
+          return defaultValue;
+        }
+
+        return storedValue === 'true';
+      } catch (error) {
+        return defaultValue;
+      }
+    }
+
+    function setStoredDashboardSectionCollapsedState(sectionId, isCollapsed) {
+      try {
+        localStorage.setItem('rainbowDashboard.section.' + sectionId + '.collapsed', String(isCollapsed));
+      } catch (error) {
+        // Ignore storage failures so the dashboard can still render.
+      }
+    }
+
     function toggleDashboardSection(sectionId, button) {
       const section = document.getElementById('section-' + sectionId);
 
@@ -1575,9 +1676,11 @@
       if (isCollapsed) {
         section.classList.remove('collapsed');
         button.textContent = 'Hide';
+        setStoredDashboardSectionCollapsedState(sectionId, false);
       } else {
         section.classList.add('collapsed');
         button.textContent = 'Show';
+        setStoredDashboardSectionCollapsedState(sectionId, true);
       }
     }
 
@@ -1620,7 +1723,7 @@
             <button
               id="button-${automation.id}"
               class="run-button"
-              onclick="runAutomation('${automation.id}')">
+              onclick="runAutomation('${automation.id}', event)">
               Run
             </button>
           </div>
@@ -1727,18 +1830,20 @@
             ${buildStatusBadge(summary.overallStatus)}
           </div>
 
-          <div class="operations-metrics">
-            ${buildMetricCard('Watched Operations', summary.watchedCount)}
-            ${buildMetricCard('Successful', summary.successCount)}
-            ${buildMetricCard('Errors', summary.errorCount)}
-            ${buildMetricCard('Not Run', summary.notRunCount)}
+          <div class="operations-summary-content">
+            <div class="operations-metrics">
+              ${buildMetricCard('Watched Operations', summary.watchedCount)}
+              ${buildMetricCard('Successful', summary.successCount)}
+              ${buildMetricCard('Errors', summary.errorCount)}
+              ${buildMetricCard('Not Run', summary.notRunCount)}
+            </div>
+
+            ${queueHealthHtml}
+
+            ${buildOperationsActionsHtml()}
+
+            ${failedItemsHtml}
           </div>
-
-          ${queueHealthHtml}
-
-          ${buildOperationsActionsHtml()}
-
-          ${failedItemsHtml}
 
           <button
             class="collapsible-toggle"
@@ -1770,52 +1875,72 @@
       const actions = OPERATIONS_ACTIONS;
 
       return `
-        <div class="operations-actions-panel">
-          <div class="operations-actions-title">
-            Recovery Tools
-          </div>
-
-          <div id="operationsActionResult" class="operations-action-result"></div>
-
-          <div class="operations-detail-panel">
-            <div class="operations-detail-title">
-              Operational Details
+        <div class="operations-subsection collapsed">
+          <div class="operations-subsection-header">
+            <div class="operations-subsection-title">
+              Recovery Tools
             </div>
 
-            <div id="inspectionResultsPanel" class="inspection-results-panel visible">
-              <div class="operations-detail-empty">
-                No operational inspection details loaded yet.
+            <button
+              class="operations-subsection-toggle"
+              onclick="toggleOperationsSubsection(this)">
+              Show
+            </button>
+          </div>
+
+          <div class="operations-subsection-content">
+            <div id="operationsActionResult" class="operations-action-result"></div>
+
+            <div class="operations-subsection collapsed">
+              <div class="operations-subsection-header">
+                <div class="operations-subsection-title">
+                  Operational Details
+                </div>
+
+                <button
+                  class="operations-subsection-toggle"
+                  onclick="toggleOperationsSubsection(this)">
+                  Show
+                </button>
               </div>
-            </div>
-          </div>
 
-          <div class="operations-actions-grid">
-            ${actions.map(function(action) {
-              return `
-                <div class="operations-action-card">
-                  <div class="operations-action-name">
-                    ${action.name}
-                  </div>
-
-                  <div class="operations-action-description">
-                    ${action.description}
-                  </div>
-
-                  <div class="actions">
-                    <span id="loading-${action.id}" class="loading">
-                      Running...
-                    </span>
-
-                    <button
-                      id="button-${action.id}"
-                      class="operations-action-button"
-                      onclick="runAutomation('${action.id}')">
-                      Run Action
-                    </button>
+              <div class="operations-subsection-content">
+                <div id="inspectionResultsPanel" class="inspection-results-panel visible">
+                  <div class="operations-detail-empty">
+                    No operational inspection details loaded yet.
                   </div>
                 </div>
-              `;
-            }).join('')}
+              </div>
+            </div>
+
+            <div class="operations-actions-grid">
+              ${actions.map(function(action) {
+                return `
+                  <div class="operations-action-card">
+                    <div class="operations-action-name">
+                      ${escapeHtml(action.name)}
+                    </div>
+
+                    <div class="operations-action-description">
+                      ${escapeHtml(action.description)}
+                    </div>
+
+                    <div class="actions">
+                      <span id="loading-${action.id}" class="loading">
+                        Running...
+                      </span>
+
+                      <button
+                        id="button-${action.id}"
+                        class="operations-action-button"
+                        onclick="runAutomation('${action.id}', event)">
+                        Run Action
+                      </button>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
           </div>
         </div>
       `;
@@ -1861,43 +1986,71 @@
       }).join('');
 
       return `
-        <div class="queue-health-details">
-          <div class="queue-health-title">
-            Queue Health Snapshot
+        <div class="operations-subsection">
+          <div class="operations-subsection-header">
+            <div class="operations-subsection-title">
+              Queue Health Snapshot
+            </div>
+
+            <button
+              class="operations-subsection-toggle"
+              onclick="toggleOperationsSubsection(this)">
+              Hide
+            </button>
           </div>
 
-          <div class="subtitle">
-            Overall queue health: ${queueHealth.overallHealth || 'Unknown'}
-            ${queueHealth.checkedAt ? `• Checked: ${formatDisplayDateTime(queueHealth.checkedAt)}` : ''}
-          </div>
-
-          <div class="operations-metrics">
-            <div class="metric-card">
-              <span class="metric-label">Pending Claim Folders</span>
-              <div class="metric-value">${totals.pendingClaimFolderCount || 0}</div>
+          <div class="operations-subsection-content">
+            <div class="subtitle">
+              Overall queue health: ${queueHealth.overallHealth || 'Unknown'}
+              ${queueHealth.checkedAt ? `• Checked: ${formatDisplayDateTime(queueHealth.checkedAt)}` : ''}
             </div>
 
-            <div class="metric-card">
-              <span class="metric-label">Retry Ready</span>
-              <div class="metric-value">${totals.retryReadyCount || 0}</div>
+            <div class="operations-metrics">
+              <div class="metric-card">
+                <span class="metric-label">Pending Claim Folders</span>
+                <div class="metric-value">${totals.pendingClaimFolderCount || 0}</div>
+              </div>
+
+              <div class="metric-card">
+                <span class="metric-label">Retry Ready</span>
+                <div class="metric-value">${totals.retryReadyCount || 0}</div>
+              </div>
+
+              <div class="metric-card">
+                <span class="metric-label">Retry Limit Reached</span>
+                <div class="metric-value">${totals.retryLimitReachedCount || 0}</div>
+              </div>
+
+              <div class="metric-card">
+                <span class="metric-label">Errors / Reviews</span>
+                <div class="metric-value">${(totals.errorCount || 0) + (totals.reviewCount || 0)}</div>
+              </div>
             </div>
 
-            <div class="metric-card">
-              <span class="metric-label">Retry Limit Reached</span>
-              <div class="metric-value">${totals.retryLimitReachedCount || 0}</div>
+            <div class="workflow-health-grid">
+              ${workflowCardsHtml}
             </div>
-
-            <div class="metric-card">
-              <span class="metric-label">Errors / Reviews</span>
-              <div class="metric-value">${(totals.errorCount || 0) + (totals.reviewCount || 0)}</div>
-            </div>
-          </div>
-
-          <div class="workflow-health-grid">
-            ${workflowCardsHtml}
           </div>
         </div>
       `;
+    }
+
+    function toggleOperationsSubsection(button) {
+      const section = button.closest('.operations-subsection');
+
+      if (!section) {
+        return;
+      }
+
+      const collapsed = section.classList.contains('collapsed');
+
+      if (collapsed) {
+        section.classList.remove('collapsed');
+        button.textContent = 'Hide';
+      } else {
+        section.classList.add('collapsed');
+        button.textContent = 'Show';
+      }
     }
 
     function toggleOperationsSummary(button) {
@@ -1955,7 +2108,11 @@
       return 'status status-not-run';
     }
 
-    function runAutomation(id) {
+    function runAutomation(id, event) {
+      if (event) {
+        event.stopPropagation();
+      }
+
       const button = document.getElementById('button-' + id);
       const loading = document.getElementById('loading-' + id);
 
@@ -2144,7 +2301,7 @@
             <button
               type="button"
               class="inspection-retry-button"
-              onclick="runAutomation('${retryActionId}')">
+              onclick="runAutomation('${retryActionId}', event)">
               Retry Workflow
             </button>
           ` : ''}
