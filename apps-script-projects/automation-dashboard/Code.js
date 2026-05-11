@@ -67,6 +67,22 @@ const DASHBOARD_CONFIG = {
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
     },
     {
+      id: 'inspect-asbestos-pending-claim-folders',
+      name: 'Inspect Asbestos Pending Folders',
+      category: 'Recovery / Inspection',
+      mainFunction: 'inspectAsbestosPendingClaimFolders',
+      action: 'inspectAsbestosPendingClaimFolders',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'inspect-itel-pending-claim-folders',
+      name: 'Inspect Itel Pending Folders',
+      category: 'Recovery / Inspection',
+      mainFunction: 'inspectItelPendingClaimFolders',
+      action: 'inspectItelPendingClaimFolders',
+      webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
       id: 'retry-insurance-intake',
       name: 'Retry Insurance Intake',
       category: 'Recovery / Retry',
@@ -164,6 +180,8 @@ function buildOperationsSummary_(automations) {
     'insurance-intake-queue-health',
     'asbestos-queue-health',
     'itel-queue-health',
+    'inspect-asbestos-pending-claim-folders',
+    'inspect-itel-pending-claim-folders',
     'retry-insurance-intake',
     'retry-asbestos-intake',
     'retry-itel-intake',
@@ -373,6 +391,7 @@ function runAutomation(automationId) {
     lastRunTime: formatDateTime_(endedAt),
     lastStatus: status,
     lastMessage: message,
+    message: message,
     durationMs: durationMs
   };
 }

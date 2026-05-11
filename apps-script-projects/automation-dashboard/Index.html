@@ -360,6 +360,83 @@
       font-size: 16px;
       font-weight: 700;
     }
+
+    .operations-actions-panel {
+      margin-top: 18px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .operations-actions-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .operations-actions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .operations-action-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .operations-action-name {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .operations-action-description {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-bottom: 12px;
+    }
+
+    .operations-action-button {
+      width: 100%;
+      background: var(--button);
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .operations-action-button:hover {
+      background: var(--button-hover);
+    }
+
+    .operations-action-result {
+      display: none;
+      margin-top: 14px;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+    }
+
+    .operations-action-result.success {
+      display: block;
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .operations-action-result.error {
+      display: block;
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+    }
   </style>
 </head>
 
@@ -375,7 +452,7 @@
       </div>
 
       <div class="toolbar">
-        <button class="secondary-button" onclick="refreshDashboard()">
+        <button class="secondary-button" onclick="refreshOperationsDashboard()">
           Refresh
         </button>
 
@@ -397,6 +474,67 @@
     document.addEventListener('DOMContentLoaded', function () {
       refreshDashboard();
     });
+
+    const OPERATIONS_ACTIONS = [
+      {
+        id: 'inspect-asbestos-pending-claim-folders',
+        name: 'Inspect Asbestos Pending Folders',
+        description: 'Review asbestos claim-folder recovery queue visibility.'
+      },
+      {
+        id: 'inspect-itel-pending-claim-folders',
+        name: 'Inspect Itel Pending Folders',
+        description: 'Review itel claim-folder recovery queue visibility.'
+      },
+      {
+        id: 'retry-asbestos-intake',
+        name: 'Retry Asbestos Workflow',
+        description: 'Retry asbestos threads waiting for claim folders.'
+      },
+      {
+        id: 'retry-itel-intake',
+        name: 'Retry Itel Workflow',
+        description: 'Retry itel threads waiting for claim folders.'
+      },
+      {
+        id: 'setup-retry-triggers',
+        name: 'Setup Retry Triggers',
+        description: 'Create scheduled recovery triggers for all retry workflows.'
+      },
+      {
+        id: 'delete-retry-triggers',
+        name: 'Delete Retry Triggers',
+        description: 'Remove all scheduled retry trigger handlers safely.'
+      }
+    ];
+
+    let lastOperationsActionResult = null;
+    let noticeTimeoutId = null;
+    let operationsActionResultTimeoutId = null;
+
+    function isOperationsActionId(id) {
+      return OPERATIONS_ACTIONS.some(function(action) {
+        return action.id === id;
+      });
+    }
+
+    function refreshOperationsDashboard() {
+      showNotice('success', 'Refreshing Operations Center...');
+
+      google.script.run
+        .withSuccessHandler(function (result) {
+          const message = result && result.message
+            ? result.message
+            : 'Operations Center refreshed.';
+
+          showNotice('success', message);
+          refreshDashboard();
+        })
+        .withFailureHandler(function (err) {
+          showNotice('error', err.message || err || 'Refresh failed.');
+        })
+        .runAutomation('phase-4f-queue-health');
+    }
 
     function refreshDashboard() {
       google.script.run
@@ -470,14 +608,18 @@
     }
 
     function shouldRenderAutomationCard(automation) {
-      const hiddenOperationalSummaryIds = [
+      const monitoringOnlyIds = [
         'phase-4f-queue-health',
         'insurance-intake-queue-health',
         'asbestos-queue-health',
         'itel-queue-health'
       ];
+      const operationsActionIds = OPERATIONS_ACTIONS.map(function(action) {
+        return action.id;
+      });
+      const hiddenOperationalIds = monitoringOnlyIds.concat(operationsActionIds);
 
-      return hiddenOperationalSummaryIds.indexOf(automation.id) === -1;
+      return hiddenOperationalIds.indexOf(automation.id) === -1;
     }
 
     function renderOperationsSummary(summary) {
@@ -519,7 +661,7 @@
 
               <div class="subtitle">
                 Latest activity:
-                ${summary.latestRunTime || 'No operations runs yet'}
+                ${summary.latestRunTime ? formatDisplayDateTime(summary.latestRunTime) : 'No operations runs yet'}
               </div>
             </div>
 
@@ -552,7 +694,61 @@
 
           ${queueHealthHtml}
 
+          ${buildOperationsActionsHtml()}
+
           ${failedItemsHtml}
+        </div>
+      `;
+
+      if (lastOperationsActionResult && lastOperationsActionResult.expiresAt > Date.now()) {
+        showOperationsActionResult(
+          lastOperationsActionResult.type,
+          lastOperationsActionResult.message
+        );
+      } else {
+        lastOperationsActionResult = null;
+      }
+    }
+
+    function buildOperationsActionsHtml() {
+      const actions = OPERATIONS_ACTIONS;
+
+      return `
+        <div class="operations-actions-panel">
+          <div class="operations-actions-title">
+            Recovery Actions
+          </div>
+
+          <div id="operationsActionResult" class="operations-action-result"></div>
+
+          <div class="operations-actions-grid">
+            ${actions.map(function(action) {
+              return `
+                <div class="operations-action-card">
+                  <div class="operations-action-name">
+                    ${action.name}
+                  </div>
+
+                  <div class="operations-action-description">
+                    ${action.description}
+                  </div>
+
+                  <div class="actions">
+                    <span id="loading-${action.id}" class="loading">
+                      Running...
+                    </span>
+
+                    <button
+                      id="button-${action.id}"
+                      class="operations-action-button"
+                      onclick="runAutomation('${action.id}')">
+                      Run Action
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
         </div>
       `;
     }
@@ -606,7 +802,7 @@
 
           <div class="subtitle">
             Overall queue health: ${queueHealth.overallHealth || 'Unknown'}
-            ${queueHealth.checkedAt ? `• Checked: ${queueHealth.checkedAt}` : ''}
+            ${queueHealth.checkedAt ? `• Checked: ${formatDisplayDateTime(queueHealth.checkedAt)}` : ''}
           </div>
 
           <div class="operations-metrics">
@@ -638,6 +834,31 @@
       `;
     }
 
+    function formatDisplayDateTime(value) {
+      if (!value) {
+        return '';
+      }
+
+      const textValue = String(value);
+      const normalizedValue = textValue.indexOf('T') === -1
+        ? textValue.replace(' ', 'T')
+        : textValue;
+      const date = new Date(normalizedValue);
+
+      if (isNaN(date.getTime())) {
+        return value;
+      }
+
+      return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    }
+
     function getQueueHealthStatusClass(health) {
       if (health === 'Healthy') {
         return 'status status-success';
@@ -654,21 +875,101 @@
       const button = document.getElementById('button-' + id);
       const loading = document.getElementById('loading-' + id);
 
-      button.disabled = true;
-      loading.style.display = 'inline';
+      if (button) {
+        button.disabled = true;
+      }
+
+      if (loading) {
+        loading.style.display = 'inline';
+      }
 
       google.script.run
-        .withSuccessHandler(function () {
+        .withSuccessHandler(function (result) {
+          const message = result && result.message
+            ? result.message
+            : 'Action completed successfully.';
+
+          if (isOperationsActionId(id)) {
+            lastOperationsActionResult = {
+              type: 'success',
+              message: message,
+              expiresAt: Date.now() + 12000
+            };
+          } else {
+            showNotice('success', message);
+          }
+
           refreshDashboard();
-          button.disabled = false;
-          loading.style.display = 'none';
+
+          if (button) {
+            button.disabled = false;
+          }
+
+          if (loading) {
+            loading.style.display = 'none';
+          }
         })
         .withFailureHandler(function (err) {
-          alert(err.message || err);
-          button.disabled = false;
-          loading.style.display = 'none';
+          const errorMessage = err.message || err || 'Action failed.';
+          if (isOperationsActionId(id)) {
+            lastOperationsActionResult = {
+              type: 'error',
+              message: errorMessage,
+              expiresAt: Date.now() + 12000
+            };
+            showOperationsActionResult('error', errorMessage);
+          } else {
+            showNotice('error', errorMessage);
+          }
+
+          if (button) {
+            button.disabled = false;
+          }
+
+          if (loading) {
+            loading.style.display = 'none';
+          }
         })
         .runAutomation(id);
+    }
+
+    function showOperationsActionResult(type, message) {
+      const result = document.getElementById('operationsActionResult');
+
+      if (!result) {
+        return;
+      }
+
+      result.className = 'operations-action-result ' + type;
+      result.textContent = message;
+
+      if (operationsActionResultTimeoutId) {
+        clearTimeout(operationsActionResultTimeoutId);
+      }
+
+      operationsActionResultTimeoutId = setTimeout(function() {
+        result.className = 'operations-action-result';
+        result.textContent = '';
+        lastOperationsActionResult = null;
+      }, 12000);
+    }
+
+    function showNotice(type, message) {
+      const notice = document.getElementById('notice');
+
+      notice.className = 'notice ' + type;
+      notice.textContent = message;
+      notice.style.display = 'block';
+
+      if (noticeTimeoutId) {
+        clearTimeout(noticeTimeoutId);
+      }
+
+      noticeTimeoutId = setTimeout(function() {
+        notice.style.display = 'none';
+        notice.textContent = '';
+        notice.className = 'notice';
+      }, 10000);
     }
 
     function openRunLog() {
