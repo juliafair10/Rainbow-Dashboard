@@ -293,6 +293,146 @@ const AUTOMATION_REGISTRY_DEFAULTS = {
   }
 };
 
+const AUTOMATION_REGISTRY = {
+  'insurance-intake-automation': {
+    section: 'automations',
+    featured: true,
+    order: 10,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  'asbestos-attachment-intake': {
+    section: 'automations',
+    featured: true,
+    order: 20,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  'itel-attachment-intake': {
+    section: 'automations',
+    featured: true,
+    order: 30,
+    capabilities: {
+      process: true,
+      retry: true,
+      inspect: true,
+      queueHealth: true
+    }
+  },
+  'claim-folder-automation': {
+    section: 'automations',
+    featured: false,
+    order: 40,
+    capabilities: {
+      process: true
+    }
+  },
+  'add-new-job-to-calendar': {
+    section: 'automations',
+    featured: false,
+    order: 50,
+    capabilities: {
+      process: true
+    }
+  },
+  'phase-4f-queue-health': {
+    section: 'operations',
+    featured: false,
+    order: 100,
+    capabilities: {
+      queueHealth: true
+    }
+  },
+  'insurance-intake-queue-health': {
+    section: 'operations',
+    featured: false,
+    order: 110,
+    capabilities: {
+      queueHealth: true
+    }
+  },
+  'asbestos-queue-health': {
+    section: 'operations',
+    featured: false,
+    order: 120,
+    capabilities: {
+      queueHealth: true
+    }
+  },
+  'itel-queue-health': {
+    section: 'operations',
+    featured: false,
+    order: 130,
+    capabilities: {
+      queueHealth: true
+    }
+  },
+  'inspect-asbestos-pending-claim-folders': {
+    section: 'operations',
+    featured: false,
+    order: 200,
+    capabilities: {
+      inspect: true
+    }
+  },
+  'inspect-itel-pending-claim-folders': {
+    section: 'operations',
+    featured: false,
+    order: 210,
+    capabilities: {
+      inspect: true
+    }
+  },
+  'retry-insurance-intake': {
+    section: 'automations',
+    featured: false,
+    order: 300,
+    capabilities: {
+      retry: true
+    }
+  },
+  'retry-asbestos-intake': {
+    section: 'automations',
+    featured: false,
+    order: 310,
+    capabilities: {
+      retry: true
+    }
+  },
+  'retry-itel-intake': {
+    section: 'automations',
+    featured: false,
+    order: 320,
+    capabilities: {
+      retry: true
+    }
+  },
+  'setup-retry-triggers': {
+    section: 'operations',
+    featured: false,
+    order: 400,
+    capabilities: {
+      retry: true
+    }
+  },
+  'delete-retry-triggers': {
+    section: 'operations',
+    featured: false,
+    order: 410,
+    capabilities: {
+      retry: true
+    }
+  }
+};
+
 const AUTOMATION_REGISTRY_RULES = [
   {
     match: 'insurance',
@@ -477,26 +617,22 @@ function buildDashboardAutomations_() {
 }
 
 function buildAutomationRegistryEntry_(automation) {
-  const matchingRule = findAutomationRegistryRule_(automation);
+  const explicitEntry = AUTOMATION_REGISTRY[automation.id] || null;
+  const matchingRule = explicitEntry ? null : findAutomationRegistryRule_(automation);
+  const registrySource = explicitEntry || matchingRule || {};
   const baseCapabilities = Object.assign({}, AUTOMATION_REGISTRY_DEFAULTS.capabilities);
-  const ruleCapabilities = matchingRule && matchingRule.capabilities
-    ? matchingRule.capabilities
-    : {};
+  const registryCapabilities = registrySource.capabilities || {};
 
   return {
-    section: matchingRule && matchingRule.section
-      ? matchingRule.section
-      : AUTOMATION_REGISTRY_DEFAULTS.section,
-    dashboardRole: matchingRule && matchingRule.dashboardRole
-      ? matchingRule.dashboardRole
-      : (automation.dashboardRole || AUTOMATION_REGISTRY_DEFAULTS.dashboardRole),
-    featured: matchingRule && typeof matchingRule.featured === 'boolean'
-      ? matchingRule.featured
+    section: registrySource.section || AUTOMATION_REGISTRY_DEFAULTS.section,
+    dashboardRole: registrySource.dashboardRole || automation.dashboardRole || AUTOMATION_REGISTRY_DEFAULTS.dashboardRole,
+    featured: typeof registrySource.featured === 'boolean'
+      ? registrySource.featured
       : AUTOMATION_REGISTRY_DEFAULTS.featured,
-    order: matchingRule && typeof matchingRule.order === 'number'
-      ? matchingRule.order
+    order: typeof registrySource.order === 'number'
+      ? registrySource.order
       : AUTOMATION_REGISTRY_DEFAULTS.order,
-    capabilities: Object.assign(baseCapabilities, ruleCapabilities)
+    capabilities: Object.assign(baseCapabilities, registryCapabilities)
   };
 }
 
@@ -1076,11 +1212,20 @@ function testDashboardConfiguration() {
   Logger.log('✓ Dashboard shell automations: ' + shellData.automations.length);
   Logger.log('✓ Operations watched count: ' + operationsSummary.watchedCount);
 
-  DASHBOARD_CONFIG.automations.forEach(function(automation) {
+  shellData.automations.forEach(function(automation) {
     Logger.log('  - ' + automation.name + ' (' + automation.id + ')');
     Logger.log('    Action: ' + (automation.action || 'process'));
     Logger.log('    Dashboard role: ' + (automation.dashboardRole || 'business'));
-    Logger.log('    URL: ' + automation.webAppUrl);
+    Logger.log('    Section: ' + automation.section);
+    Logger.log('    Featured: ' + automation.featured);
+    Logger.log('    Order: ' + automation.order);
+    Logger.log('    Capabilities: ' + JSON.stringify(automation.capabilities));
+
+    const configuredAutomation = DASHBOARD_CONFIG.automations.find(function(item) {
+      return item.id === automation.id;
+    });
+
+    Logger.log('    URL: ' + (configuredAutomation ? configuredAutomation.webAppUrl : 'Not configured'));
   });
 
   Logger.log('✓ Log spreadsheet: ' + getOrCreateLogSpreadsheet_().getUrl());
