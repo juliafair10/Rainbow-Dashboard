@@ -8,6 +8,7 @@ const DASHBOARD_CONFIG = {
       id: 'claim-folder-automation',
       name: 'Claim Folder Automation',
       category: 'Claims / Gmail',
+      dashboardRole: 'business',
       mainFunction: 'processGmailLabels',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbxU3gezv9qcXA7LiNP5e7KD2pOvSaW5cAG4Jjk1nY-Uy8LE5Bibdclef2pSE1cHPndoyw/exec'
     },
@@ -15,6 +16,7 @@ const DASHBOARD_CONFIG = {
       id: 'add-new-job-to-calendar',
       name: 'Add New Job to Calendar',
       category: 'Calendar / Gmail',
+      dashboardRole: 'business',
       mainFunction: 'processEmailsToCalendar',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbxXVe8Lg1d7Da0RdR5nJujatv2bg4hkP8OjJrktzyDlB5L30QJnk4JU9ZDzPJD5CkudJA/exec'
     },
@@ -22,6 +24,7 @@ const DASHBOARD_CONFIG = {
       id: 'insurance-intake-automation',
       name: 'Insurance Intake Automation',
       category: 'Insurance / Gmail / Todoist',
+      dashboardRole: 'business',
       mainFunction: 'processInsuranceIntake',
       action: 'process',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -30,6 +33,7 @@ const DASHBOARD_CONFIG = {
       id: 'asbestos-attachment-intake',
       name: 'Asbestos Attachment Intake',
       category: 'Vendor Attachments / Gmail / Drive',
+      dashboardRole: 'business',
       mainFunction: 'processAsbestosAttachments',
       action: 'processAsbestos',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -38,6 +42,7 @@ const DASHBOARD_CONFIG = {
       id: 'itel-attachment-intake',
       name: 'Itel Attachment Intake',
       category: 'Vendor Attachments / Gmail / Drive',
+      dashboardRole: 'business',
       mainFunction: 'processItelAttachments',
       action: 'processItel',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -46,6 +51,7 @@ const DASHBOARD_CONFIG = {
       id: 'phase-4f-queue-health',
       name: 'Phase 4F Queue Health',
       category: 'Operations / Monitoring',
+      dashboardRole: 'monitoring',
       mainFunction: 'getQueueHealth',
       action: 'queueHealth',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -54,6 +60,7 @@ const DASHBOARD_CONFIG = {
       id: 'asbestos-queue-health',
       name: 'Asbestos Queue Health',
       category: 'Operations / Monitoring',
+      dashboardRole: 'monitoring',
       mainFunction: 'getAsbestosQueueHealth',
       action: 'queueHealthAsbestos',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -62,6 +69,7 @@ const DASHBOARD_CONFIG = {
       id: 'itel-queue-health',
       name: 'Itel Queue Health',
       category: 'Operations / Monitoring',
+      dashboardRole: 'monitoring',
       mainFunction: 'getItelQueueHealth',
       action: 'queueHealthItel',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -70,6 +78,7 @@ const DASHBOARD_CONFIG = {
       id: 'inspect-asbestos-pending-claim-folders',
       name: 'Inspect Asbestos Pending Folders',
       category: 'Recovery / Inspection',
+      dashboardRole: 'operations',
       mainFunction: 'inspectAsbestosPendingClaimFolders',
       action: 'inspectAsbestosPendingClaimFolders',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -78,6 +87,7 @@ const DASHBOARD_CONFIG = {
       id: 'inspect-itel-pending-claim-folders',
       name: 'Inspect Itel Pending Folders',
       category: 'Recovery / Inspection',
+      dashboardRole: 'operations',
       mainFunction: 'inspectItelPendingClaimFolders',
       action: 'inspectItelPendingClaimFolders',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -86,6 +96,7 @@ const DASHBOARD_CONFIG = {
       id: 'retry-insurance-intake',
       name: 'Retry Insurance Intake',
       category: 'Recovery / Retry',
+      dashboardRole: 'operations',
       mainFunction: 'retryWorkflow',
       action: 'retryInsuranceIntake',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -94,6 +105,7 @@ const DASHBOARD_CONFIG = {
       id: 'retry-asbestos-intake',
       name: 'Retry Asbestos',
       category: 'Recovery / Retry',
+      dashboardRole: 'operations',
       mainFunction: 'retryWorkflow',
       action: 'retryAsbestos',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -102,6 +114,7 @@ const DASHBOARD_CONFIG = {
       id: 'retry-itel-intake',
       name: 'Retry Itel',
       category: 'Recovery / Retry',
+      dashboardRole: 'operations',
       mainFunction: 'retryWorkflow',
       action: 'retryItel',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -110,6 +123,7 @@ const DASHBOARD_CONFIG = {
       id: 'setup-retry-triggers',
       name: 'Setup Scheduled Retry Triggers',
       category: 'Recovery / Retry Operations',
+      dashboardRole: 'operations',
       mainFunction: 'setupRetryTriggers',
       action: 'setupRetryTriggers',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -118,6 +132,7 @@ const DASHBOARD_CONFIG = {
       id: 'delete-retry-triggers',
       name: 'Delete Scheduled Retry Triggers',
       category: 'Recovery / Retry Operations',
+      dashboardRole: 'operations',
       mainFunction: 'deleteRetryTriggers',
       action: 'deleteRetryTriggers',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -126,6 +141,7 @@ const DASHBOARD_CONFIG = {
       id: 'insurance-intake-queue-health',
       name: 'Insurance Intake Queue Health',
       category: 'Operations / Monitoring',
+      dashboardRole: 'monitoring',
       mainFunction: 'getInsuranceIntakeQueueHealth',
       action: 'queueHealthInsuranceIntake',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
@@ -158,6 +174,7 @@ function getDashboardData() {
       id: automation.id,
       name: automation.name,
       category: automation.category,
+      dashboardRole: automation.dashboardRole || 'business',
       mainFunction: automation.mainFunction,
       action: automation.action || 'process',
       lastRunTime: saved.lastRunTime || '',
@@ -175,22 +192,12 @@ function getDashboardData() {
 }
 
 function buildOperationsSummary_(automations) {
-  const watchedAutomationIds = [
-    'phase-4f-queue-health',
-    'insurance-intake-queue-health',
-    'asbestos-queue-health',
-    'itel-queue-health',
-    'inspect-asbestos-pending-claim-folders',
-    'inspect-itel-pending-claim-folders',
-    'retry-insurance-intake',
-    'retry-asbestos-intake',
-    'retry-itel-intake',
-    'setup-retry-triggers',
-    'delete-retry-triggers'
-  ];
-
   const watchedAutomations = automations.filter(function(automation) {
-    return watchedAutomationIds.indexOf(automation.id) !== -1;
+    return automation.dashboardRole === 'monitoring' || automation.dashboardRole === 'operations';
+  });
+
+  const watchedAutomationIds = watchedAutomations.map(function(automation) {
+    return automation.id;
   });
 
   const statusCounts = watchedAutomations.reduce(function(counts, automation) {
@@ -414,6 +421,10 @@ function validateConfiguration_() {
 
     if (!automation.action) {
       automation.action = 'process';
+    }
+
+    if (!automation.dashboardRole) {
+      automation.dashboardRole = 'business';
     }
 
     validateAutomationUrl_(automation.webAppUrl);
@@ -683,6 +694,7 @@ function testDashboardConfiguration() {
   DASHBOARD_CONFIG.automations.forEach(function(automation) {
     Logger.log('  - ' + automation.name + ' (' + automation.id + ')');
     Logger.log('    Action: ' + (automation.action || 'process'));
+    Logger.log('    Dashboard role: ' + (automation.dashboardRole || 'business'));
     Logger.log('    URL: ' + automation.webAppUrl);
   });
 
