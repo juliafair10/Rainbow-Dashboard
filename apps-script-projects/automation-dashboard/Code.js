@@ -145,6 +145,24 @@ const DASHBOARD_CONFIG = {
       mainFunction: 'getInsuranceIntakeQueueHealth',
       action: 'queueHealthInsuranceIntake',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbz5lkcTtcxvi9UnKgN0lUS0c7V_4Bld7IZhnTVa9n1xN30pwDXiWcnVPQAxkmVeAKGeAw/exec'
+    },
+    {
+      id: 'revision-intake-queue-health',
+      name: 'Revision Intake Queue Health',
+      category: 'Operations / Monitoring / Revisions',
+      dashboardRole: 'monitoring',
+      mainFunction: 'getRevisionIntakeQueueHealth',
+      action: 'queueHealth',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
+    },
+    {
+      id: 'revision-todoist-review-needed',
+      name: 'Revision Todoist Review Needed',
+      category: 'Operations / Monitoring / Revisions',
+      dashboardRole: 'operations',
+      mainFunction: 'listRevisionTodoistReviewNeeded',
+      action: 'listTodoistReviewNeeded',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
     }
   ]
 };
@@ -360,6 +378,24 @@ const AUTOMATION_REGISTRY = {
     capabilities: {
       process: false,
       queueHealth: true
+    }
+  },
+  'revision-intake-queue-health': {
+    section: 'operations',
+    featured: false,
+    order: 115,
+    capabilities: {
+      process: false,
+      queueHealth: true
+    }
+  },
+  'revision-todoist-review-needed': {
+    section: 'operations',
+    featured: false,
+    order: 116,
+    capabilities: {
+      process: false,
+      inspect: true
     }
   },
   'asbestos-queue-health': {
@@ -987,12 +1023,12 @@ function runAutomation(automationId) {
     } else {
       const parsed = parseAutomationResponse_(rawResponse);
 
-      if (parsed && parsed.status && parsed.message) {
+      if (parsed && parsed.status) {
         status = normalizeStatus_(parsed.status);
-        message = parsed.message;
+        message = buildAutomationResultMessage_(automation, parsed);
       } else if (parsed) {
         status = STATUS.SUCCESS;
-        message = JSON.stringify(parsed) || 'Automation completed.';
+        message = buildAutomationResultMessage_(automation, parsed);
       } else {
         status = STATUS.SUCCESS;
         message = rawResponse || 'Automation completed.';
@@ -1255,6 +1291,55 @@ function validateAutomationUrl_(url) {
   }
 }
 
+function buildAutomationResultMessage_(automation, parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return 'Automation completed.';
+  }
+
+  if (parsed.message) {
+    return parsed.message;
+  }
+
+  if (automation && automation.id === 'revision-intake-queue-health') {
+    return [
+      Number(parsed.openCount || 0) + ' open',
+      Number(parsed.errorCount || 0) + ' errors',
+      Number(parsed.todoistReviewNeededCount || 0) + ' Todoist review',
+      Number(parsed.learningRulesCount || 0) + ' learning rules'
+    ].join(' · ');
+  }
+
+  if (automation && automation.id === 'revision-todoist-review-needed') {
+    const records = parsed.records || [];
+    const count = Number(parsed.count || records.length || 0);
+
+    if (count === 0) {
+      return 'No Todoist tasks need review';
+    }
+
+    const firstRecord = records[0] || {};
+    const firstSummary = [
+      firstRecord.customerName || 'Customer Name Needed',
+      firstRecord.claimNumber || 'Claim # needed'
+    ].join(' - ');
+
+    return count + ' task' + (count === 1 ? ' needs' : 's need') + ' human review · ' + firstSummary;
+  }
+
+  if (parsed.action === 'queueHealth') {
+    return [
+      Number(parsed.openCount || 0) + ' open',
+      Number(parsed.errorCount || 0) + ' errors'
+    ].join(' · ');
+  }
+
+  if (parsed.status) {
+    return parsed.status;
+  }
+
+  return JSON.stringify(parsed) || 'Automation completed.';
+}
+
 function parseAutomationResponse_(text) {
   if (!text || typeof text !== 'string') {
     return null;
@@ -1263,8 +1348,8 @@ function parseAutomationResponse_(text) {
   try {
     const parsed = JSON.parse(text);
 
-    if (!parsed.status || !parsed.message) {
-      Logger.log('WARN: Response missing required fields (status, message): ' + text);
+    if (!parsed.status) {
+      Logger.log('WARN: Response missing status field: ' + text);
       return null;
     }
 
@@ -1297,7 +1382,7 @@ function formatDateTime_(date) {
   return Utilities.formatDate(
     date,
     Session.getScriptTimeZone(),
-    'yyyy-MM-dd HH:mm:ss'
+    'MM/dd/yy hh:mm:ss a'
   );
 }
 
