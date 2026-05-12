@@ -163,6 +163,42 @@ const DASHBOARD_CONFIG = {
       mainFunction: 'listRevisionTodoistReviewNeeded',
       action: 'listTodoistReviewNeeded',
       webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
+    },
+    {
+      id: 'revision-intake-process',
+      name: 'Process Revision Intake',
+      category: 'Revision Intake / Processing',
+      dashboardRole: 'business',
+      mainFunction: 'processRevisionIntake',
+      action: 'process',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
+    },
+    {
+      id: 'revision-enrich-claim-data',
+      name: 'Enrich Revision Claim Data',
+      category: 'Revision Intake / Enrichment',
+      dashboardRole: 'operations',
+      mainFunction: 'enrichRevisionClaimData',
+      action: 'enrichFromClaimFolders',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
+    },
+    {
+      id: 'revision-reclassify-existing',
+      name: 'Reclassify Existing Revisions',
+      category: 'Revision Intake / Learning',
+      dashboardRole: 'operations',
+      mainFunction: 'reclassifyExistingRevisions',
+      action: 'reclassifyExisting',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
+    },
+    {
+      id: 'revision-refresh-todoist-tasks',
+      name: 'Refresh Revision Todoist Tasks',
+      category: 'Revision Intake / Todoist',
+      dashboardRole: 'operations',
+      mainFunction: 'refreshRevisionTodoistTasks',
+      action: 'refreshTodoistTasks',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
     }
   ]
 };
@@ -396,6 +432,42 @@ const AUTOMATION_REGISTRY = {
     capabilities: {
       process: false,
       inspect: true
+    }
+  },
+  'revision-intake-process': {
+    section: 'automations',
+    featured: true,
+    order: 35,
+    capabilities: {
+      process: true,
+      queueHealth: true
+    }
+  },
+  'revision-enrich-claim-data': {
+    section: 'operations',
+    featured: false,
+    order: 117,
+    capabilities: {
+      process: false,
+      inspect: true
+    }
+  },
+  'revision-reclassify-existing': {
+    section: 'operations',
+    featured: false,
+    order: 118,
+    capabilities: {
+      process: false,
+      inspect: true
+    }
+  },
+  'revision-refresh-todoist-tasks': {
+    section: 'operations',
+    featured: false,
+    order: 119,
+    capabilities: {
+      process: false,
+      retry: true
     }
   },
   'asbestos-queue-health': {
@@ -1324,6 +1396,37 @@ function buildAutomationResultMessage_(automation, parsed) {
     ].join(' - ');
 
     return count + ' task' + (count === 1 ? ' needs' : 's need') + ' human review · ' + firstSummary;
+  }
+
+  if (automation && automation.id === 'revision-intake-process') {
+    return [
+      Number(parsed.createdCount || parsed.processedCount || 0) + ' created',
+      Number(parsed.skippedCount || 0) + ' skipped',
+      Number(parsed.errorCount || 0) + ' errors'
+    ].join(' · ');
+  }
+
+  if (automation && automation.id === 'revision-enrich-claim-data') {
+    return [
+      Number(parsed.enrichedCount || 0) + ' enriched',
+      Number(parsed.unchangedCount || 0) + ' unchanged',
+      Number((parsed.errors || []).length || parsed.errorCount || 0) + ' errors'
+    ].join(' · ');
+  }
+
+  if (automation && automation.id === 'revision-reclassify-existing') {
+    return [
+      Number(parsed.updatedCount || 0) + ' updated',
+      Number(parsed.unchangedCount || 0) + ' unchanged'
+    ].join(' · ');
+  }
+
+  if (automation && automation.id === 'revision-refresh-todoist-tasks') {
+    return [
+      Number(parsed.refreshedCount || 0) + ' refreshed',
+      Number(parsed.skippedCount || 0) + ' skipped',
+      Number(parsed.errorCount || 0) + ' errors'
+    ].join(' · ');
   }
 
   if (parsed.action === 'queueHealth') {
