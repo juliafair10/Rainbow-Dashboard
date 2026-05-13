@@ -18,6 +18,7 @@ const DASHBOARD_CONFIG = {
       category: 'Calendar / Gmail',
       dashboardRole: 'business',
       mainFunction: 'processEmailsToCalendar',
+      action: 'process',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbxXVe8Lg1d7Da0RdR5nJujatv2bg4hkP8OjJrktzyDlB5L30QJnk4JU9ZDzPJD5CkudJA/exec'
     },
     {

@@ -383,13 +383,58 @@
 
     .run-button:disabled {
       background: var(--button-disabled);
+      opacity: 0.85;
       cursor: not-allowed;
+    }
+
+    .dashboard-action-running {
+      opacity: 0.85 !important;
+      cursor: wait !important;
+      pointer-events: none !important;
+      background: var(--button-disabled) !important;
+    }
+
+    .dashboard-action-running::before {
+      content: '';
+      display: inline-block;
+      width: 0.85em;
+      height: 0.85em;
+      margin-right: 0.5em;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      vertical-align: -0.12em;
+      animation: dashboard-spin 0.8s linear infinite;
     }
 
     .loading {
       font-size: 13px;
-      color: var(--muted);
+      color: var(--button);
       display: none;
+      font-weight: 700;
+      align-items: center;
+      gap: 6px;
+      min-width: 140px;
+    }
+
+    .loading-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid #bfdbfe;
+      border-top: 2px solid var(--button);
+      border-radius: 50%;
+      animation: dashboard-spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes dashboard-spin {
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     .notice {
@@ -858,6 +903,12 @@
 
     .operations-action-button:hover {
       background: var(--button-hover);
+    }
+
+    .operations-action-button:disabled {
+      opacity: 0.85;
+      cursor: not-allowed;
+      background: var(--button-disabled);
     }
 
     .operations-action-result {
@@ -1819,7 +1870,8 @@
 
           <div class="actions">
             <span id="loading-${automation.id}" class="loading">
-              Running...
+              <span class="loading-spinner"></span>
+              Running workflow...
             </span>
 
             <button
@@ -2031,7 +2083,8 @@
 
                     <div class="actions">
                       <span id="loading-${action.id}" class="loading">
-                        Running...
+                        <span class="loading-spinner"></span>
+                        Running action...
                       </span>
 
                       <button
@@ -2263,15 +2316,28 @@
         event.stopPropagation();
       }
 
-      const button = document.getElementById('button-' + id);
+      const clickedButton = event && event.target && event.target.closest
+        ? event.target.closest('button')
+        : null;
+
+      const button = clickedButton || document.getElementById('button-' + id);
       const loading = document.getElementById('loading-' + id);
 
       if (button) {
         button.disabled = true;
+        button.dataset.originalText = button.textContent;
+        button.textContent = 'Running...';
+        button.style.opacity = '0.85';
+        button.style.cursor = 'wait';
       }
 
       if (loading) {
-        loading.style.display = 'inline';
+        loading.style.display = 'flex';
+      }
+
+      // Insert spinner and text update after showing loading
+      if (loading) {
+        loading.innerHTML = '<span class="loading-spinner"></span> Running...';
       }
 
       google.script.run
@@ -2296,10 +2362,18 @@
             showNotice('success', message);
           }
 
-          refreshDashboard();
+          // refreshDashboard(); // Removed as per instruction
 
           if (button) {
             button.disabled = false;
+            button.style.opacity = '1';
+            button.style.cursor = 'pointer';
+            button.textContent = 'Completed';
+
+            setTimeout(function() {
+              button.textContent = button.dataset.originalText || 'Run';
+              refreshDashboard();
+            }, 2000);
           }
 
           if (loading) {
@@ -2321,6 +2395,13 @@
 
           if (button) {
             button.disabled = false;
+            button.style.opacity = '1';
+            button.style.cursor = 'pointer';
+            button.textContent = 'Failed';
+
+            setTimeout(function() {
+              button.textContent = button.dataset.originalText || 'Run';
+            }, 2000);
           }
 
           if (loading) {

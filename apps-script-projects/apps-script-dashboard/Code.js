@@ -73,6 +73,14 @@ const DASHBOARD_CONFIG = {
       mainFunction: 'queueHealthInsuranceIntake',
       action: 'queueHealthInsuranceIntake',
       webAppUrl: 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzlnyEHz_YY-xklbciClyvtiM5y3jOofg13hloeHmL9voOQDpGsBY3Mv9u3Yaq64GSO6Q/exec'
+    },
+    {
+      id: 'revision-intake-queue-health',
+      name: 'Revision Intake Queue Health',
+      category: 'Operations / Monitoring / Revisions',
+      mainFunction: 'queueHealth',
+      action: 'queueHealth',
+      webAppUrl: 'https://script.google.com/macros/s/AKfycbzkylsv4ZcIEtr8glyk77ik5Jq9I4Mo9ORySzluNisZzjmT5ag6J1Q8_V7CeC35vqxs/exec'
     }
   ]
 };
