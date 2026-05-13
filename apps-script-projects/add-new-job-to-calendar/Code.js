@@ -5,7 +5,7 @@
 
 const CONFIG = {
   gmailLabel: "Calendar Events",
-  calendarId: "6aqe6hond86u044тgs868ouje8@group.calendar.google.com",
+  calendarId: "6aqe6hond86u044tgs868ouje8@group.calendar.google.com",
   processedLabel: "Calendar Events - Processed",
   automationName: "Add New Job to Calendar",
   mainFunction: "processEmailsToCalendar"
@@ -14,7 +14,7 @@ const CONFIG = {
 function doGet(e) {
   const action = e && e.parameter ? e.parameter.action : "";
 
-  if (action === "process") {
+  if (action === "process" || action === "processEmailsToCalendar" || action === CONFIG.mainFunction) {
     const startedAt = new Date();
 
     try {
@@ -56,11 +56,17 @@ function doGet(e) {
 
   return ContentService
     .createTextOutput(JSON.stringify({
-      status: "Error",
+      status: "Success",
       automation: CONFIG.automationName,
       mainFunction: CONFIG.mainFunction,
-      message: "No action specified.",
-      result: {}
+      message: CONFIG.automationName + " web app is live.",
+      result: {
+        availableActions: ["process", "processEmailsToCalendar"],
+        expectedAction: "process",
+        gmailLabel: CONFIG.gmailLabel,
+        processedLabel: CONFIG.processedLabel,
+        calendarId: CONFIG.calendarId
+      }
     }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -70,7 +76,8 @@ function processEmailsToCalendar() {
     threadsFound: 0,
     eventsCreated: 0,
     skipped: 0,
-    failed: 0
+    failed: 0,
+    failedItems: []
   };
 
   try {
@@ -121,14 +128,41 @@ function processEmailsToCalendar() {
       const emailData = extractEmailData(message);
 
       if (emailData && emailData.insuredName && emailData.claimNumber) {
-        if (createCalendarDraft(emailData)) {
+        const calendarResult = createCalendarDraft(emailData);
+
+        if (calendarResult.success) {
           thread.addLabel(processedLabel);
           summary.eventsCreated++;
         } else {
           summary.failed++;
+          const failedItem = {
+            threadId: thread.getId(),
+            stage: "createCalendarDraft",
+            error: calendarResult.error,
+            subject: emailData.subject,
+            insuredName: emailData.insuredName,
+            claimNumber: emailData.claimNumber,
+            carrierAbbrev: emailData.carrierAbbrev,
+            eventTitle: emailData.eventTitle,
+            propertyAddress: emailData.propertyAddress
+          };
+          summary.failedItems.push(failedItem);
+          Logger.log("Calendar create failed for thread " + thread.getId() + ": " + JSON.stringify(failedItem));
         }
       } else {
         summary.failed++;
+        const failedItem = {
+          threadId: thread.getId(),
+          stage: "extractEmailData",
+          error: "Missing required parsed field: insuredName and/or claimNumber",
+          subject: emailData ? emailData.subject : "No emailData",
+          insuredName: emailData ? emailData.insuredName : null,
+          claimNumber: emailData ? emailData.claimNumber : null,
+          carrierAbbrev: emailData ? emailData.carrierAbbrev : null,
+          eventTitle: emailData ? emailData.eventTitle : null
+        };
+        summary.failedItems.push(failedItem);
+        Logger.log("Calendar parse failed for thread " + thread.getId() + ": " + JSON.stringify(failedItem));
       }
     }
 
@@ -204,19 +238,20 @@ function extractEmailData(message) {
 }
 
 function classifyLoss(data) {
-  const text = [
+  const primaryText = [
     data.lossType,
     data.lossDescription,
-    data.subject,
-    data.body
+    data.subject
   ].filter(Boolean).join(" ").toLowerCase();
+
+  const fallbackText = String(data.body || "").toLowerCase();
 
   const moldWords = ["mold", "mould", "fungal", "fungus", "microbial", "mildew"];
 
   const waterWords = [
     "water", "plumbing", "pipe", "flood", "leak", "burst",
     "toilet", "supply line", "drain", "sewer", "roof leak",
-    "dishwasher", "washing machine", "water heater"
+    "dishwasher", "washing machine", "water heater", "fridge", "refrigerator"
   ];
 
   const fireWords = [
@@ -224,16 +259,28 @@ function classifyLoss(data) {
     "electrical fire", "kitchen fire", "grease fire"
   ];
 
-  if (containsAny(text, moldWords)) {
-    return { category: "Mold", emoji: "🦠" };
-  }
-
-  if (containsAny(text, waterWords)) {
+  if (containsAny(primaryText, waterWords)) {
     return { category: "Water", emoji: "💧" };
   }
 
-  if (containsAny(text, fireWords)) {
+  if (containsAny(primaryText, fireWords)) {
     return { category: "Fire", emoji: "🔥" };
+  }
+
+  if (containsAny(primaryText, moldWords)) {
+    return { category: "Mold", emoji: "🦠" };
+  }
+
+  if (containsAny(fallbackText, waterWords)) {
+    return { category: "Water", emoji: "💧" };
+  }
+
+  if (containsAny(fallbackText, fireWords)) {
+    return { category: "Fire", emoji: "🔥" };
+  }
+
+  if (containsAny(fallbackText, moldWords)) {
+    return { category: "Mold", emoji: "🦠" };
   }
 
   return { category: "Unknown", emoji: "ℹ️" };
@@ -342,12 +389,16 @@ function createCalendarDraft(data) {
     const calendar = CalendarApp.getCalendarById(CONFIG.calendarId);
 
     if (!calendar) {
-      Logger.log("ERROR: Calendar not found.");
-      return false;
+      const message = "Calendar not found for calendarId: " + CONFIG.calendarId;
+      Logger.log("ERROR: " + message);
+      return {
+        success: false,
+        error: message
+      };
     }
 
     const startTime = new Date(data.receivedDate);
-    startTime.setHours(0, 0, 0, 0);
+    startTime.setHours(6, 0, 0, 0);
 
     const endTime = new Date(startTime);
     endTime.setHours(1, 0, 0, 0);
@@ -370,11 +421,19 @@ function createCalendarDraft(data) {
     });
 
     sendReminderEmail(data);
-    return true;
+
+    return {
+      success: true,
+      error: ""
+    };
 
   } catch (error) {
-    Logger.log("ERROR creating calendar: " + error.toString());
-    return false;
+    const message = error && error.message ? error.message : error.toString();
+    Logger.log("ERROR creating calendar: " + message);
+    return {
+      success: false,
+      error: message
+    };
   }
 }
 

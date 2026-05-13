@@ -72,6 +72,13 @@ const CONFIG = {
   attachmentLogSheetName: 'Attachment Intake Log',
   claimFolderParentFolderId: '1r0A84zZGvUKA_0QFs1dwozbuteZt-DbL',
   createClaimFolders: true,
+  calendar: {
+    enabled: true,
+    calendarId: '6aqe6hond86u044tgs868ouje8@group.calendar.google.com',
+    startHour: 6,
+    durationHours: 1,
+    duplicateSearchDays: 30
+  },
   todoist: {
     enabled: true,
     apiTokenProperty: 'TODOIST_API_TOKEN',
@@ -137,6 +144,10 @@ function doGet(e) {
 
   if (action === 'process') {
     return jsonResponse(processInsuranceIntake());
+  }
+
+  if (action === 'diagnostics') {
+    return jsonResponse(getInsuranceIntakeDiagnostics());
   }
 
   if (action === 'testTodoist') {
@@ -232,10 +243,45 @@ function doGet(e) {
     status: 'Success',
     message: CONFIG.automationName + ' web app is live.',
     result: {
-      availableActions: ['process', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders', 'retryWorkflow', 'retryInsuranceIntake', 'retryAsbestos', 'retryItel', 'setupRetryLabels', 'setupRetryTriggers', 'deleteRetryTriggers'],
+      availableActions: ['process', 'diagnostics', 'testTodoist', 'listTodoistProjects', 'processAsbestos', 'cleanupAsbestosLabels', 'processItel', 'cleanupItelLabels', 'queueHealth', 'queueHealthAsbestos', 'queueHealthItel', 'queueHealthInsuranceIntake', 'inspectPendingClaimFolders', 'inspectAsbestosPendingClaimFolders', 'inspectItelPendingClaimFolders', 'retryWorkflow', 'retryInsuranceIntake', 'retryAsbestos', 'retryItel', 'setupRetryLabels', 'setupRetryTriggers', 'deleteRetryTriggers'],
       query: CONFIG.gmailQuery
     }
   });
+}
+
+function getInsuranceIntakeDiagnostics() {
+  return {
+    status: 'Success',
+    message: 'Insurance Intake diagnostics checked.',
+    result: {
+      automation: CONFIG.automationName,
+      phase: CONFIG.phase,
+      checkedAt: new Date(),
+      helperFunctions: {
+        parseInsuranceIntakeThread: typeof parseInsuranceIntakeThread,
+        applyInsuranceIntakeLabels_: typeof applyInsuranceIntakeLabels_,
+        detectThreadAttachments_: typeof detectThreadAttachments_,
+        updateAttachmentSummary_: typeof updateAttachmentSummary_,
+        claimFolderMapHasDuplicate_: typeof claimFolderMapHasDuplicate_,
+        checkOrCreateClaimFolder_: typeof checkOrCreateClaimFolder_,
+        appendClaimFolderMapRow_: typeof appendClaimFolderMapRow_,
+        createOrSkipCalendarDraft_: typeof createOrSkipCalendarDraft_,
+        buildInsuranceCalendarTitle_: typeof buildInsuranceCalendarTitle_,
+        findHeaderIndex_: typeof findHeaderIndex_,
+        isCopyEligibleInsuranceAttachment_: typeof isCopyEligibleInsuranceAttachment_,
+        normalizeInsuranceIntakeText_: typeof normalizeInsuranceIntakeText_,
+        extractInsuranceClaimNumber_: typeof extractInsuranceClaimNumber_
+      },
+      config: {
+        gmailQuery: CONFIG.gmailQuery,
+        intakeLabel: CONFIG.intakeLabel,
+        processedLabel: CONFIG.processedLabel,
+        errorLabel: CONFIG.errorLabel,
+        needsReviewLabel: CONFIG.needsReviewLabel,
+        duplicateLabel: CONFIG.duplicateLabel
+      }
+    }
+  };
 }
 
 function getQueueHealth() {
@@ -1264,6 +1310,730 @@ function buildPendingClaimFolderInspectionItem_(thread, workflow, vendor) {
   };
 }
 
+// ========================
+// Insurance Intake Parsing + Label Helpers
+// ========================
+
+function parseInsuranceIntakeThread(thread) {
+  const messages = thread.getMessages();
+  const firstMessage = messages && messages.length > 0 ? messages[0] : null;
+  const lastMessage = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+  const subject = firstMessage ? firstMessage.getSubject() : '';
+  const bodyParts = [];
+
+  if (subject) {
+    bodyParts.push(subject);
+  }
+
+  messages.forEach(function(message) {
+    bodyParts.push(message.getSubject() || '');
+    bodyParts.push(message.getPlainBody() || '');
+  });
+
+  const fullText = normalizeInsuranceIntakeText_(bodyParts.join('\n'));
+  const claimNumber = extractInsuranceClaimNumber_(fullText);
+  const rainbowJobNumber = extractRainbowJobNumber_(fullText);
+  const customerName = extractInsuranceCustomerName_(fullText);
+  const lossAddress = extractInsuranceLossAddress_(fullText);
+
+  return {
+    subject: subject,
+    threadId: thread.getId(),
+    messageCount: messages.length,
+    firstMessageDate: firstMessage ? firstMessage.getDate() : null,
+    lastMessageDate: lastMessage ? lastMessage.getDate() : null,
+    sender: firstMessage ? firstMessage.getFrom() : '',
+    lastSender: lastMessage ? lastMessage.getFrom() : '',
+    claimNumber: claimNumber,
+    rainbowJobNumber: rainbowJobNumber,
+    customerName: customerName,
+    insuredName: customerName,
+    lossAddress: lossAddress,
+    lossCity: extractInsuranceField_(fullText, /Loss City:\s*([^\n]+)/i),
+    lossState: extractInsuranceField_(fullText, /Loss State:\s*([^\n]+)/i),
+    lossZip: extractInsuranceField_(fullText, /(?:Loss Zip Code|zipcode):\s*([^\n]+)/i),
+    dateOfLoss: extractInsuranceField_(fullText, /Date of Loss:\s*([^\n]+)/i),
+    typeOfLoss: extractInsuranceField_(fullText, /(?:Type of Loss|Services):\s*([^\n]+)/i),
+    client: extractInsuranceField_(fullText, /Client:\s*([^\n]+)/i),
+    source: 'parseInsuranceIntakeThread'
+  };
+}
+
+function normalizeInsuranceIntakeText_(text) {
+  return String(text || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/Â/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#40;/g, '(')
+    .replace(/&#41;/g, ')')
+    .replace(/&#91;/g, '[')
+    .replace(/&#93;/g, ']')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+function extractInsuranceClaimNumber_(text) {
+  const patterns = [
+    /Claim Number:\s*([A-Z0-9-]+)/i,
+    /claim #\s*([A-Z0-9-]+)/i,
+    /Claim No:\s*([*A-Z0-9-]+)/i,
+    /Claim:\s*\n?\s*(?:Rainbow:\s*)?([A-Z0-9-]+)/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return String(match[1]).replace(/\*/g, '').trim();
+    }
+  }
+
+  return '';
+}
+
+function extractRainbowJobNumber_(text) {
+  const match = text.match(/Rainbow:\s*([A-Z0-9-]+)/i);
+  return match && match[1] ? String(match[1]).trim() : '';
+}
+
+function extractInsuranceCustomerName_(text) {
+  const patterns = [
+    /Insured Name:\s*([^\n]+)/i,
+    /Customer:\s*\n\s*([^\n]+)/i,
+    /Customer:\s*([^\n]+)/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return String(match[1]).replace(/\*/g, '').trim();
+    }
+  }
+
+  return '';
+}
+
+function extractInsuranceLossAddress_(text) {
+  const locationMatch = text.match(/Location of Property:\s*([^\n]+)/i);
+
+  if (locationMatch && locationMatch[1]) {
+    return String(locationMatch[1]).trim();
+  }
+
+  const mapMatch = text.match(/maps\?q=([^\]\n]+)/i);
+
+  if (mapMatch && mapMatch[1]) {
+    return decodeURIComponent(String(mapMatch[1]).replace(/\+/g, ' ')).trim();
+  }
+
+  return '';
+}
+
+function extractInsuranceField_(text, pattern) {
+  const match = text.match(pattern);
+  return match && match[1] ? String(match[1]).trim() : '';
+}
+
+
+function updateAttachmentSummary_(summary, attachmentResult) {
+  if (!summary || !attachmentResult) {
+    return;
+  }
+
+  const attachmentCount = Number(attachmentResult.attachmentCount || attachmentResult.totalAttachments || 0);
+  const copyEligibleCount = Number(attachmentResult.copyEligibleCount || 0);
+  const reviewNeededCount = Number(attachmentResult.reviewNeededCount || 0);
+  const skippedCount = Number(attachmentResult.skippedCount || 0);
+
+  if (attachmentCount > 0) {
+    summary.threadsWithAttachments = Number(summary.threadsWithAttachments || 0) + 1;
+  }
+
+  summary.totalAttachmentsDetected = Number(summary.totalAttachmentsDetected || 0) + attachmentCount;
+  summary.copyEligibleAttachments = Number(summary.copyEligibleAttachments || 0) + copyEligibleCount;
+  summary.reviewNeededAttachments = Number(summary.reviewNeededAttachments || 0) + reviewNeededCount;
+  summary.skippedAttachments = Number(summary.skippedAttachments || 0) + skippedCount;
+}
+
+function detectThreadAttachments_(thread) {
+  const messages = thread.getMessages();
+  const attachments = [];
+  const reviewNeededAttachments = [];
+  const skippedAttachments = [];
+
+  messages.forEach(function(message, messageIndex) {
+    const messageAttachments = message.getAttachments({
+      includeInlineImages: false,
+      includeAttachments: true
+    }) || [];
+
+    messageAttachments.forEach(function(attachment) {
+      const name = attachment.getName() || '';
+      const contentType = attachment.getContentType() || '';
+      const sizeBytes = attachment.getBytes() ? attachment.getBytes().length : 0;
+      const lowerName = name.toLowerCase();
+      const copyEligible = isCopyEligibleInsuranceAttachment_(name, contentType);
+      const likelySignatureAsset = lowerName.indexOf('logo') !== -1 || lowerName.indexOf('image') !== -1;
+
+      const record = {
+        messageIndex: messageIndex,
+        messageDate: message.getDate(),
+        messageSubject: message.getSubject() || '',
+        sender: message.getFrom() || '',
+        name: name,
+        filename: name,
+        contentType: contentType,
+        sizeBytes: sizeBytes,
+        copyEligible: copyEligible && !likelySignatureAsset,
+        needsReview: !copyEligible && !likelySignatureAsset,
+        skipped: likelySignatureAsset,
+        reason: ''
+      };
+
+      if (record.skipped) {
+        record.reason = 'Likely inline image or signature asset';
+        skippedAttachments.push(record);
+      } else if (record.needsReview) {
+        record.reason = 'Attachment type is not automatically copy eligible';
+        reviewNeededAttachments.push(record);
+      }
+
+      attachments.push(record);
+    });
+  });
+
+  return {
+    hasAttachments: attachments.length > 0,
+    attachmentCount: attachments.length,
+    totalAttachments: attachments.length,
+    copyEligibleCount: attachments.filter(function(record) {
+      return record.copyEligible;
+    }).length,
+    reviewNeededCount: reviewNeededAttachments.length,
+    skippedCount: skippedAttachments.length,
+    attachments: attachments,
+    reviewNeededAttachments: reviewNeededAttachments,
+    skippedAttachments: skippedAttachments
+  };
+}
+
+function isCopyEligibleInsuranceAttachment_(name, contentType) {
+  const filename = String(name || '').toLowerCase();
+  const mimeType = String(contentType || '').toLowerCase();
+
+  if (!filename && !mimeType) {
+    return false;
+  }
+
+  if (mimeType === 'application/pdf') {
+    return true;
+  }
+
+  if (mimeType.indexOf('spreadsheet') !== -1 || mimeType.indexOf('excel') !== -1) {
+    return true;
+  }
+
+  if (/\.(pdf|xlsx|xls|csv|docx|doc)$/i.test(filename)) {
+    return true;
+  }
+
+  return false;
+}
+
+function applyInsuranceIntakeLabels_(thread, labelPlan) {
+  const result = {
+    success: true,
+    added: [],
+    removed: [],
+    warnings: [],
+    error: ''
+  };
+
+  try {
+    const labelsToAdd = dedupeLabelNames_((labelPlan && labelPlan.add) || []);
+    const labelsToRemove = dedupeLabelNames_((labelPlan && labelPlan.remove) || []);
+
+    labelsToAdd.forEach(function(labelName) {
+      if (!labelName) {
+        return;
+      }
+
+      let label = GmailApp.getUserLabelByName(labelName);
+
+      if (!label) {
+        label = GmailApp.createLabel(labelName);
+        result.warnings.push('Created missing Gmail label: ' + labelName);
+      }
+
+      thread.addLabel(label);
+      result.added.push(labelName);
+    });
+
+    labelsToRemove.forEach(function(labelName) {
+      if (!labelName) {
+        return;
+      }
+
+      const label = GmailApp.getUserLabelByName(labelName);
+
+      if (!label) {
+        result.warnings.push('Skipped missing Gmail label removal: ' + labelName);
+        return;
+      }
+
+      thread.removeLabel(label);
+      result.removed.push(labelName);
+    });
+  } catch (error) {
+    result.success = false;
+    result.error = error.message;
+  }
+
+  return result;
+}
+
+function dedupeLabelNames_(labelNames) {
+  const seen = {};
+  const deduped = [];
+
+  (labelNames || []).forEach(function(labelName) {
+    const normalized = String(labelName || '').trim();
+
+    if (!normalized || seen[normalized]) {
+      return;
+    }
+
+    seen[normalized] = true;
+    deduped.push(normalized);
+  });
+
+  return deduped;
+}
+function claimFolderMapHasDuplicate_(claimData, thread) {
+  const result = {
+    duplicate: false,
+    reason: '',
+    rowNumber: 0,
+    existingFolderId: '',
+    existingFolderUrl: ''
+  };
+
+  if (!claimData) {
+    return result;
+  }
+
+  const jobNumber = String(claimData.rainbowJobNumber || claimData.claimNumber || '').trim();
+
+  if (!jobNumber) {
+    return result;
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
+    const sheet = ss.getSheetByName(CONFIG.claimFolderMapSheetName);
+
+    if (!sheet) {
+      return result;
+    }
+
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+
+    if (lastRow < 2 || lastColumn < 1) {
+      return result;
+    }
+
+    const values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
+    const headers = values[0].map(function(header) {
+      return String(header || '').trim().toLowerCase();
+    });
+
+    const jobNumberColumn = findHeaderIndex_(headers, [
+      'our job number',
+      'job number',
+      'claim number',
+      'claim #'
+    ]);
+
+    const folderUrlColumn = findHeaderIndex_(headers, [
+      'drive folder url',
+      'folder url'
+    ]);
+
+    const folderIdColumn = findHeaderIndex_(headers, [
+      'folder id',
+      'drive folder id'
+    ]);
+
+    if (jobNumberColumn === -1) {
+      return result;
+    }
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const rowNumber = i + 1;
+      const rowJobNumber = String(row[jobNumberColumn] || '').trim();
+
+      if (rowJobNumber && rowJobNumber === jobNumber) {
+        const existingFolderUrl = folderUrlColumn !== -1 ? String(row[folderUrlColumn] || '').trim() : '';
+        const existingFolderId = folderIdColumn !== -1 ? String(row[folderIdColumn] || '').trim() : '';
+
+        if (existingFolderUrl || existingFolderId) {
+          result.duplicate = true;
+          result.reason = 'job_number_exists_with_folder';
+          result.rowNumber = rowNumber;
+          result.existingFolderId = existingFolderId;
+          result.existingFolderUrl = existingFolderUrl;
+          return result;
+        }
+      }
+    }
+
+    return result;
+  } catch (error) {
+    return result;
+  }
+}
+
+function findHeaderIndex_(headers, possibleNames) {
+  for (let i = 0; i < headers.length; i++) {
+    const normalizedHeader = String(headers[i] || '').replace(/[^a-z0-9#]/g, '').toLowerCase();
+
+    for (let j = 0; j < possibleNames.length; j++) {
+      const normalizedName = String(possibleNames[j] || '').replace(/[^a-z0-9#]/g, '').toLowerCase();
+
+      if (normalizedHeader === normalizedName) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function checkOrCreateClaimFolder_(claimData) {
+  const result = {
+    success: false,
+    status: 'started',
+    folderId: '',
+    folderUrl: '',
+    folderName: '',
+    created: false,
+    existing: false,
+    error: ''
+  };
+
+  try {
+    const claimNumber = String(
+      claimData && (claimData.claimNumber || claimData.rainbowJobNumber) || ''
+    ).trim();
+
+    const customerName = String(
+      claimData && (claimData.customerName || claimData.insuredName) || ''
+    ).trim();
+
+    if (!claimNumber || !customerName) {
+      result.status = 'missing_required_fields';
+      result.error = 'Missing customer name or claim number.';
+      return result;
+    }
+
+    const rootFolder = DriveApp.getFolderById(
+      CONFIG.claimFolderParentFolderId
+    );
+
+    const currentYear = String(new Date().getFullYear());
+
+    let yearFolder;
+    const existingYearFolders = rootFolder.getFoldersByName(currentYear);
+
+    if (existingYearFolders.hasNext()) {
+      yearFolder = existingYearFolders.next();
+    } else {
+      yearFolder = rootFolder.createFolder(currentYear);
+    }
+
+    const safeCustomerName = customerName
+      .replace(/[\\/:*?"<>|]/g, '')
+      .trim();
+
+    const safeClaimNumber = claimNumber
+      .replace(/[\\/:*?"<>|]/g, '')
+      .trim();
+
+    const expectedFolderName =
+      safeCustomerName + ' - ' + safeClaimNumber;
+
+    const existingFolders =
+      yearFolder.getFoldersByName(expectedFolderName);
+
+    if (existingFolders.hasNext()) {
+      const folder = existingFolders.next();
+
+      result.success = true;
+      result.status = 'existing_folder_found';
+      result.folderId = folder.getId();
+      result.folderUrl = folder.getUrl();
+      result.folderName = folder.getName();
+      result.existing = true;
+
+      return result;
+    }
+
+    if (!CONFIG.createClaimFolders) {
+      result.status = 'claim_folder_not_found';
+      result.error =
+        'No existing claim folder found and createClaimFolders is disabled.';
+      return result;
+    }
+
+    if (CONFIG.dryRun) {
+      result.success = true;
+      result.status = 'dry_run_folder_create_skipped';
+      result.folderName = expectedFolderName;
+      return result;
+    }
+
+    const newFolder =
+      yearFolder.createFolder(expectedFolderName);
+
+    result.success = true;
+    result.status = 'folder_created';
+    result.folderId = newFolder.getId();
+    result.folderUrl = newFolder.getUrl();
+    result.folderName = newFolder.getName();
+    result.created = true;
+
+    return result;
+
+  } catch (error) {
+    result.status = 'folder_check_exception';
+    result.error =
+      error && error.message ? error.message : error.toString();
+
+    return result;
+  }
+}
+
+function appendClaimFolderMapRow_(claimData, folderResult, thread) {
+  const result = {
+    success: false,
+    sheetUpdated: false,
+    dryRun: false,
+    rowNumber: 0,
+    error: ''
+  };
+
+  try {
+    const jobNumber = String(claimData && (claimData.rainbowJobNumber || claimData.claimNumber) || '').trim();
+
+    if (!claimData || !jobNumber) {
+      result.error = 'Cannot append claim folder map row without an Our Job Number / claim number.';
+      return result;
+    }
+
+    if (!folderResult || !folderResult.success) {
+      result.error = 'Cannot append claim folder map row without a successful folder result.';
+      return result;
+    }
+
+    if (CONFIG.dryRun) {
+      result.success = true;
+      result.dryRun = true;
+      return result;
+    }
+
+    const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
+    let sheet = ss.getSheetByName(CONFIG.claimFolderMapSheetName);
+
+    if (!sheet) {
+      sheet = ss.insertSheet(CONFIG.claimFolderMapSheetName);
+    }
+
+    ensureClaimFolderMapHeader_(sheet);
+
+    const currentYear = new Date().getFullYear();
+    const notes = [
+      'Created by ' + CONFIG.automationName,
+      'Claim Number: ' + (claimData.claimNumber || ''),
+      'Thread ID: ' + (thread && thread.getId ? thread.getId() : ''),
+      'Folder Status: ' + (folderResult.status || '')
+    ].filter(function(note) {
+      return String(note || '').trim() !== '';
+    }).join(' | ');
+
+    const row = [
+      claimData.customerName || claimData.insuredName || '',
+      jobNumber,
+      currentYear,
+      folderResult.folderUrl || '',
+      folderResult.folderId || '',
+      true,
+      '',
+      new Date(),
+      notes
+    ];
+
+    sheet.appendRow(row);
+    result.success = true;
+    result.sheetUpdated = true;
+    result.rowNumber = sheet.getLastRow();
+    return result;
+  } catch (error) {
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
+}
+
+function ensureClaimFolderMapHeader_(sheet) {
+  const headers = getClaimFolderMapHeaders_();
+  const existingHeader = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  const hasHeader = existingHeader.some(function(value) {
+    return String(value || '').trim() !== '';
+  });
+
+  if (!hasHeader) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+}
+
+function getClaimFolderMapHeaders_() {
+  return [
+    'Customer Name',
+    'Our Job Number',
+    'Year',
+    'Drive Folder URL',
+    'Folder ID',
+    'Active',
+    'Default Subfolder',
+    'Last Updated',
+    'Notes'
+  ];
+}
+
+function createOrSkipCalendarDraft_(claimData, folderResult, thread) {
+  const result = {
+    enabled: CONFIG.calendar && CONFIG.calendar.enabled === true,
+    success: true,
+    skipped: false,
+    duplicate: false,
+    eventId: '',
+    eventTitle: '',
+    eventStart: '',
+    eventEnd: '',
+    status: 'calendar_disabled',
+    message: '',
+    error: ''
+  };
+
+  if (!result.enabled) {
+    result.skipped = true;
+    result.message = 'Calendar creation is disabled.';
+    return result;
+  }
+
+  try {
+    const calendar = CalendarApp.getCalendarById(CONFIG.calendar.calendarId);
+
+    if (!calendar) {
+      result.success = false;
+      result.status = 'calendar_not_found';
+      result.error = 'Calendar not found: ' + CONFIG.calendar.calendarId;
+      return result;
+    }
+
+    const claimNumber = String(claimData.claimNumber || '').trim();
+    const customerName = String(claimData.customerName || claimData.insuredName || '').trim();
+
+    if (!claimNumber || !customerName) {
+      result.success = false;
+      result.status = 'missing_calendar_required_fields';
+      result.error = 'Missing customer name or claim number.';
+      return result;
+    }
+
+    const eventTitle = buildInsuranceCalendarTitle_(claimData);
+    result.eventTitle = eventTitle;
+
+    const startTime = new Date();
+    startTime.setHours(CONFIG.calendar.startHour || 6, 0, 0, 0);
+
+    const endTime = new Date(startTime);
+    endTime.setHours(startTime.getHours() + (CONFIG.calendar.durationHours || 1));
+
+    result.eventStart = startTime;
+    result.eventEnd = endTime;
+
+    const duplicateSearchStart = new Date(startTime);
+    duplicateSearchStart.setDate(duplicateSearchStart.getDate() - (CONFIG.calendar.duplicateSearchDays || 30));
+
+    const duplicateSearchEnd = new Date(startTime);
+    duplicateSearchEnd.setDate(duplicateSearchEnd.getDate() + (CONFIG.calendar.duplicateSearchDays || 30));
+
+    const duplicateEvents = calendar.getEvents(duplicateSearchStart, duplicateSearchEnd, {
+      search: claimNumber
+    }) || [];
+
+    if (duplicateEvents.length > 0) {
+      result.skipped = true;
+      result.duplicate = true;
+      result.status = 'calendar_duplicate_skipped';
+      result.message = 'Calendar event already exists for claim ' + claimNumber + '.';
+      return result;
+    }
+
+    if (CONFIG.dryRun) {
+      result.skipped = true;
+      result.status = 'dry_run_calendar_skipped';
+      result.message = 'Dry run skipped calendar event creation.';
+      return result;
+    }
+
+    const description = buildInsuranceCalendarDescription_(claimData, folderResult, thread);
+
+    const event = calendar.createEvent(eventTitle, startTime, endTime, {
+      description: description,
+      location: claimData.lossAddress || ''
+    });
+
+    result.eventId = event.getId ? event.getId() : '';
+    result.status = 'calendar_event_created';
+    result.message = 'Created calendar event for claim ' + claimNumber + '.';
+
+    return result;
+  } catch (error) {
+    result.success = false;
+    result.status = 'calendar_exception';
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
+}
+
+function buildInsuranceCalendarTitle_(claimData) {
+  const customerName = String(claimData.customerName || claimData.insuredName || '').trim();
+  const claimNumber = String(claimData.claimNumber || '').trim();
+
+  return customerName + ' - ' + claimNumber;
+}
+
+function buildInsuranceCalendarDescription_(claimData, folderResult, thread) {
+  return [
+    'Claim Number: ' + (claimData.claimNumber || ''),
+    'Customer: ' + (claimData.customerName || claimData.insuredName || ''),
+    'Date of Loss: ' + (claimData.dateOfLoss || ''),
+    'Type of Loss: ' + (claimData.typeOfLoss || ''),
+    'Loss Address: ' + (claimData.lossAddress || ''),
+    '',
+    'Claim Folder:',
+    folderResult && folderResult.folderUrl ? folderResult.folderUrl : '',
+    '',
+    'Thread ID: ' + (thread && thread.getId ? thread.getId() : '')
+  ].join('\n');
+}
+
 function processInsuranceIntake() {
   const startedAt = new Date();
 
@@ -1372,6 +2142,30 @@ function processInsuranceIntake() {
           itemResult.status = 'folder_check_failed';
           itemResult.folderResult = folderResult;
           itemResult.errors.push(folderResult.error);
+
+          const labelResult = applyInsuranceIntakeLabels_(thread, {
+            add: [CONFIG.errorLabel],
+            remove: [CONFIG.intakeLabel]
+          });
+
+          itemResult.labelResult = labelResult;
+
+          if (!labelResult.success) {
+            itemResult.warnings.push('Error label update failed: ' + labelResult.error);
+            summary.warnings++;
+          }
+
+          summary.errors++;
+          items.push(itemResult);
+          continue;
+        }
+
+        const calendarResult = createOrSkipCalendarDraft_(claimData, folderResult, thread);
+        itemResult.calendarResult = calendarResult;
+
+        if (!calendarResult.success) {
+          itemResult.status = 'calendar_event_failed';
+          itemResult.errors.push(calendarResult.error);
 
           const labelResult = applyInsuranceIntakeLabels_(thread, {
             add: [CONFIG.errorLabel],
@@ -1521,6 +2315,19 @@ function processInsuranceIntake() {
       }
     };
   }
+}
+
+function buildPhase4CMessage_(summary) {
+  return 'Phase ' + CONFIG.phase + ' insurance intake found ' + summary.foundCount +
+    ' thread(s), parsed ' + summary.parsedCount +
+    ', processed ' + summary.processedCount +
+    ', added ' + summary.sheetRowsAdded +
+    ' sheet row(s), skipped ' + summary.duplicatesSkipped +
+    ' duplicate(s), detected ' + summary.totalAttachmentsDetected +
+    ' attachment(s) across ' + summary.threadsWithAttachments +
+    ' thread(s), with ' + summary.reviewNeededAttachments +
+    ' attachment(s) needing review, ' + summary.warnings +
+    ' warning(s) and ' + summary.errors + ' error(s).';
 }
 
 function processAsbestosAttachments() {
