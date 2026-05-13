@@ -160,6 +160,25 @@ function processRevisionIntake() {
 
       appendRevisionRecord_(sheet, revisionRecord);
 
+      appendClassificationAuditLog_({
+        revisionId: revisionRecord.revisionId,
+        claimNumber: revisionRecord.claimNumber,
+        customerName: revisionRecord.customerName,
+        previousClassification: '',
+        newClassification: revisionRecord.classificationType,
+        previousOwner: '',
+        newOwner: revisionRecord.owner,
+        previousStatus: '',
+        newStatus: revisionRecord.status,
+        trigger: 'processRevisionIntake',
+        reason: revisionRecord.notes,
+        learningRuleMatched: isLearningRuleReason_(revisionRecord.notes) ? 'YES' : 'NO',
+        todoistTaskId: revisionRecord.todoistTaskId,
+        todoistTaskUrl: revisionRecord.todoistTaskUrl,
+        actionTaken: 'Created revision intake record',
+        notes: revisionRecord.notes
+      });
+
       thread.addLabel(processedLabel);
       thread.removeLabel(intakeLabel);
 
@@ -334,12 +353,49 @@ function getRevisionQueueHealth() {
       statusCounts.ASSIGNED +
       statusCounts.WAITING +
       statusCounts.ESCALATED,
-    errorCount: statusCounts.ERROR
+    errorCount: statusCounts.ERROR,
+    todoistReviewNeededCount: getTodoistReviewNeededCount_(rows),
+    auditLogCount: getClassificationAuditLogCount_(),
+    learningRulesCount: getLearningRulesCount_()
   };
 
   Logger.log(JSON.stringify(result, null, 2));
 
   return result;
+}
+
+function getTodoistReviewNeededCount_(rows) {
+  return rows.filter(record => {
+    return String(record.todoistTaskId || '').trim() && !isEligibleForTodoistTask_(record);
+  }).length;
+}
+
+function getClassificationAuditLogCount_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('ClassificationAuditLog');
+
+  if (!sheet) {
+    return 0;
+  }
+
+  return Math.max(sheet.getLastRow() - 1, 0);
+}
+
+function getLearningRulesCount_() {
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('REVISION_LEARNING_LOG_SPREADSHEET_ID');
+
+  if (!spreadsheetId) {
+    return 0;
+  }
+
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const sheet = ss.getSheetByName('LearningRules');
+
+  if (!sheet) {
+    return 0;
+  }
+
+  return getLearningRules_().length;
 }
 
 function getRevisionRows_(sheet) {
@@ -409,6 +465,10 @@ function doGet(e) {
     return jsonResponse_(refreshExistingTodoistTasks_());
   }
 
+  if (action === 'listTodoistReviewNeeded') {
+    return jsonResponse_(listTodoistReviewNeeded_());
+  }
+
   if (action === 'enrichFromClaimFolders') {
     return jsonResponse_(enrichRevisionRecordsFromClaimFolders_());
   }
@@ -419,6 +479,18 @@ function doGet(e) {
 
   if (action === 'setupTodoistAssignees') {
     return jsonResponse_(setupTodoistAssignees_());
+  }
+
+  if (action === 'setupLearningLog') {
+    return jsonResponse_(setupLearningLog_());
+  }
+
+  if (action === 'seedLearningRules') {
+    return jsonResponse_(seedLearningRules_());
+  }
+
+  if (action === 'setupClassificationAuditLog') {
+    return jsonResponse_(setupClassificationAuditLog_());
   }
 
   return jsonResponse_({
@@ -436,9 +508,13 @@ function doGet(e) {
       'setupTodoistColumns',
       'createTodoistTasks',
       'refreshTodoistTasks',
+      'listTodoistReviewNeeded',
       'enrichFromClaimFolders',
       'listTodoistCollaborators',
-      'setupTodoistAssignees'
+      'setupTodoistAssignees',
+      'setupLearningLog',
+      'seedLearningRules',
+      'setupClassificationAuditLog'
     ]
   });
 }
@@ -453,6 +529,12 @@ function classifyRevisionEmail_(subject, body) {
   const text = (
     String(subject || '') + '\n' + String(body || '')
   ).toLowerCase();
+
+  const learningOverride = getLearningClassificationOverride_(text);
+
+  if (learningOverride) {
+    return learningOverride;
+  }
 
   const denialKeywords = [
     'no coverage',
@@ -632,10 +714,83 @@ function classifyRevisionEmail_(subject, body) {
   };
 }
 
+
 function containsKeyword_(text, keywords) {
   return keywords.some(keyword =>
     text.includes(keyword)
   );
+}
+
+function getLearningClassificationOverride_(text) {
+  const rules = getLearningRules_();
+
+  for (let index = 0; index < rules.length; index++) {
+    const rule = rules[index];
+
+    if (!learningRuleMatches_(text, rule)) {
+      continue;
+    }
+
+    return {
+      type: rule.correctClassification || 'UNCLASSIFIED',
+      owner: rule.finalOwner || '',
+      priority: rule.priority || 'LOW',
+      status: rule.status || 'NEW',
+      reason: 'Learning rule matched: ' + (rule.reason || rule.matchText || '')
+    };
+  }
+
+  return null;
+}
+
+function getLearningRules_() {
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('REVISION_LEARNING_LOG_SPREADSHEET_ID');
+
+  if (!spreadsheetId) {
+    return [];
+  }
+
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const sheet = ss.getSheetByName('LearningRules');
+
+  if (!sheet) {
+    return [];
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length <= 1) {
+    return [];
+  }
+
+  const headers = values[0];
+
+  return values.slice(1).map(rowToRecord_.bind(null, headers)).filter(rule => {
+    return String(rule.enabled || '').toLowerCase() === 'true' && String(rule.matchText || '').trim();
+  });
+}
+
+function learningRuleMatches_(text, rule) {
+  const patternType = String(rule.patternType || '').toLowerCase();
+  const terms = String(rule.matchText || '')
+    .toLowerCase()
+    .split('|')
+    .map(term => term.trim())
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return false;
+  }
+
+  if (patternType === 'contains-all') {
+    return terms.every(term => text.includes(term));
+  }
+
+  if (patternType === 'contains-any') {
+    return terms.some(term => text.includes(term));
+  }
+
+  return terms.some(term => text.includes(term));
 }
 
 function listRevisionQueue_(queueType) {
@@ -780,6 +935,8 @@ function reclassifyExistingRevisionRecords_() {
     const subject = row[columnMap.emailSubject];
     const summary = row[columnMap.summary];
     const previousType = row[columnMap.classificationType];
+    const previousOwner = row[columnMap.owner];
+    const previousStatus = row[columnMap.status];
 
     const classification = classifyRevisionEmail_(subject, summary);
 
@@ -796,6 +953,25 @@ function reclassifyExistingRevisionRecords_() {
     sheet.getRange(sheetRow, columnMap.status + 1).setValue(classification.status);
     sheet.getRange(sheetRow, columnMap.notes + 1).setValue(classification.reason);
     sheet.getRange(sheetRow, columnMap.updatedAt + 1).setValue(new Date());
+
+    appendClassificationAuditLog_({
+      revisionId: row[columnMap.revisionId],
+      claimNumber: Object.prototype.hasOwnProperty.call(columnMap, 'claimNumber') ? row[columnMap.claimNumber] : '',
+      customerName: Object.prototype.hasOwnProperty.call(columnMap, 'customerName') ? row[columnMap.customerName] : '',
+      previousClassification: previousType,
+      newClassification: classification.type,
+      previousOwner: previousOwner,
+      newOwner: classification.owner,
+      previousStatus: previousStatus,
+      newStatus: classification.status,
+      trigger: 'reclassifyExisting',
+      reason: classification.reason,
+      learningRuleMatched: isLearningRuleReason_(classification.reason) ? 'YES' : 'NO',
+      todoistTaskId: Object.prototype.hasOwnProperty.call(columnMap, 'todoistTaskId') ? row[columnMap.todoistTaskId] : '',
+      todoistTaskUrl: Object.prototype.hasOwnProperty.call(columnMap, 'todoistTaskUrl') ? row[columnMap.todoistTaskUrl] : '',
+      actionTaken: 'Updated classification fields',
+      notes: classification.reason
+    });
 
     result.updatedCount++;
     result.updates.push({
@@ -1198,6 +1374,38 @@ function refreshExistingTodoistTasks_() {
     }
 
     try {
+      if (!isEligibleForTodoistTask_(record)) {
+        appendClassificationAuditLog_({
+          revisionId: record.revisionId || '',
+          claimNumber: record.claimNumber || '',
+          customerName: record.customerName || '',
+          previousClassification: record.classificationType || '',
+          newClassification: record.classificationType || '',
+          previousOwner: record.owner || '',
+          newOwner: record.owner || '',
+          previousStatus: record.status || '',
+          newStatus: record.status || '',
+          trigger: 'refreshTodoistTasks',
+          reason: 'Todoist task exists but record is no longer eligible; human review recommended',
+          learningRuleMatched: isLearningRuleReason_(record.notes) ? 'YES' : 'NO',
+          todoistTaskId: record.todoistTaskId || '',
+          todoistTaskUrl: record.todoistTaskUrl || getTodoistTaskUrl_(record.todoistTaskId),
+          actionTaken: 'Flagged Todoist task for human review',
+          notes: record.notes || ''
+        });
+
+        result.skippedCount++;
+        result.skipped.push({
+          revisionId: record.revisionId || '',
+          claimNumber: normalizeClaimNumber_(record.claimNumber),
+          todoistTaskId: record.todoistTaskId || '',
+          classificationType: record.classificationType || '',
+          status: record.status || '',
+          reason: 'Todoist task exists but record is no longer eligible; human review recommended'
+        });
+        continue;
+      }
+
       const payload = buildTodoistTaskPayload_(record);
       updateTodoistTask_(token, record.todoistTaskId, payload);
 
@@ -1222,6 +1430,44 @@ function refreshExistingTodoistTasks_() {
   if (result.errorCount > 0) {
     result.status = result.refreshedCount > 0 ? 'Partial Success' : 'Error';
   }
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function listTodoistReviewNeeded_() {
+  const sheet = getRevisionSheet_();
+  const rows = getRevisionRows_(sheet);
+
+  const records = rows
+    .filter(record => {
+      return String(record.todoistTaskId || '').trim() && !isEligibleForTodoistTask_(record);
+    })
+    .map(record => ({
+      revisionId: record.revisionId || '',
+      claimNumber: normalizeClaimNumber_(record.claimNumber),
+      customerName: record.customerName || '',
+      emailSubject: record.emailSubject || '',
+      classificationType: record.classificationType || '',
+      owner: record.owner || '',
+      priority: record.priority || '',
+      status: record.status || '',
+      todoistTaskId: record.todoistTaskId || '',
+      todoistTaskUrl: record.todoistTaskUrl || getTodoistTaskUrl_(record.todoistTaskId),
+      reason: 'Todoist task exists but revision record is no longer eligible for automation updates; human review recommended',
+      notes: record.notes || '',
+      updatedAt: formatDateForJson_(record.updatedAt)
+    }));
+
+  const result = {
+    workflow: 'revision-intake',
+    action: 'listTodoistReviewNeeded',
+    status: 'Success',
+    checkedAt: new Date().toISOString(),
+    count: records.length,
+    records: records
+  };
 
   Logger.log(JSON.stringify(result, null, 2));
 
@@ -1258,6 +1504,7 @@ function updateTodoistTask_(token, taskId, payload) {
     throw new Error('Todoist update error ' + responseCode + ': ' + responseText);
   }
 }
+
 
 function normalizeClaimNumber_(claimNumber) {
   const raw = String(claimNumber || '').replace(/\D/g, '');
@@ -1841,4 +2088,197 @@ function setupTodoistAssignees_() {
 
 function setupTodoistAssignees() {
   return setupTodoistAssignees_();
+}
+
+function setupLearningLog_() {
+  const learningLogSpreadsheetId = '1AJ54qMWnYhwXsQr36urWMsDYopdX1JeO9VLJ_AS2spA';
+
+  PropertiesService.getScriptProperties().setProperty(
+    'REVISION_LEARNING_LOG_SPREADSHEET_ID',
+    learningLogSpreadsheetId
+  );
+
+  const ss = SpreadsheetApp.openById(learningLogSpreadsheetId);
+  const sheet = ss.getSheets()[0];
+  sheet.setName('LearningRules');
+  sheet.clear();
+
+  const headers = [
+    'enabled',
+    'patternType',
+    'matchText',
+    'correctClassification',
+    'finalOwner',
+    'status',
+    'priority',
+    'reason',
+    'notes',
+    'createdAt'
+  ];
+
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+
+  const result = {
+    workflow: 'revision-intake',
+    action: 'setupLearningLog',
+    status: 'Success',
+    checkedAt: new Date().toISOString(),
+    spreadsheetId: learningLogSpreadsheetId,
+    sheetName: sheet.getName(),
+    headers: headers
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+
+function setupLearningLog() {
+  return setupLearningLog_();
+}
+
+function seedLearningRules_() {
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('REVISION_LEARNING_LOG_SPREADSHEET_ID') || '1AJ54qMWnYhwXsQr36urWMsDYopdX1JeO9VLJ_AS2spA';
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  const sheet = ss.getSheetByName('LearningRules') || ss.getSheets()[0];
+
+  const headers = [
+    'enabled',
+    'patternType',
+    'matchText',
+    'correctClassification',
+    'finalOwner',
+    'status',
+    'priority',
+    'reason',
+    'notes',
+    'createdAt'
+  ];
+
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+
+  const now = new Date();
+  const rows = [
+    [true, 'contains-all', 'it hotline|received a call|looking for approval|approval extended', 'FYI_SKIP', '', 'SKIPPED', 'LOW', 'Detected phone approval already handled', 'Phone approval documentation only; no operational action needed.', now],
+    [true, 'contains-any', 'asbestos approved|abesto is approved|they have coverage', 'COVERAGE_APPROVAL', 'Julia', 'NEW', 'MEDIUM', 'Detected approval that needs internal communication', 'Julia should communicate approval to the team.', now],
+    [true, 'contains-any', 'pending it review|pending audit review|validate audit has returned exceptions|reconnect all final documents', 'REVISION_REQUIRED', 'Clarence', 'NEW', 'HIGH', 'Detected audit/review correction requiring estimator action', 'Clarence should correct estimate/documents and resubmit.', now]
+  ];
+
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
+  }
+
+  sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+
+  const result = {
+    workflow: 'revision-intake',
+    action: 'seedLearningRules',
+    status: 'Success',
+    checkedAt: new Date().toISOString(),
+    spreadsheetId: spreadsheetId,
+    sheetName: sheet.getName(),
+    seededCount: rows.length
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function seedLearningRules() {
+  return seedLearningRules_();
+}
+
+function setupClassificationAuditLog_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheetName = 'ClassificationAuditLog';
+  let sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  const headers = [
+    'timestamp',
+    'revisionId',
+    'claimNumber',
+    'customerName',
+    'previousClassification',
+    'newClassification',
+    'previousOwner',
+    'newOwner',
+    'previousStatus',
+    'newStatus',
+    'trigger',
+    'reason',
+    'learningRuleMatched',
+    'todoistTaskId',
+    'todoistTaskUrl',
+    'actionTaken',
+    'notes'
+  ];
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+
+  const result = {
+    workflow: 'revision-intake',
+    action: 'setupClassificationAuditLog',
+    status: 'Success',
+    checkedAt: new Date().toISOString(),
+    spreadsheetId: CONFIG.SPREADSHEET_ID,
+    sheetName: sheetName,
+    headers: headers
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function setupClassificationAuditLog() {
+  return setupClassificationAuditLog_();
+}
+
+function appendClassificationAuditLog_(entry) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName('ClassificationAuditLog');
+
+  if (!sheet) {
+    setupClassificationAuditLog_();
+    sheet = ss.getSheetByName('ClassificationAuditLog');
+  }
+
+  sheet.appendRow([
+    new Date(),
+    entry.revisionId || '',
+    normalizeClaimNumber_(entry.claimNumber),
+    entry.customerName || '',
+    entry.previousClassification || '',
+    entry.newClassification || '',
+    entry.previousOwner || '',
+    entry.newOwner || '',
+    entry.previousStatus || '',
+    entry.newStatus || '',
+    entry.trigger || '',
+    entry.reason || '',
+    entry.learningRuleMatched || '',
+    entry.todoistTaskId || '',
+    entry.todoistTaskUrl || '',
+    entry.actionTaken || '',
+    entry.notes || ''
+  ]);
+}
+
+function isLearningRuleReason_(reason) {
+  return String(reason || '').toLowerCase().indexOf('learning rule matched:') === 0;
 }

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f8fafc;
+      color: #1f2937;
+      padding: 14px;
+      margin: 0;
+      font-size: 13px;
+    }
+
+    h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      margin-bottom: 16px;
+      color: #6b7280;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .signature-reminder {
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #fef2f2;
+      border: 2px solid #dc2626;
+      border-radius: 10px;
+      color: #991b1b;
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+
+    .signature-reminder-title {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .field {
+      margin-bottom: 10px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    input,
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      background: white;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 80px;
+      gap: 8px;
+    }
+
+    .note {
+      margin-top: 6px;
+      margin-bottom: 10px;
+      color: #6b7280;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    button {
+      width: 100%;
+      border: none;
+      border-radius: 9px;
+      background: #2563eb;
+      color: white;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    #status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .success {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+
+    .error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="signature-reminder">
+    <span class="signature-reminder-title">SIGNATURE REMINDER</span>
+    Before sending, open <strong>Tools &rarr; eSignature</strong> and change the signer name/email.
+  </div>
+
+  <h3>Create Certificate</h3>
+
+  <div class="subtitle">
+    Enter customer and claim information to generate the Certificate of Completion.
+  </div>
+
+  <div class="field">
+    <label>Customer Name</label>
+    <input id="customerName">
+  </div>
+
+  <div class="field">
+    <label>Insurance Company</label>
+    <input id="insuranceCompany">
+  </div>
+
+  <div class="field">
+    <label>Claim Number</label>
+    <input id="claimNumber">
+  </div>
+
+  <div class="field">
+    <label>Date</label>
+    <input id="date" type="date">
+  </div>
+
+  <div class="field">
+    <label>Street Address</label>
+    <input id="streetAddress">
+  </div>
+
+  <div class="field">
+    <label>City / State</label>
+    <div class="row">
+      <input id="city">
+      <input id="state" value="GA">
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Zip</label>
+    <input id="zip">
+  </div>
+
+  <div class="field">
+    <label>Damage Type</label>
+    <select id="damageType">
+      <option value="Water">Water</option>
+      <option value="Fire">Fire</option>
+      <option value="Mold">Mold</option>
+      <option value="Storm">Storm</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label>Loss Date</label>
+    <input id="lossDate" type="date">
+  </div>
+
+  <div class="note">
+    Keep this document as the master template. The script creates a new filled certificate copy.
+  </div>
+
+  <button onclick="submitForm()">Create Certificate</button>
+
+  <div id="status"></div>
+
+  <script>
+    function submitForm() {
+      const status = document.getElementById('status');
+
+      status.style.display = 'block';
+      status.className = '';
+      status.textContent = 'Creating Certificate...';
+
+      const data = {
+        customerName: document.getElementById('customerName').value,
+        insuranceCompany: document.getElementById('insuranceCompany').value,
+        claimNumber: document.getElementById('claimNumber').value,
+        date: formatDate(document.getElementById('date').value),
+        streetAddress: document.getElementById('streetAddress').value,
+        city: document.getElementById('city').value,
+        state: document.getElementById('state').value,
+        zip: document.getElementById('zip').value,
+        damageType: document.getElementById('damageType').value,
+        lossDate: formatDate(document.getElementById('lossDate').value)
+      };
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          status.className = 'success';
+          status.innerHTML = result.message + '<br><a href="' + result.documentUrl + '" target="_blank">Open created Certificate</a>';
+        })
+        .withFailureHandler(function(error) {
+          status.className = 'error';
+          status.textContent = error.message || error;
+        })
+        .createCertificate(data);
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+
+      const parts = value.split('-');
+      return parts[1] + '/' + parts[2] + '/' + parts[0];
+    }
+  </script>
+</body>
+</html>
