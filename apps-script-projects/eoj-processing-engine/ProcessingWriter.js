@@ -1,4 +1,3 @@
-
 function writeProcessingOutput_(interpreted) {
   const spreadsheet = SpreadsheetApp.openById(CONFIG.EOJ_OUTPUT_SPREADSHEET_ID);
   let sheet = spreadsheet.getSheetByName(CONFIG.PROCESSING_OUTPUT_SHEET_NAME);
@@ -9,28 +8,32 @@ function writeProcessingOutput_(interpreted) {
 
   ensureProcessingOutputHeaders_(sheet);
 
-  const row = [
-    interpreted.outputId,
-    interpreted.eojId,
-    interpreted.runId,
-    interpreted.processedAt,
-    interpreted.technician,
-    interpreted.jobName,
-    interpreted.claimNumber,
-    interpreted.customerName,
-    interpreted.propertyAddress,
-    interpreted.visitDate,
-    interpreted.visitType,
-    JSON.stringify(interpreted.timelineEvent),
-    JSON.stringify(interpreted.conditionOutput),
-    JSON.stringify(interpreted.alertOutput),
-    JSON.stringify(interpreted.followUpOutput),
-    JSON.stringify(interpreted.equipmentOutput),
-    JSON.stringify(interpreted.reviewOutput),
-    JSON.stringify(interpreted.rawParsed),
-    interpreted.status,
-    interpreted.notes
-  ];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const rowByHeader = {
+    Output_ID: interpreted.outputId,
+    EOJ_ID: interpreted.eojId,
+    Processing_Run_ID: interpreted.runId,
+    Processed_At: interpreted.processedAt,
+    Technician: interpreted.technician,
+    Job_Name: interpreted.jobName,
+    Claim_Number: interpreted.claimNumber,
+    Customer_Name: interpreted.customerName,
+    Property_Address: interpreted.propertyAddress,
+    Visit_Date: interpreted.visitDate,
+    Visit_Type: interpreted.visitType,
+    Timeline_Event_JSON: JSON.stringify(interpreted.timelineEvent),
+    Condition_Output_JSON: JSON.stringify(interpreted.conditionOutput),
+    Alert_Output_JSON: JSON.stringify(interpreted.alertOutput),
+    Follow_Up_Output_JSON: JSON.stringify(interpreted.followUpOutput),
+    Equipment_Output_JSON: JSON.stringify(interpreted.equipmentOutput),
+    Review_Output_JSON: JSON.stringify(interpreted.reviewOutput),
+    Operational_Object_JSON: JSON.stringify(interpreted.operationalObjects),
+    Raw_Parsed_JSON: JSON.stringify(interpreted.rawParsed),
+    Processing_Status: interpreted.status,
+    Processing_Notes: interpreted.notes
+  };
+
+  const row = headers.map(header => rowByHeader[header] !== undefined ? rowByHeader[header] : '');
 
   sheet.appendRow(row);
   return interpreted.outputId;

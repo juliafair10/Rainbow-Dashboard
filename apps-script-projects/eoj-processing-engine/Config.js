@@ -1,4 +1,3 @@
-
 const CONFIG = {
   EOJ_SOURCE_SPREADSHEET_ID: '10ja0fNFsY_KqDWIyW27D_9pEILjWoXOyIfXMsTufSPs',
   EOJ_OUTPUT_SPREADSHEET_ID: '1GmsWkh8x_ICVEWNFP_WgT-hN6hQDSI_WF16J9T_R-NE',
@@ -32,6 +31,7 @@ const CONFIG = {
     'Follow_Up_Output_JSON',
     'Equipment_Output_JSON',
     'Review_Output_JSON',
+    'Operational_Object_JSON',
     'Raw_Parsed_JSON',
     'Processing_Status',
     'Processing_Notes'

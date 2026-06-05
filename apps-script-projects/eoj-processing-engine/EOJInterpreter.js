@@ -1,158 +1,438 @@
-
 function interpretBasicEOJ_(parsed, row, runId) {
   const outputId = Utilities.getUuid();
   const processedAt = new Date();
 
-  const technician = firstNonBlank_(
-    getNestedValue_(parsed, ['technician']),
-    getNestedValue_(parsed, ['Technician']),
-    getNestedValue_(parsed, ['submittedBy']),
-    row.technician
-  );
-
-  const jobName = firstNonBlank_(
-    getNestedValue_(parsed, ['jobName']),
-    getNestedValue_(parsed, ['Job_Name']),
-    getNestedValue_(parsed, ['job', 'name']),
-    row.jobName
-  );
-
-  const claimNumber = firstNonBlank_(
-    getNestedValue_(parsed, ['claimNumber']),
-    getNestedValue_(parsed, ['Claim_Number']),
-    getNestedValue_(parsed, ['claim', 'number']),
-    row.claimNumber
-  );
-
-  const customerName = firstNonBlank_(
-    getNestedValue_(parsed, ['customerName']),
-    getNestedValue_(parsed, ['Customer_Name']),
-    getNestedValue_(parsed, ['customer', 'name']),
-    row.customerName
-  );
-
-  const propertyAddress = firstNonBlank_(
-    getNestedValue_(parsed, ['propertyAddress']),
-    getNestedValue_(parsed, ['Property_Address']),
-    getNestedValue_(parsed, ['property', 'address']),
-    row.propertyAddress
-  );
-
-  const visitDate = firstNonBlank_(
-    getNestedValue_(parsed, ['visitDate']),
-    getNestedValue_(parsed, ['Visit_Date']),
-    getNestedValue_(parsed, ['visit', 'date']),
-    row.visitDate
-  );
-
-  const visitType = firstNonBlank_(
-    getNestedValue_(parsed, ['visitType']),
-    getNestedValue_(parsed, ['Visit_Type']),
-    getNestedValue_(parsed, ['visit', 'type']),
-    row.visitType
-  );
-
-  const reviewReasons = [];
-  if (!jobName) reviewReasons.push('Missing job name');
-  if (!claimNumber) reviewReasons.push('Missing claim number');
-
-  const timelineEvent = {
-    event_type: 'EOJ Submitted',
-    source: 'EOJ_Log',
-    eoj_id: row.eojId,
-    technician,
-    job_name: jobName,
-    claim_number: claimNumber,
-    customer_name: customerName,
-    property_address: propertyAddress,
-    visit_date: stringifyDateSafe_(visitDate),
-    visit_type: visitType,
-    created_at: processedAt.toISOString()
-  };
-
-  const conditionOutput = buildConditionOutput_(parsed);
-  const alertOutput = buildAlertOutput_(parsed, reviewReasons);
-  const followUpOutput = buildFollowUpOutput_(parsed);
+  const base = buildBaseEOJContext_(parsed, row, processedAt);
   const equipmentOutput = buildEquipmentOutput_(parsed);
-  const reviewOutput = {
-    review_needed: reviewReasons.length > 0,
-    reasons: reviewReasons
-  };
+  const followUpOutput = buildFollowUpOutput_(parsed);
+  const monitoringOutput = buildMonitoringOutput_(parsed);
+  const asbestosOutput = buildAsbestosOutput_(parsed);
+  const itelOutput = buildItelOutput_(parsed);
+  const reviewOutput = buildReviewOutput_(base, followUpOutput, asbestosOutput, itelOutput, monitoringOutput);
+  const conditionOutput = buildConditionOutput_(monitoringOutput, asbestosOutput, itelOutput, parsed);
+  const alertOutput = buildAlertOutput_(reviewOutput, followUpOutput, asbestosOutput, itelOutput);
+  const timelineEvent = buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput);
+  const operationalObjects = buildOperationalObjects_(base, timelineEvent, conditionOutput, alertOutput, followUpOutput, equipmentOutput, reviewOutput);
 
   return {
     outputId,
     eojId: row.eojId,
     runId,
     processedAt,
-    technician,
-    jobName,
-    claimNumber,
-    customerName,
-    propertyAddress,
-    visitDate,
-    visitType,
+    technician: base.technician,
+    jobName: base.jobName,
+    claimNumber: base.claimNumber,
+    customerName: base.customerName,
+    propertyAddress: base.propertyAddress,
+    visitDate: base.visitDate,
+    visitType: base.visitType,
     timelineEvent,
     conditionOutput,
     alertOutput,
     followUpOutput,
     equipmentOutput,
     reviewOutput,
+    operationalObjects,
     rawParsed: parsed,
     status: CONFIG.STATUS.PROCESSED,
-    notes: 'Session 1 basic EOJ interpretation completed.'
+    notes: 'Session 3 operational object layer completed.'
   };
 }
 
-function buildConditionOutput_(parsed) {
+function buildBaseEOJContext_(parsed, row, processedAt) {
   return {
-    monitoring_active: booleanFromAny_(
-      getNestedValue_(parsed, ['monitoringActive']),
-      getNestedValue_(parsed, ['monitoring', 'active'])
+    eojId: row.eojId,
+    processedAt,
+    technician: firstNonBlank_(
+      getNestedValue_(parsed, ['technician']),
+      getNestedValue_(parsed, ['Technician']),
+      getNestedValue_(parsed, ['submittedBy']),
+      row.technician
     ),
-    asbestos_testing_pending: booleanFromAny_(
-      getNestedValue_(parsed, ['asbestosTestNeeded']),
-      getNestedValue_(parsed, ['asbestos', 'testNeeded']),
-      getNestedValue_(parsed, ['asbestos', 'testingNeeded'])
+    jobName: firstNonBlank_(
+      getNestedValue_(parsed, ['jobName']),
+      getNestedValue_(parsed, ['Job_Name']),
+      getNestedValue_(parsed, ['job', 'name']),
+      row.jobName
     ),
-    itel_sample_needed: booleanFromAny_(
-      getNestedValue_(parsed, ['itelSampleNeeded']),
-      getNestedValue_(parsed, ['itel', 'sampleNeeded'])
+    claimNumber: firstNonBlank_(
+      getNestedValue_(parsed, ['claimNumber']),
+      getNestedValue_(parsed, ['Claim_Number']),
+      getNestedValue_(parsed, ['claim', 'number']),
+      row.claimNumber
+    ),
+    customerName: firstNonBlank_(
+      getNestedValue_(parsed, ['customerName']),
+      getNestedValue_(parsed, ['Customer_Name']),
+      getNestedValue_(parsed, ['customer', 'name']),
+      row.customerName
+    ),
+    propertyAddress: firstNonBlank_(
+      getNestedValue_(parsed, ['propertyAddress']),
+      getNestedValue_(parsed, ['Property_Address']),
+      getNestedValue_(parsed, ['property', 'address']),
+      row.propertyAddress
+    ),
+    visitDate: firstNonBlank_(
+      getNestedValue_(parsed, ['visitDate']),
+      getNestedValue_(parsed, ['Visit_Date']),
+      getNestedValue_(parsed, ['visit', 'date']),
+      row.visitDate
+    ),
+    visitType: firstNonBlank_(
+      getNestedValue_(parsed, ['visitType']),
+      getNestedValue_(parsed, ['Visit_Type']),
+      getNestedValue_(parsed, ['visit', 'type']),
+      row.visitType
     )
   };
 }
 
-function buildAlertOutput_(parsed, reviewReasons) {
+function buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput) {
+  const events = [];
+
+  events.push(buildTimelineEvent_(base, normalizeVisitEventType_(base.visitType), {
+    work_performed: getNestedValue_(parsed, ['workPerformed']),
+    technician_notes: getNestedValue_(parsed, ['technicianNotes']),
+    other_visit_notes: getNestedValue_(parsed, ['otherVisitNotes']),
+    remaining_work: getNestedValue_(parsed, ['remainingWork']),
+    field_work_complete: booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete']))
+  }));
+
+  if (booleanFromAny_(getNestedValue_(parsed, ['demoPerformed']))) {
+    events.push(buildTimelineEvent_(base, 'Demo Performed', {
+      work_performed: getNestedValue_(parsed, ['workPerformed'])
+    }));
+  }
+
+  if (equipmentOutput.has_equipment_activity) {
+    events.push(buildTimelineEvent_(base, 'Equipment Updated', equipmentOutput));
+  }
+
+  if (equipmentOutput.equipment_pickup_complete) {
+    events.push(buildTimelineEvent_(base, 'Equipment Pickup Completed', equipmentOutput));
+  }
+
+  if (monitoringOutput.next_monitoring_required || monitoringOutput.monitoring_status || monitoringOutput.monitoring_notes) {
+    events.push(buildTimelineEvent_(base, 'Monitoring Updated', monitoringOutput));
+  }
+
+  if (followUpOutput.follow_up_required) {
+    events.push(buildTimelineEvent_(base, 'Follow-Up Requested', followUpOutput));
+  }
+
+  if (asbestosOutput.testing_required) {
+    events.push(buildTimelineEvent_(base, 'Asbestos Testing Requested', asbestosOutput));
+  }
+
+  if (asbestosOutput.samples_taken) {
+    events.push(buildTimelineEvent_(base, 'Asbestos Samples Taken', asbestosOutput));
+  }
+
+  if (itelOutput.sample_required) {
+    events.push(buildTimelineEvent_(base, 'Itel Sample Required', itelOutput));
+  }
+
   return {
-    review_needed: reviewReasons.length > 0,
-    missing_claim_number: reviewReasons.includes('Missing claim number'),
-    missing_job_name: reviewReasons.includes('Missing job name'),
-    missing_eoj_payload: !parsed
+    event_count: events.length,
+    primary_event_type: events[0] ? events[0].event_type : 'EOJ Processed',
+    events
+  };
+}
+
+function buildTimelineEvent_(base, eventType, details) {
+  return {
+    event_type: eventType,
+    source: 'EOJ_Log',
+    eoj_id: base.eojId,
+    technician: base.technician,
+    job_name: base.jobName,
+    claim_number: base.claimNumber,
+    customer_name: base.customerName,
+    property_address: base.propertyAddress,
+    visit_date: stringifyDateSafe_(base.visitDate),
+    visit_type: base.visitType,
+    created_at: base.processedAt.toISOString(),
+    details: details || {}
+  };
+}
+
+function buildOperationalObjects_(base, timelineEvent, conditionOutput, alertOutput, followUpOutput, equipmentOutput, reviewOutput) {
+  const objects = [];
+
+  timelineEvent.events.forEach(event => {
+    objects.push(buildOperationalObject_(base, 'timeline_event', event.event_type, event.details, {
+      source_event_type: event.event_type,
+      confidence: 1
+    }));
+  });
+
+  Object.keys(conditionOutput).forEach(conditionKey => {
+    const conditionValue = conditionOutput[conditionKey];
+    if (conditionValue === true) {
+      objects.push(buildOperationalObject_(base, 'condition', conditionKey, {
+        active: true,
+        condition_key: conditionKey
+      }, {
+        confidence: 1
+      }));
+    }
+  });
+
+  if (alertOutput.follow_up_required) {
+    objects.push(buildOperationalObject_(base, 'alert', 'Follow-Up Required', followUpOutput, {
+      severity: 'attention',
+      confidence: 1
+    }));
+  }
+
+  if (alertOutput.asbestos_attention_needed) {
+    objects.push(buildOperationalObject_(base, 'alert', 'Asbestos Attention Needed', {
+      asbestos_attention_needed: true
+    }, {
+      severity: 'attention',
+      confidence: 1
+    }));
+  }
+
+  if (alertOutput.itel_attention_needed) {
+    objects.push(buildOperationalObject_(base, 'alert', 'Itel Attention Needed', {
+      itel_attention_needed: true
+    }, {
+      severity: 'attention',
+      confidence: 1
+    }));
+  }
+
+  if (equipmentOutput.has_equipment_activity) {
+    objects.push(buildOperationalObject_(base, 'equipment_state_change', 'Equipment Updated', equipmentOutput, {
+      confidence: 1
+    }));
+  }
+
+  if (followUpOutput.follow_up_required) {
+    objects.push(buildOperationalObject_(base, 'follow_up', 'Follow-Up Required', followUpOutput, {
+      confidence: 1
+    }));
+  }
+
+  if (reviewOutput.review_needed) {
+    objects.push(buildOperationalObject_(base, 'review', 'EOJ Operational Review', reviewOutput, {
+      severity: 'review',
+      confidence: 1
+    }));
+  }
+
+  return {
+    object_count: objects.length,
+    object_schema_version: 'EOJ_OPERATIONAL_OBJECTS_V1',
+    objects
+  };
+}
+
+function buildOperationalObject_(base, objectType, objectName, payload, options) {
+  const safeOptions = options || {};
+
+  return {
+    object_id: Utilities.getUuid(),
+    object_schema_version: 'RAINBOW_OPERATIONAL_OBJECT_V1',
+    object_type: objectType,
+    object_name: objectName,
+    source_system: 'EOJ Processing Engine',
+    source_type: 'EOJ',
+    source_id: base.eojId,
+    claim_number: base.claimNumber,
+    job_name: base.jobName,
+    customer_name: base.customerName,
+    property_address: base.propertyAddress,
+    visit_date: stringifyDateSafe_(base.visitDate),
+    visit_type: base.visitType,
+    technician: base.technician,
+    created_at: base.processedAt.toISOString(),
+    confidence: safeOptions.confidence === undefined ? 1 : safeOptions.confidence,
+    severity: safeOptions.severity || '',
+    source_event_type: safeOptions.source_event_type || '',
+    payload: payload || {}
+  };
+}
+
+function normalizeVisitEventType_(visitType) {
+  const normalized = String(visitType || '').toLowerCase().trim();
+
+  if (normalized === 'inspection') return 'Inspection Completed';
+  if (normalized === 'monitoring') return 'Monitoring Visit Completed';
+  if (normalized === 'demo' || normalized === 'demolition') return 'Demo Visit Completed';
+  if (normalized === 'pickup' || normalized === 'equipment pickup') return 'Equipment Pickup Visit Completed';
+  if (normalized) return visitType + ' Completed';
+
+  return 'EOJ Submitted';
+}
+
+function buildEquipmentOutput_(parsed) {
+  const equipment = getNestedValue_(parsed, ['equipment', 'items']) || {};
+  const equipmentBefore = {};
+  const equipmentAdded = {};
+  const equipmentRemoved = {};
+  const equipmentAfter = {};
+
+  Object.keys(equipment).forEach(key => {
+    const item = equipment[key] || {};
+    const label = item.label || key;
+
+    equipmentBefore[key] = {
+      label,
+      count: numberFromAny_(item.onSiteBeforeVisit)
+    };
+
+    equipmentAdded[key] = {
+      label,
+      count: numberFromAny_(item.addedToday)
+    };
+
+    equipmentRemoved[key] = {
+      label,
+      count: numberFromAny_(item.removedToday)
+    };
+
+    equipmentAfter[key] = {
+      label,
+      count: numberFromAny_(item.onSiteAfterVisit)
+    };
+  });
+
+  const totalAdded = sumEquipmentCounts_(equipmentAdded);
+  const totalRemoved = sumEquipmentCounts_(equipmentRemoved);
+  const totalAfter = sumEquipmentCounts_(equipmentAfter);
+  const equipmentPickedUp = booleanFromAny_(getNestedValue_(parsed, ['equipmentPickedUp']));
+
+  return {
+    equipment_before: equipmentBefore,
+    equipment_added: equipmentAdded,
+    equipment_removed: equipmentRemoved,
+    equipment_after: equipmentAfter,
+    total_added: totalAdded,
+    total_removed: totalRemoved,
+    total_on_site_after_visit: totalAfter,
+    equipment_still_needed: booleanFromAny_(getNestedValue_(parsed, ['equipmentStillNeeded'])),
+    equipment_pickup_complete: equipmentPickedUp || (totalRemoved > 0 && totalAfter === 0),
+    has_equipment_activity: totalAdded > 0 || totalRemoved > 0 || totalAfter > 0 || equipmentPickedUp,
+    summary: firstNonBlank_(getNestedValue_(parsed, ['equipmentSummary']), getNestedValue_(parsed, ['equipment', 'notes']), '')
+  };
+}
+
+function buildMonitoringOutput_(parsed) {
+  return {
+    next_monitoring_required: booleanFromAny_(getNestedValue_(parsed, ['nextMonitoringNeeded'])),
+    next_monitoring_date: getNestedValue_(parsed, ['nextMonitoringDate']),
+    next_monitoring_window: getNestedValue_(parsed, ['nextMonitoringWindow']),
+    monitoring_status: getNestedValue_(parsed, ['monitoringStatus']),
+    monitoring_notes: getNestedValue_(parsed, ['monitoringNotes']),
+    monitoring_active: booleanFromAny_(getNestedValue_(parsed, ['nextMonitoringNeeded'])) || !!getNestedValue_(parsed, ['monitoringStatus'])
+  };
+}
+
+function buildAsbestosOutput_(parsed) {
+  const testNeeded = getNestedValue_(parsed, ['asbestosTestNeeded']);
+  const samplesTaken = getNestedValue_(parsed, ['asbestosSamplesTaken']);
+
+  return {
+    testing_required: booleanFromAny_(testNeeded),
+    handler: getNestedValue_(parsed, ['asbestosHandler']),
+    samples_taken: booleanFromAny_(samplesTaken),
+    sample_count: numberFromAny_(getNestedValue_(parsed, ['asbestosSampleCount'])),
+    follow_up_description: getNestedValue_(parsed, ['asbestosFollowUpDescription'])
+  };
+}
+
+function buildItelOutput_(parsed) {
+  const flooringRemoved = booleanFromAny_(getNestedValue_(parsed, ['flooringRemoved']));
+  const sampleStatus = getNestedValue_(parsed, ['itelSampleStatus']);
+
+  return {
+    flooring_removed: flooringRemoved,
+    sample_required: flooringRemoved,
+    sample_status: sampleStatus,
+    notes: getNestedValue_(parsed, ['itelNotes'])
   };
 }
 
 function buildFollowUpOutput_(parsed) {
-  const followUps = firstNonBlank_(
-    getNestedValue_(parsed, ['followUps']),
-    getNestedValue_(parsed, ['follow_ups']),
-    getNestedValue_(parsed, ['followUp']),
-    []
-  );
-
   return {
-    follow_ups: Array.isArray(followUps) ? followUps : [followUps]
+    follow_up_required: booleanFromAny_(getNestedValue_(parsed, ['followUpNeeded'])),
+    assigned_to: getNestedValue_(parsed, ['followUpAssignedTo']),
+    due_date: getNestedValue_(parsed, ['followUpDueDate']),
+    description: getNestedValue_(parsed, ['followUpDescription']),
+    waiting_on: getNestedValue_(parsed, ['waitingOn'])
   };
 }
 
-function buildEquipmentOutput_(parsed) {
-  const equipment = firstNonBlank_(
-    getNestedValue_(parsed, ['equipment']),
-    getNestedValue_(parsed, ['equipmentItems']),
-    getNestedValue_(parsed, ['equipment', 'items']),
-    []
-  );
+function buildConditionOutput_(monitoringOutput, asbestosOutput, itelOutput, parsed) {
+  return {
+    monitoring_active: monitoringOutput.monitoring_active,
+    next_monitoring_required: monitoringOutput.next_monitoring_required,
+    asbestos_testing_pending: asbestosOutput.testing_required && !asbestosOutput.samples_taken,
+    asbestos_samples_taken: asbestosOutput.samples_taken,
+    itel_sample_needed: itelOutput.sample_required,
+    field_work_complete: booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete'])),
+    equipment_still_needed: booleanFromAny_(getNestedValue_(parsed, ['equipmentStillNeeded']))
+  };
+}
+
+function buildAlertOutput_(reviewOutput, followUpOutput, asbestosOutput, itelOutput) {
+  return {
+    review_needed: reviewOutput.review_needed,
+    follow_up_required: followUpOutput.follow_up_required,
+    asbestos_attention_needed: asbestosOutput.testing_required,
+    itel_attention_needed: itelOutput.sample_required,
+    review_reasons: reviewOutput.reasons
+  };
+}
+
+function buildReviewOutput_(base, followUpOutput, asbestosOutput, itelOutput, monitoringOutput) {
+  const reasons = [];
+
+  if (!base.jobName) reasons.push('Missing job name');
+  if (!base.claimNumber) reasons.push('Missing claim number');
+  if (!base.technician) reasons.push('Missing technician');
+  if (!base.visitDate) reasons.push('Missing visit date');
+  if (!base.visitType) reasons.push('Missing visit type');
+
+  if (followUpOutput.follow_up_required && !followUpOutput.description) {
+    reasons.push('Follow-up required but description is missing');
+  }
+
+  if (followUpOutput.follow_up_required && !followUpOutput.assigned_to) {
+    reasons.push('Follow-up required but assigned person is missing');
+  }
+
+  if (followUpOutput.follow_up_required && !followUpOutput.due_date) {
+    reasons.push('Follow-up required but due date is missing');
+  }
+
+  if (asbestosOutput.testing_required && !asbestosOutput.handler) {
+    reasons.push('Asbestos testing required but handler is missing');
+  }
+
+  if (asbestosOutput.testing_required && asbestosOutput.handler === 'We are handling it' && !asbestosOutput.samples_taken && !asbestosOutput.follow_up_description) {
+    reasons.push('Rainbow is handling asbestos testing but samples were not taken and no follow-up description was provided');
+  }
+
+  if (asbestosOutput.samples_taken && asbestosOutput.sample_count <= 0) {
+    reasons.push('Asbestos samples marked taken but sample count is missing');
+  }
+
+  if (itelOutput.sample_required && !itelOutput.sample_status) {
+    reasons.push('Flooring removed but Itel sample status is missing');
+  }
+
+  if (monitoringOutput.next_monitoring_required && !monitoringOutput.next_monitoring_date) {
+    reasons.push('Next monitoring required but date is missing');
+  }
 
   return {
-    equipment_items: Array.isArray(equipment) ? equipment : [equipment]
+    review_needed: reasons.length > 0,
+    reasons,
+    review_category: reasons.length > 0 ? 'EOJ Operational Review' : ''
   };
 }
 
@@ -185,13 +465,29 @@ function firstNonBlank_() {
 function booleanFromAny_() {
   for (let i = 0; i < arguments.length; i++) {
     const value = arguments[i];
+
     if (value === true) return true;
+    if (typeof value === 'number') return value > 0;
+
     if (typeof value === 'string') {
       const normalized = value.toLowerCase().trim();
-      if (['yes', 'true', 'needed', 'required', 'active'].includes(normalized)) return true;
+      if (['yes', 'true', 'needed', 'required', 'active', 'complete', 'completed'].includes(normalized)) return true;
+      if (['no', 'false', 'not needed', 'not required', 'inactive'].includes(normalized)) return false;
     }
   }
+
   return false;
+}
+
+function numberFromAny_(value) {
+  const numberValue = Number(value);
+  return isNaN(numberValue) ? 0 : numberValue;
+}
+
+function sumEquipmentCounts_(equipmentMap) {
+  return Object.keys(equipmentMap).reduce((sum, key) => {
+    return sum + numberFromAny_(equipmentMap[key].count);
+  }, 0);
 }
 
 function stringifyDateSafe_(value) {
