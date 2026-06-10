@@ -10,10 +10,11 @@
  * - apply health to Claims sheet
  * - record health history only when health level changes
  *
- * Future phases:
+ * Current completed scope:
  * - suppression rules
  * - overrides
  * - escalation persistence
+ * - batch evaluation
  */
 
 function evaluateClaimHealth(claimId) {
@@ -136,6 +137,195 @@ function applyClaimHealth(claimId) {
         stack: error.stack
       }
     );
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+}
+
+function applyHealthOverride(claimId, overrideLevel, reason, expiresAt, setBy) {
+  try {
+    const targetClaimId = claimId || getFirstClaimIdForHealthTest_();
+
+    if (!CLAIM_HEALTH_LEVELS.includes(overrideLevel)) {
+      throw new Error('Invalid override health level: ' + overrideLevel);
+    }
+
+    const overrideExpiresAt = expiresAt || calculateDefaultOverrideExpiry_();
+
+    const updateResult = updateClaim(targetClaimId, {
+      Health_Override: overrideLevel,
+      Health_Override_Reason: reason || 'Manual health override applied.',
+      Health_Override_Expires_At: overrideExpiresAt,
+      Health_Override_Set_By: setBy || CLAIM_SERVICE.name
+    });
+
+    if (!updateResult.success) {
+      return updateResult;
+    }
+
+    const applyResult = applyClaimHealth(targetClaimId);
+
+    const response = successResponse({
+      claimId: targetClaimId,
+      overrideLevel: overrideLevel,
+      overrideReason: reason || 'Manual health override applied.',
+      overrideExpiresAt: overrideExpiresAt,
+      setBy: setBy || CLAIM_SERVICE.name,
+      updateResult: updateResult,
+      applyResult: applyResult
+    }, 'Health override applied successfully.');
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+
+  } catch (error) {
+    writeServiceLog('applyHealthOverride', 'Error', error.message, {
+      claimId: claimId || '',
+      error: error
+    });
+
+    const response = errorResponse('Failed to apply health override.', {
+      message: error.message,
+      stack: error.stack
+    });
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+}
+
+function clearHealthOverride(claimId) {
+  try {
+    const targetClaimId = claimId || getFirstClaimIdForHealthTest_();
+
+    const updateResult = updateClaim(targetClaimId, {
+      Health_Override: '',
+      Health_Override_Reason: '',
+      Health_Override_Expires_At: '',
+      Health_Override_Set_By: ''
+    });
+
+    if (!updateResult.success) {
+      return updateResult;
+    }
+
+    const applyResult = applyClaimHealth(targetClaimId);
+
+    const response = successResponse({
+      claimId: targetClaimId,
+      updateResult: updateResult,
+      applyResult: applyResult
+    }, 'Health override cleared successfully.');
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+
+  } catch (error) {
+    writeServiceLog('clearHealthOverride', 'Error', error.message, {
+      claimId: claimId || '',
+      error: error
+    });
+
+    const response = errorResponse('Failed to clear health override.', {
+      message: error.message,
+      stack: error.stack
+    });
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+}
+
+function expireHealthOverrides() {
+  try {
+    const claims = getRows(CLAIM_SHEET_NAMES.claims);
+    const now = new Date();
+    const results = [];
+
+    claims.forEach(function(claim) {
+      if (!claim.Claim_ID || !claim.Health_Override || !claim.Health_Override_Expires_At) {
+        return;
+      }
+
+      const expiresAt = new Date(claim.Health_Override_Expires_At);
+
+      if (isNaN(expiresAt.getTime()) || expiresAt.getTime() >= now.getTime()) {
+        return;
+      }
+
+      const clearResult = clearHealthOverride(claim.Claim_ID);
+      results.push({
+        claimId: claim.Claim_ID,
+        expiredOverride: claim.Health_Override,
+        expiredAt: claim.Health_Override_Expires_At,
+        clearResult: clearResult
+      });
+    });
+
+    const response = successResponse({
+      expiredCount: results.length,
+      results: results
+    }, 'Expired health overrides processed successfully.');
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+
+  } catch (error) {
+    writeServiceLog('expireHealthOverrides', 'Error', error.message, {
+      error: error
+    });
+
+    const response = errorResponse('Failed to expire health overrides.', {
+      message: error.message,
+      stack: error.stack
+    });
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+}
+
+function batchApplyClaimHealth() {
+  try {
+    const claims = getRows(CLAIM_SHEET_NAMES.claims);
+    const results = [];
+
+    claims.forEach(function(claim) {
+      if (!claim.Claim_ID) {
+        return;
+      }
+
+      if (claim.Lifecycle_State === 'Operationally Complete' || claim.Lifecycle_State === 'Not Sold') {
+        return;
+      }
+
+      const result = applyClaimHealth(claim.Claim_ID);
+      results.push({
+        claimId: claim.Claim_ID,
+        success: result.success,
+        healthLevel: result.success ? result.data.healthLevel : '',
+        message: result.message
+      });
+    });
+
+    const response = successResponse({
+      evaluatedCount: results.length,
+      results: results
+    }, 'Batch claim health evaluation completed successfully.');
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+
+  } catch (error) {
+    writeServiceLog('batchApplyClaimHealth', 'Error', error.message, {
+      error: error
+    });
+
+    const response = errorResponse('Failed to batch apply claim health.', {
+      message: error.message,
+      stack: error.stack
+    });
 
     Logger.log(JSON.stringify(response, null, 2));
     return response;
@@ -593,6 +783,12 @@ function calculateDaysInCurrentHealth_(claimId, healthLevel) {
   return daysSince_(matchingRows[0].Evaluated_At);
 }
 
+function calculateDefaultOverrideExpiry_() {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + HEALTH_CONFIG.overrideDefaultExpiryDays);
+  return expiresAt.toISOString();
+}
+
 function recordHealthHistoryIfChanged_(claimId, previousHealthLevel, evaluationData, inputs, triggeredBy) {
   const newHealthLevel = evaluationData.healthLevel || '';
 
@@ -613,13 +809,13 @@ function recordHealthHistoryIfChanged_(claimId, previousHealthLevel, evaluationD
     Previous_Health_Level: previousHealthLevel || '',
     Evaluated_At: evaluationData.evaluatedAt || nowIso(),
     Triggered_By: triggeredBy || '',
-    Is_Override: false,
-    Override_Expires_At: '',
+    Is_Override: evaluationData.driver === 'Health_Override',
+    Override_Expires_At: evaluationData.driver === 'Health_Override' ? inputs.healthOverrideExpiresAt || '' : '',
     Active_Conditions_Snapshot: stringifyJson(inputs.activeConditions || []),
     Lifecycle_State_At_Evaluation: inputs.lifecycleState || '',
     Ownership_Area_At_Evaluation: inputs.ownershipArea || '',
     Last_Meaningful_Activity_At_Evaluation: inputs.lastMeaningfulActivityAt || '',
-    Notes: ''
+    Notes: evaluationData.suppressionReason || ''
   };
 
   const appendResult = appendRow(CLAIM_SHEET_NAMES.healthHistory, historyRecord);
@@ -712,6 +908,37 @@ function testEvaluateClaimHealth() {
 
 function testApplyClaimHealth() {
   const response = applyClaimHealth();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testApplyHealthOverride() {
+  const response = applyHealthOverride(
+    null,
+    'Attention Soon',
+    'Test manual override for Phase 7 validation.',
+    null,
+    'Phase 7 Test'
+  );
+
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testClearHealthOverride() {
+  const response = clearHealthOverride();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testExpireHealthOverrides() {
+  const response = expireHealthOverrides();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testBatchApplyClaimHealth() {
+  const response = batchApplyClaimHealth();
   Logger.log(JSON.stringify(response, null, 2));
   return response;
 }
