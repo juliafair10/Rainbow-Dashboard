@@ -200,13 +200,84 @@ function determineHealthLevel_(inputs) {
     return 'Attention Soon';
   }
 
+  if (hasActiveCondition_(inputs, 'Abatement Required')) {
+    const abatementCondition = getActiveCondition_(inputs, 'Abatement Required');
+
+    if (isConditionPastFollowUp_(abatementCondition)) {
+      return 'At Risk';
+    }
+
+    return 'Attention Soon';
+  }
+
   if (hasActiveCondition_(inputs, 'Carrier Revision Requested')) {
     return 'Attention Soon';
+  }
+
+  if (hasActiveCondition_(inputs, 'Revision Active')) {
+    if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
+      return 'At Risk';
+    }
+
+    return 'Healthy';
+  }
+
+  if (hasActiveCondition_(inputs, 'Supplement Under Review')) {
+    const supplementCondition = getActiveCondition_(inputs, 'Supplement Under Review');
+
+    if (isConditionPastFollowUp_(supplementCondition)) {
+      return 'At Risk';
+    }
+
+    return 'Healthy';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Payment')) {
+    const paymentCondition = getActiveCondition_(inputs, 'Waiting on Payment');
+    const daysOpen = daysSince_(paymentCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(paymentCondition)) {
+      return 'At Risk';
+    }
+
+    if (daysOpen >= HEALTH_CONFIG.paymentAgingDays) {
+      return 'Attention Soon';
+    }
+
+    return 'Healthy';
+  }
+
+  if (hasActiveCondition_(inputs, 'Asbestos Testing Pending')) {
+    const asbestosTestingCondition = getActiveCondition_(inputs, 'Asbestos Testing Pending');
+
+    if (isConditionPastFollowUp_(asbestosTestingCondition)) {
+      return 'At Risk';
+    }
+
+    return 'Healthy';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Lab Results')) {
+    const labCondition = getActiveCondition_(inputs, 'Waiting on Lab Results');
+
+    if (isConditionPastFollowUp_(labCondition)) {
+      return 'At Risk';
+    }
+
+    if (daysSince_(labCondition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
+      return 'Attention Soon';
+    }
+
+    return 'Healthy';
   }
 
   if (hasActiveCondition_(inputs, 'Coverage Pending')) {
     const coverageCondition = getActiveCondition_(inputs, 'Coverage Pending');
     const daysOpen = daysSince_(coverageCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(coverageCondition)) {
+      return 'At Risk';
+    }
 
     if (daysOpen >= HEALTH_CONFIG.staleAtRiskDays) {
       return 'At Risk';
@@ -215,6 +286,39 @@ function determineHealthLevel_(inputs) {
     if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
       return 'Attention Soon';
     }
+  }
+
+  if (hasActiveCondition_(inputs, 'Estimate Under Review')) {
+    const estimateCondition = getActiveCondition_(inputs, 'Estimate Under Review');
+    const daysOpen = daysSince_(estimateCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(estimateCondition)) {
+      return 'At Risk';
+    }
+
+    if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
+      return 'Attention Soon';
+    }
+  }
+
+  if (hasActiveCondition_(inputs, 'Source of Loss Unresolved')) {
+    const sourceCondition = getActiveCondition_(inputs, 'Source of Loss Unresolved');
+
+    if (isConditionPastFollowUp_(sourceCondition)) {
+      return 'At Risk';
+    }
+
+    return 'Attention Soon';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Customer Decision')) {
+    const customerCondition = getActiveCondition_(inputs, 'Waiting on Customer Decision');
+
+    if (isConditionPastFollowUp_(customerCondition)) {
+      return 'At Risk';
+    }
+
+    return 'Healthy';
   }
 
   return 'Healthy';
@@ -248,13 +352,84 @@ function determineHealthReason_(inputs) {
     return 'Positive asbestos result requires abatement coordination.';
   }
 
+  if (hasActiveCondition_(inputs, 'Abatement Required')) {
+    const abatementCondition = getActiveCondition_(inputs, 'Abatement Required');
+
+    if (isConditionPastFollowUp_(abatementCondition)) {
+      return 'Abatement is required and the follow-up date has passed.';
+    }
+
+    return 'Abatement is required and should remain operationally visible.';
+  }
+
   if (hasActiveCondition_(inputs, 'Carrier Revision Requested')) {
     return 'Carrier revision has been requested and requires action.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Revision Active')) {
+    if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
+      return 'Revision is active, but revision momentum appears stale.';
+    }
+
+    return 'Revision is active with recent activity or acceptable cadence.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Supplement Under Review')) {
+    const supplementCondition = getActiveCondition_(inputs, 'Supplement Under Review');
+
+    if (isConditionPastFollowUp_(supplementCondition)) {
+      return 'Supplement is under review and the follow-up date has passed.';
+    }
+
+    return 'Supplement is under review within the expected follow-up window.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Payment')) {
+    const paymentCondition = getActiveCondition_(inputs, 'Waiting on Payment');
+    const daysOpen = daysSince_(paymentCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(paymentCondition)) {
+      return 'Payment is still outstanding and the follow-up date has passed.';
+    }
+
+    if (daysOpen >= HEALTH_CONFIG.paymentAgingDays) {
+      return 'Payment has been outstanding long enough to need follow-up soon.';
+    }
+
+    return 'Waiting on payment within the expected payment window.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Asbestos Testing Pending')) {
+    const asbestosTestingCondition = getActiveCondition_(inputs, 'Asbestos Testing Pending');
+
+    if (isConditionPastFollowUp_(asbestosTestingCondition)) {
+      return 'Asbestos testing is pending and the follow-up date has passed.';
+    }
+
+    return 'Asbestos testing is pending within the expected follow-up window.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Lab Results')) {
+    const labCondition = getActiveCondition_(inputs, 'Waiting on Lab Results');
+
+    if (isConditionPastFollowUp_(labCondition)) {
+      return 'Lab results are still pending and the follow-up date has passed.';
+    }
+
+    if (daysSince_(labCondition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
+      return 'Lab results have been pending long enough to need follow-up soon.';
+    }
+
+    return 'Waiting on lab results within the expected follow-up window.';
   }
 
   if (hasActiveCondition_(inputs, 'Coverage Pending')) {
     const coverageCondition = getActiveCondition_(inputs, 'Coverage Pending');
     const daysOpen = daysSince_(coverageCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(coverageCondition)) {
+      return 'Coverage is pending and the follow-up date has passed.';
+    }
 
     if (daysOpen >= HEALTH_CONFIG.staleAtRiskDays) {
       return 'Coverage has been pending beyond the At Risk threshold.';
@@ -265,6 +440,41 @@ function determineHealthReason_(inputs) {
     }
 
     return 'Coverage is pending within the expected follow-up window.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Estimate Under Review')) {
+    const estimateCondition = getActiveCondition_(inputs, 'Estimate Under Review');
+    const daysOpen = daysSince_(estimateCondition.Opened_At);
+
+    if (isConditionPastFollowUp_(estimateCondition)) {
+      return 'Estimate is under review and the follow-up date has passed.';
+    }
+
+    if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
+      return 'Estimate has been under review long enough to need follow-up soon.';
+    }
+
+    return 'Estimate is under review within the expected follow-up window.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Source of Loss Unresolved')) {
+    const sourceCondition = getActiveCondition_(inputs, 'Source of Loss Unresolved');
+
+    if (isConditionPastFollowUp_(sourceCondition)) {
+      return 'Source of loss remains unresolved and the follow-up date has passed.';
+    }
+
+    return 'Source of loss remains unresolved and needs attention soon.';
+  }
+
+  if (hasActiveCondition_(inputs, 'Waiting on Customer Decision')) {
+    const customerCondition = getActiveCondition_(inputs, 'Waiting on Customer Decision');
+
+    if (isConditionPastFollowUp_(customerCondition)) {
+      return 'Waiting on customer decision and the follow-up date has passed.';
+    }
+
+    return 'Waiting on customer decision within the expected follow-up window.';
   }
 
   return 'No active health-driving condition requires attention.';
@@ -347,6 +557,28 @@ function daysSince_(isoDate) {
   const millisecondsPerDay = 24 * 60 * 60 * 1000;
 
   return Math.floor((now.getTime() - date.getTime()) / millisecondsPerDay);
+}
+
+function isConditionPastFollowUp_(condition) {
+  if (!condition || !condition.Follow_Up_Date) {
+    return false;
+  }
+
+  const followUpDate = new Date(condition.Follow_Up_Date);
+
+  if (isNaN(followUpDate.getTime())) {
+    return false;
+  }
+
+  return followUpDate.getTime() < new Date().getTime();
+}
+
+function isDateOlderThanDays_(isoDate, thresholdDays) {
+  if (!isoDate) {
+    return true;
+  }
+
+  return daysSince_(isoDate) >= thresholdDays;
 }
 
 function getFirstClaimIdForHealthTest_() {
