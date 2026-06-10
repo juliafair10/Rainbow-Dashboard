@@ -19,3 +19,9 @@ function getHomepageSummary() {
     }
   };
 }
+
+function testGetHomepageSummary() {
+  const result = getHomepageSummary();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
