@@ -105,6 +105,11 @@ function applyClaimHealth(claimId) {
       previousHealthLevel: previousHealthLevel,
       healthLevel: evaluation.data.healthLevel,
       healthReason: evaluation.data.healthReason,
+      driver: evaluation.data.driver || '',
+      driverCondition: evaluation.data.driverCondition || '',
+      suppressed: evaluation.data.suppressed || false,
+      suppressionReason: evaluation.data.suppressionReason || '',
+      daysInCurrentHealth: evaluation.data.daysInCurrentHealth || 0,
       healthUpdatedAt: evaluatedAt,
       updateResult: updateResult,
       historyResult: historyResult
