@@ -21,15 +21,23 @@ function evaluateClaimHealth(claimId) {
     const targetClaimId = claimId || getFirstClaimIdForHealthTest_();
     const inputs = gatherHealthInputs_(targetClaimId);
 
+    const healthDriver = evaluateHealthDriver_(inputs);
+    const evaluatedAt = nowIso();
+
     const result = {
       claimId: targetClaimId,
-      healthLevel: determineHealthLevel_(inputs),
-      healthReason: determineHealthReason_(inputs),
+      healthLevel: healthDriver.healthLevel,
+      healthReason: healthDriver.healthReason,
+      driver: healthDriver.driver || '',
+      driverCondition: healthDriver.conditionType || '',
+      suppressed: healthDriver.suppressed || false,
+      suppressionReason: healthDriver.suppressionReason || '',
+      daysInCurrentHealth: calculateDaysInCurrentHealth_(targetClaimId, inputs.operationalHealth),
       lifecycleState: inputs.lifecycleState,
       ownershipArea: inputs.ownershipArea,
       activeConditions: inputs.activeConditions,
       lastMeaningfulActivityAt: inputs.lastMeaningfulActivityAt,
-      evaluatedAt: nowIso()
+      evaluatedAt: evaluatedAt
     };
 
     return successResponse(
@@ -159,6 +167,11 @@ function gatherHealthInputs_(claimId) {
 
     operationalHealth: claim.Operational_Health || 'Healthy',
 
+    healthOverride: claim.Health_Override || '',
+    healthOverrideReason: claim.Health_Override_Reason || '',
+    healthOverrideExpiresAt: claim.Health_Override_Expires_At || '',
+    healthOverrideSetBy: claim.Health_Override_Set_By || '',
+
     lastMeaningfulActivityAt:
       claim.Last_Meaningful_Activity_At || '',
 
@@ -192,7 +205,9 @@ function evaluateHealthDriver_(inputs) {
     return {
       healthLevel: 'Healthy',
       healthReason: 'Claim is operationally complete.',
-      driver: 'Lifecycle_State'
+      driver: 'Lifecycle_State',
+      suppressed: true,
+      suppressionReason: 'Operationally complete claims are excluded from active health orchestration.'
     };
   }
 
@@ -200,8 +215,15 @@ function evaluateHealthDriver_(inputs) {
     return {
       healthLevel: 'Healthy',
       healthReason: 'Claim was not sold.',
-      driver: 'Lifecycle_State'
+      driver: 'Lifecycle_State',
+      suppressed: true,
+      suppressionReason: 'Not Sold claims are excluded from active health orchestration.'
     };
+  }
+
+  const overrideDriver = evaluateHealthOverride_(inputs);
+  if (overrideDriver) {
+    return overrideDriver;
   }
 
   const candidates = (inputs.activeConditions || []).map(function(condition) {
@@ -211,11 +233,13 @@ function evaluateHealthDriver_(inputs) {
   });
 
   if (!candidates.length) {
-    return {
+    return applyEscalationPersistence_(inputs, {
       healthLevel: 'Healthy',
       healthReason: 'No active health-driving condition requires attention.',
-      driver: 'None'
-    };
+      driver: 'None',
+      suppressed: false,
+      suppressionReason: ''
+    });
   }
 
   candidates.sort(function(a, b) {
@@ -228,7 +252,7 @@ function evaluateHealthDriver_(inputs) {
     return getConditionSeverityRank_(a.conditionType) - getConditionSeverityRank_(b.conditionType);
   });
 
-  return candidates[0];
+  return applyEscalationPersistence_(inputs, candidates[0]);
 }
 
 function evaluateConditionHealth_(condition, inputs) {
@@ -247,7 +271,7 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Monitoring is active and the scheduled follow-up date has passed.', conditionType);
     }
 
-    return buildHealthDriver_('Healthy', 'Monitoring is active with a scheduled follow-up date.', conditionType);
+    return buildSuppressedHealthDriver_('Healthy', 'Monitoring is active with a scheduled follow-up date.', conditionType, 'Future monitoring or follow-up date suppresses monitoring urgency.');
   }
 
   if (conditionType === 'Positive Asbestos Result') {
@@ -263,6 +287,10 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Abatement is required and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Attention Soon', 'Abatement is required and should remain operationally visible.', conditionType, 'Scheduled abatement follow-up prevents escalation for now.');
+    }
+
     return buildHealthDriver_('Attention Soon', 'Abatement is required and should remain operationally visible.', conditionType);
   }
 
@@ -271,12 +299,20 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Carrier revision was requested and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Attention Soon', 'Carrier revision has been requested and requires action.', conditionType, 'Scheduled revision follow-up prevents escalation for now.');
+    }
+
     return buildHealthDriver_('Attention Soon', 'Carrier revision has been requested and requires action.', conditionType);
   }
 
   if (conditionType === 'Revision Active') {
     if (isConditionPastFollowUp_(condition)) {
       return buildHealthDriver_('At Risk', 'Revision is active and the follow-up date has passed.', conditionType);
+    }
+
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Revision is active with a scheduled follow-up date.', conditionType, 'Scheduled revision follow-up suppresses stale revision urgency.');
     }
 
     if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
@@ -289,6 +325,10 @@ function evaluateConditionHealth_(condition, inputs) {
   if (conditionType === 'Supplement Under Review') {
     if (isConditionPastFollowUp_(condition)) {
       return buildHealthDriver_('At Risk', 'Supplement is under review and the follow-up date has passed.', conditionType);
+    }
+
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Supplement is under review within the expected follow-up window.', conditionType, 'Scheduled supplement follow-up suppresses review urgency.');
     }
 
     if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
@@ -305,6 +345,10 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Payment is still outstanding and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Waiting on payment with a scheduled follow-up date.', conditionType, 'Scheduled payment follow-up suppresses payment aging urgency.');
+    }
+
     if (daysOpen >= HEALTH_CONFIG.paymentAgingDays) {
       return buildHealthDriver_('Attention Soon', 'Payment has been outstanding long enough to need follow-up soon.', conditionType);
     }
@@ -315,6 +359,10 @@ function evaluateConditionHealth_(condition, inputs) {
   if (conditionType === 'Asbestos Testing Pending') {
     if (isConditionPastFollowUp_(condition)) {
       return buildHealthDriver_('At Risk', 'Asbestos testing is pending and the follow-up date has passed.', conditionType);
+    }
+
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Asbestos testing is pending with a scheduled follow-up date.', conditionType, 'Scheduled asbestos testing follow-up suppresses urgency.');
     }
 
     if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
@@ -329,6 +377,10 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Lab results are still pending and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Waiting on lab results with a scheduled follow-up date.', conditionType, 'Scheduled lab follow-up suppresses lab-results urgency.');
+    }
+
     if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
       return buildHealthDriver_('Attention Soon', 'Lab results have been pending long enough to need follow-up soon.', conditionType);
     }
@@ -341,6 +393,10 @@ function evaluateConditionHealth_(condition, inputs) {
 
     if (isConditionPastFollowUp_(condition)) {
       return buildHealthDriver_('At Risk', 'Coverage is pending and the follow-up date has passed.', conditionType);
+    }
+
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Coverage is pending with a scheduled follow-up date.', conditionType, 'Scheduled coverage follow-up suppresses coverage urgency.');
     }
 
     if (daysOpen >= HEALTH_CONFIG.staleAtRiskDays) {
@@ -361,6 +417,10 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Estimate is under review and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Estimate is under review with a scheduled follow-up date.', conditionType, 'Scheduled estimate follow-up suppresses estimate-review urgency.');
+    }
+
     if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
       return buildHealthDriver_('Attention Soon', 'Estimate has been under review long enough to need follow-up soon.', conditionType);
     }
@@ -373,12 +433,20 @@ function evaluateConditionHealth_(condition, inputs) {
       return buildHealthDriver_('At Risk', 'Source of loss remains unresolved and the follow-up date has passed.', conditionType);
     }
 
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Source of loss is unresolved with a scheduled follow-up date.', conditionType, 'Scheduled source-of-loss follow-up suppresses urgency.');
+    }
+
     return buildHealthDriver_('Attention Soon', 'Source of loss remains unresolved and needs attention soon.', conditionType);
   }
 
   if (conditionType === 'Waiting on Customer Decision') {
     if (isConditionPastFollowUp_(condition)) {
       return buildHealthDriver_('At Risk', 'Waiting on customer decision and the follow-up date has passed.', conditionType);
+    }
+
+    if (condition.Follow_Up_Date) {
+      return buildSuppressedHealthDriver_('Healthy', 'Waiting on customer decision with a scheduled follow-up date.', conditionType, 'Scheduled customer follow-up suppresses customer-decision urgency.');
     }
 
     if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.staleAtRiskDays) {
@@ -398,6 +466,13 @@ function buildHealthDriver_(healthLevel, healthReason, conditionType) {
     conditionType: conditionType,
     driver: conditionType
   };
+}
+
+function buildSuppressedHealthDriver_(healthLevel, healthReason, conditionType, suppressionReason) {
+  const driver = buildHealthDriver_(healthLevel, healthReason, conditionType);
+  driver.suppressed = true;
+  driver.suppressionReason = suppressionReason || '';
+  return driver;
 }
 
 function getHealthLevelRank_(healthLevel) {
@@ -421,6 +496,96 @@ function getConditionSeverityRank_(conditionType) {
   }
 
   return index;
+}
+
+function evaluateHealthOverride_(inputs) {
+  if (!inputs.healthOverride) {
+    return null;
+  }
+
+  if (!CLAIM_HEALTH_LEVELS.includes(inputs.healthOverride)) {
+    return null;
+  }
+
+  if (inputs.healthOverrideExpiresAt) {
+    const expiresAt = new Date(inputs.healthOverrideExpiresAt);
+
+    if (!isNaN(expiresAt.getTime()) && expiresAt.getTime() < new Date().getTime()) {
+      return null;
+    }
+  }
+
+  return {
+    healthLevel: inputs.healthOverride,
+    healthReason: inputs.healthOverrideReason || 'Health manually overridden.',
+    driver: 'Health_Override',
+    conditionType: '',
+    suppressed: true,
+    suppressionReason: 'Manual health override is active.'
+  };
+}
+
+function applyEscalationPersistence_(inputs, driver) {
+  if (!driver || driver.suppressed) {
+    return driver;
+  }
+
+  if (driver.healthLevel === 'At Risk') {
+    const daysAtRisk = calculateDaysInCurrentHealth_(inputs.claimId, 'At Risk');
+
+    if (daysAtRisk >= HEALTH_CONFIG.escalationPersistenceDays) {
+      return {
+        healthLevel: 'Escalated',
+        healthReason: driver.healthReason + ' At Risk has persisted beyond the escalation window.',
+        conditionType: driver.conditionType || '',
+        driver: driver.driver || driver.conditionType || '',
+        suppressed: false,
+        suppressionReason: '',
+        escalationSource: driver.healthLevel,
+        daysInCurrentHealth: daysAtRisk
+      };
+    }
+  }
+
+  if (driver.healthLevel === 'Escalated') {
+    const daysEscalated = calculateDaysInCurrentHealth_(inputs.claimId, 'Escalated');
+
+    if (daysEscalated >= HEALTH_CONFIG.criticalPersistenceDays) {
+      return {
+        healthLevel: 'Critical',
+        healthReason: driver.healthReason + ' Escalated health has persisted beyond the critical window.',
+        conditionType: driver.conditionType || '',
+        driver: driver.driver || driver.conditionType || '',
+        suppressed: false,
+        suppressionReason: '',
+        escalationSource: driver.healthLevel,
+        daysInCurrentHealth: daysEscalated
+      };
+    }
+  }
+
+  return driver;
+}
+
+function calculateDaysInCurrentHealth_(claimId, healthLevel) {
+  if (!claimId || !healthLevel) {
+    return 0;
+  }
+
+  const historyRows = getRows(CLAIM_SHEET_NAMES.healthHistory);
+  const matchingRows = historyRows.filter(function(row) {
+    return row.Claim_ID === claimId && row.Health_Level === healthLevel;
+  });
+
+  if (!matchingRows.length) {
+    return 0;
+  }
+
+  matchingRows.sort(function(a, b) {
+    return new Date(b.Evaluated_At).getTime() - new Date(a.Evaluated_At).getTime();
+  });
+
+  return daysSince_(matchingRows[0].Evaluated_At);
 }
 
 function recordHealthHistoryIfChanged_(claimId, previousHealthLevel, evaluationData, inputs, triggeredBy) {
