@@ -460,6 +460,73 @@
       color: #166534;
     }
 
+    .homepage-kpi-section {
+      background: linear-gradient(135deg, #fff7fb 0%, #f7f3ff 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      margin-bottom: 22px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    }
+
+    .homepage-kpi-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .homepage-kpi-title {
+      font-size: 21px;
+      font-weight: 700;
+      margin: 0 0 4px 0;
+    }
+
+    .homepage-kpi-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+      margin: 0;
+    }
+
+    .homepage-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 12px;
+    }
+
+    .homepage-kpi-card {
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .homepage-kpi-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .homepage-kpi-value {
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    .homepage-kpi-status {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .homepage-kpi-error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
     .operations-summary {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -1162,6 +1229,45 @@
       </button>
     </div>
 
+    <section id="homepageKpiSection" class="homepage-kpi-section">
+      <div class="homepage-kpi-top">
+        <div>
+          <h2 class="homepage-kpi-title">Today’s Operational Awareness</h2>
+          <p class="homepage-kpi-subtitle">
+            First Phase 8 homepage summary layer. Claim intelligence will connect here as the remaining workspace data is wired in.
+          </p>
+        </div>
+        <div id="homepageKpiStatus" class="homepage-kpi-status">Loading homepage summary...</div>
+      </div>
+
+      <div class="homepage-kpi-grid">
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">Needs Attention</span>
+          <div id="homepage-kpi-needsAttention" class="homepage-kpi-value">—</div>
+        </div>
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">At Risk</span>
+          <div id="homepage-kpi-atRisk" class="homepage-kpi-value">—</div>
+        </div>
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">Escalated</span>
+          <div id="homepage-kpi-escalated" class="homepage-kpi-value">—</div>
+        </div>
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">Critical</span>
+          <div id="homepage-kpi-critical" class="homepage-kpi-value">—</div>
+        </div>
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">Waiting on Insurance</span>
+          <div id="homepage-kpi-waitingOnInsurance" class="homepage-kpi-value">—</div>
+        </div>
+        <div class="homepage-kpi-card">
+          <span class="homepage-kpi-label">Monitoring Active</span>
+          <div id="homepage-kpi-monitoringActive" class="homepage-kpi-value">—</div>
+        </div>
+      </div>
+    </section>
+
     <div class="workspace-layout">
 
       <div class="workspace-main">
@@ -1182,8 +1288,70 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', function () {
+      refreshHomepageSummary();
       refreshDashboard();
     });
+    function refreshHomepageSummary() {
+      google.script.run
+        .withSuccessHandler(function(response) {
+          try {
+            renderHomepageSummary(response);
+          } catch (error) {
+            renderHomepageSummaryError('Homepage summary render failed: ' + (error.message || error));
+          }
+        })
+        .withFailureHandler(function(err) {
+          renderHomepageSummaryError(err.message || err || 'Homepage summary failed to load.');
+        })
+        .getHomepageSummary();
+    }
+
+    function renderHomepageSummary(response) {
+      if (!response || response.success !== true) {
+        renderHomepageSummaryError('Homepage summary returned an unexpected response.');
+        return;
+      }
+
+      const data = response.data || {};
+      const kpis = data.kpis || {};
+
+      setHomepageKpiValue('homepage-kpi-needsAttention', kpis.needsAttention);
+      setHomepageKpiValue('homepage-kpi-atRisk', kpis.atRisk);
+      setHomepageKpiValue('homepage-kpi-escalated', kpis.escalated);
+      setHomepageKpiValue('homepage-kpi-critical', kpis.critical);
+      setHomepageKpiValue('homepage-kpi-waitingOnInsurance', kpis.waitingOnInsurance);
+      setHomepageKpiValue('homepage-kpi-monitoringActive', kpis.monitoringActive);
+
+      const status = data.systemStatus || {};
+      const statusText = status.homepageService === 'Connected'
+        ? 'Homepage summary connected'
+        : 'Homepage summary loaded';
+
+      const statusElement = document.getElementById('homepageKpiStatus');
+      if (statusElement) {
+        statusElement.className = 'homepage-kpi-status';
+        statusElement.textContent = statusText + ' • ' + formatDisplayDateTime(response.generatedAt || status.lastRefresh || '');
+      }
+    }
+
+    function renderHomepageSummaryError(message) {
+      const statusElement = document.getElementById('homepageKpiStatus');
+      if (statusElement) {
+        statusElement.className = 'homepage-kpi-status homepage-kpi-error';
+        statusElement.textContent = message || 'Homepage summary failed to load.';
+      }
+    }
+
+    function setHomepageKpiValue(id, value) {
+      const element = document.getElementById(id);
+      if (!element) {
+        return;
+      }
+
+      element.textContent = value === null || value === undefined || value === ''
+        ? '—'
+        : value;
+    }
 
     const OPERATIONS_ACTIONS = [
       {
