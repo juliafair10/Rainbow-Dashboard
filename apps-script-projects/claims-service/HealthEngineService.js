@@ -180,304 +180,247 @@ function gatherHealthInputs_(claimId) {
 }
 
 function determineHealthLevel_(inputs) {
-
-  if (
-    inputs.lifecycleState === 'Operationally Complete' ||
-    inputs.lifecycleState === 'Not Sold'
-  ) {
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Monitoring Active')) {
-    const monitoringCondition = getActiveCondition_(inputs, 'Monitoring Active');
-
-    if (!monitoringCondition.Follow_Up_Date) {
-      return 'At Risk';
-    }
-  }
-
-  if (hasActiveCondition_(inputs, 'Positive Asbestos Result')) {
-    return 'Attention Soon';
-  }
-
-  if (hasActiveCondition_(inputs, 'Abatement Required')) {
-    const abatementCondition = getActiveCondition_(inputs, 'Abatement Required');
-
-    if (isConditionPastFollowUp_(abatementCondition)) {
-      return 'At Risk';
-    }
-
-    return 'Attention Soon';
-  }
-
-  if (hasActiveCondition_(inputs, 'Carrier Revision Requested')) {
-    return 'Attention Soon';
-  }
-
-  if (hasActiveCondition_(inputs, 'Revision Active')) {
-    if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
-      return 'At Risk';
-    }
-
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Supplement Under Review')) {
-    const supplementCondition = getActiveCondition_(inputs, 'Supplement Under Review');
-
-    if (isConditionPastFollowUp_(supplementCondition)) {
-      return 'At Risk';
-    }
-
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Waiting on Payment')) {
-    const paymentCondition = getActiveCondition_(inputs, 'Waiting on Payment');
-    const daysOpen = daysSince_(paymentCondition.Opened_At);
-
-    if (isConditionPastFollowUp_(paymentCondition)) {
-      return 'At Risk';
-    }
-
-    if (daysOpen >= HEALTH_CONFIG.paymentAgingDays) {
-      return 'Attention Soon';
-    }
-
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Asbestos Testing Pending')) {
-    const asbestosTestingCondition = getActiveCondition_(inputs, 'Asbestos Testing Pending');
-
-    if (isConditionPastFollowUp_(asbestosTestingCondition)) {
-      return 'At Risk';
-    }
-
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Waiting on Lab Results')) {
-    const labCondition = getActiveCondition_(inputs, 'Waiting on Lab Results');
-
-    if (isConditionPastFollowUp_(labCondition)) {
-      return 'At Risk';
-    }
-
-    if (daysSince_(labCondition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Attention Soon';
-    }
-
-    return 'Healthy';
-  }
-
-  if (hasActiveCondition_(inputs, 'Coverage Pending')) {
-    const coverageCondition = getActiveCondition_(inputs, 'Coverage Pending');
-    const daysOpen = daysSince_(coverageCondition.Opened_At);
-
-    if (isConditionPastFollowUp_(coverageCondition)) {
-      return 'At Risk';
-    }
-
-    if (daysOpen >= HEALTH_CONFIG.staleAtRiskDays) {
-      return 'At Risk';
-    }
-
-    if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Attention Soon';
-    }
-  }
-
-  if (hasActiveCondition_(inputs, 'Estimate Under Review')) {
-    const estimateCondition = getActiveCondition_(inputs, 'Estimate Under Review');
-    const daysOpen = daysSince_(estimateCondition.Opened_At);
-
-    if (isConditionPastFollowUp_(estimateCondition)) {
-      return 'At Risk';
-    }
-
-    if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Attention Soon';
-    }
-  }
-
-  if (hasActiveCondition_(inputs, 'Source of Loss Unresolved')) {
-    const sourceCondition = getActiveCondition_(inputs, 'Source of Loss Unresolved');
-
-    if (isConditionPastFollowUp_(sourceCondition)) {
-      return 'At Risk';
-    }
-
-    return 'Attention Soon';
-  }
-
-  if (hasActiveCondition_(inputs, 'Waiting on Customer Decision')) {
-    const customerCondition = getActiveCondition_(inputs, 'Waiting on Customer Decision');
-
-    if (isConditionPastFollowUp_(customerCondition)) {
-      return 'At Risk';
-    }
-
-    return 'Healthy';
-  }
-
-  return 'Healthy';
+  return evaluateHealthDriver_(inputs).healthLevel;
 }
 
 function determineHealthReason_(inputs) {
+  return evaluateHealthDriver_(inputs).healthReason;
+}
 
-  if (
-    inputs.lifecycleState === 'Operationally Complete'
-  ) {
-    return 'Claim is operationally complete.';
+function evaluateHealthDriver_(inputs) {
+  if (inputs.lifecycleState === 'Operationally Complete') {
+    return {
+      healthLevel: 'Healthy',
+      healthReason: 'Claim is operationally complete.',
+      driver: 'Lifecycle_State'
+    };
   }
 
-  if (
-    inputs.lifecycleState === 'Not Sold'
-  ) {
-    return 'Claim was not sold.';
+  if (inputs.lifecycleState === 'Not Sold') {
+    return {
+      healthLevel: 'Healthy',
+      healthReason: 'Claim was not sold.',
+      driver: 'Lifecycle_State'
+    };
   }
 
-  if (hasActiveCondition_(inputs, 'Monitoring Active')) {
-    const monitoringCondition = getActiveCondition_(inputs, 'Monitoring Active');
+  const candidates = (inputs.activeConditions || []).map(function(condition) {
+    return evaluateConditionHealth_(condition, inputs);
+  }).filter(function(candidate) {
+    return candidate !== null;
+  });
 
-    if (!monitoringCondition.Follow_Up_Date) {
-      return 'Monitoring is active, but no follow-up or next monitoring date is scheduled.';
+  if (!candidates.length) {
+    return {
+      healthLevel: 'Healthy',
+      healthReason: 'No active health-driving condition requires attention.',
+      driver: 'None'
+    };
+  }
+
+  candidates.sort(function(a, b) {
+    const levelDifference = getHealthLevelRank_(b.healthLevel) - getHealthLevelRank_(a.healthLevel);
+
+    if (levelDifference !== 0) {
+      return levelDifference;
     }
 
-    return 'Monitoring is active with a scheduled follow-up date.';
+    return getConditionSeverityRank_(a.conditionType) - getConditionSeverityRank_(b.conditionType);
+  });
+
+  return candidates[0];
+}
+
+function evaluateConditionHealth_(condition, inputs) {
+  if (!condition || !condition.Condition_Type) {
+    return null;
   }
 
-  if (hasActiveCondition_(inputs, 'Positive Asbestos Result')) {
-    return 'Positive asbestos result requires abatement coordination.';
-  }
+  const conditionType = condition.Condition_Type;
 
-  if (hasActiveCondition_(inputs, 'Abatement Required')) {
-    const abatementCondition = getActiveCondition_(inputs, 'Abatement Required');
-
-    if (isConditionPastFollowUp_(abatementCondition)) {
-      return 'Abatement is required and the follow-up date has passed.';
+  if (conditionType === 'Monitoring Active') {
+    if (!condition.Follow_Up_Date) {
+      return buildHealthDriver_('At Risk', 'Monitoring is active, but no follow-up or next monitoring date is scheduled.', conditionType);
     }
 
-    return 'Abatement is required and should remain operationally visible.';
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Monitoring is active and the scheduled follow-up date has passed.', conditionType);
+    }
+
+    return buildHealthDriver_('Healthy', 'Monitoring is active with a scheduled follow-up date.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Carrier Revision Requested')) {
-    return 'Carrier revision has been requested and requires action.';
+  if (conditionType === 'Positive Asbestos Result') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Positive asbestos result requires abatement coordination and the follow-up date has passed.', conditionType);
+    }
+
+    return buildHealthDriver_('Attention Soon', 'Positive asbestos result requires abatement coordination.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Revision Active')) {
+  if (conditionType === 'Abatement Required') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Abatement is required and the follow-up date has passed.', conditionType);
+    }
+
+    return buildHealthDriver_('Attention Soon', 'Abatement is required and should remain operationally visible.', conditionType);
+  }
+
+  if (conditionType === 'Carrier Revision Requested') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Carrier revision was requested and the follow-up date has passed.', conditionType);
+    }
+
+    return buildHealthDriver_('Attention Soon', 'Carrier revision has been requested and requires action.', conditionType);
+  }
+
+  if (conditionType === 'Revision Active') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Revision is active and the follow-up date has passed.', conditionType);
+    }
+
     if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
-      return 'Revision is active, but revision momentum appears stale.';
+      return buildHealthDriver_('At Risk', 'Revision is active, but revision momentum appears stale.', conditionType);
     }
 
-    return 'Revision is active with recent activity or acceptable cadence.';
+    return buildHealthDriver_('Healthy', 'Revision is active with recent activity or acceptable cadence.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Supplement Under Review')) {
-    const supplementCondition = getActiveCondition_(inputs, 'Supplement Under Review');
-
-    if (isConditionPastFollowUp_(supplementCondition)) {
-      return 'Supplement is under review and the follow-up date has passed.';
+  if (conditionType === 'Supplement Under Review') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Supplement is under review and the follow-up date has passed.', conditionType);
     }
 
-    return 'Supplement is under review within the expected follow-up window.';
+    if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
+      return buildHealthDriver_('Attention Soon', 'Supplement has been under review long enough to need follow-up soon.', conditionType);
+    }
+
+    return buildHealthDriver_('Healthy', 'Supplement is under review within the expected follow-up window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Waiting on Payment')) {
-    const paymentCondition = getActiveCondition_(inputs, 'Waiting on Payment');
-    const daysOpen = daysSince_(paymentCondition.Opened_At);
+  if (conditionType === 'Waiting on Payment') {
+    const daysOpen = daysSince_(condition.Opened_At);
 
-    if (isConditionPastFollowUp_(paymentCondition)) {
-      return 'Payment is still outstanding and the follow-up date has passed.';
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Payment is still outstanding and the follow-up date has passed.', conditionType);
     }
 
     if (daysOpen >= HEALTH_CONFIG.paymentAgingDays) {
-      return 'Payment has been outstanding long enough to need follow-up soon.';
+      return buildHealthDriver_('Attention Soon', 'Payment has been outstanding long enough to need follow-up soon.', conditionType);
     }
 
-    return 'Waiting on payment within the expected payment window.';
+    return buildHealthDriver_('Healthy', 'Waiting on payment within the expected payment window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Asbestos Testing Pending')) {
-    const asbestosTestingCondition = getActiveCondition_(inputs, 'Asbestos Testing Pending');
-
-    if (isConditionPastFollowUp_(asbestosTestingCondition)) {
-      return 'Asbestos testing is pending and the follow-up date has passed.';
+  if (conditionType === 'Asbestos Testing Pending') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Asbestos testing is pending and the follow-up date has passed.', conditionType);
     }
 
-    return 'Asbestos testing is pending within the expected follow-up window.';
+    if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
+      return buildHealthDriver_('Attention Soon', 'Asbestos testing has been pending long enough to need follow-up soon.', conditionType);
+    }
+
+    return buildHealthDriver_('Healthy', 'Asbestos testing is pending within the expected follow-up window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Waiting on Lab Results')) {
-    const labCondition = getActiveCondition_(inputs, 'Waiting on Lab Results');
-
-    if (isConditionPastFollowUp_(labCondition)) {
-      return 'Lab results are still pending and the follow-up date has passed.';
+  if (conditionType === 'Waiting on Lab Results') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Lab results are still pending and the follow-up date has passed.', conditionType);
     }
 
-    if (daysSince_(labCondition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Lab results have been pending long enough to need follow-up soon.';
+    if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.coverageFollowupDays) {
+      return buildHealthDriver_('Attention Soon', 'Lab results have been pending long enough to need follow-up soon.', conditionType);
     }
 
-    return 'Waiting on lab results within the expected follow-up window.';
+    return buildHealthDriver_('Healthy', 'Waiting on lab results within the expected follow-up window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Coverage Pending')) {
-    const coverageCondition = getActiveCondition_(inputs, 'Coverage Pending');
-    const daysOpen = daysSince_(coverageCondition.Opened_At);
+  if (conditionType === 'Coverage Pending') {
+    const daysOpen = daysSince_(condition.Opened_At);
 
-    if (isConditionPastFollowUp_(coverageCondition)) {
-      return 'Coverage is pending and the follow-up date has passed.';
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Coverage is pending and the follow-up date has passed.', conditionType);
     }
 
     if (daysOpen >= HEALTH_CONFIG.staleAtRiskDays) {
-      return 'Coverage has been pending beyond the At Risk threshold.';
+      return buildHealthDriver_('At Risk', 'Coverage has been pending beyond the At Risk threshold.', conditionType);
     }
 
     if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Coverage has been pending long enough to need follow-up soon.';
+      return buildHealthDriver_('Attention Soon', 'Coverage has been pending long enough to need follow-up soon.', conditionType);
     }
 
-    return 'Coverage is pending within the expected follow-up window.';
+    return buildHealthDriver_('Healthy', 'Coverage is pending within the expected follow-up window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Estimate Under Review')) {
-    const estimateCondition = getActiveCondition_(inputs, 'Estimate Under Review');
-    const daysOpen = daysSince_(estimateCondition.Opened_At);
+  if (conditionType === 'Estimate Under Review') {
+    const daysOpen = daysSince_(condition.Opened_At);
 
-    if (isConditionPastFollowUp_(estimateCondition)) {
-      return 'Estimate is under review and the follow-up date has passed.';
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Estimate is under review and the follow-up date has passed.', conditionType);
     }
 
     if (daysOpen >= HEALTH_CONFIG.coverageFollowupDays) {
-      return 'Estimate has been under review long enough to need follow-up soon.';
+      return buildHealthDriver_('Attention Soon', 'Estimate has been under review long enough to need follow-up soon.', conditionType);
     }
 
-    return 'Estimate is under review within the expected follow-up window.';
+    return buildHealthDriver_('Healthy', 'Estimate is under review within the expected follow-up window.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Source of Loss Unresolved')) {
-    const sourceCondition = getActiveCondition_(inputs, 'Source of Loss Unresolved');
-
-    if (isConditionPastFollowUp_(sourceCondition)) {
-      return 'Source of loss remains unresolved and the follow-up date has passed.';
+  if (conditionType === 'Source of Loss Unresolved') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Source of loss remains unresolved and the follow-up date has passed.', conditionType);
     }
 
-    return 'Source of loss remains unresolved and needs attention soon.';
+    return buildHealthDriver_('Attention Soon', 'Source of loss remains unresolved and needs attention soon.', conditionType);
   }
 
-  if (hasActiveCondition_(inputs, 'Waiting on Customer Decision')) {
-    const customerCondition = getActiveCondition_(inputs, 'Waiting on Customer Decision');
-
-    if (isConditionPastFollowUp_(customerCondition)) {
-      return 'Waiting on customer decision and the follow-up date has passed.';
+  if (conditionType === 'Waiting on Customer Decision') {
+    if (isConditionPastFollowUp_(condition)) {
+      return buildHealthDriver_('At Risk', 'Waiting on customer decision and the follow-up date has passed.', conditionType);
     }
 
-    return 'Waiting on customer decision within the expected follow-up window.';
+    if (daysSince_(condition.Opened_At) >= HEALTH_CONFIG.staleAtRiskDays) {
+      return buildHealthDriver_('Attention Soon', 'Waiting on customer decision has aged enough to need follow-up soon.', conditionType);
+    }
+
+    return buildHealthDriver_('Healthy', 'Waiting on customer decision within the expected follow-up window.', conditionType);
   }
 
-  return 'No active health-driving condition requires attention.';
+  return null;
+}
+
+function buildHealthDriver_(healthLevel, healthReason, conditionType) {
+  return {
+    healthLevel: healthLevel,
+    healthReason: healthReason,
+    conditionType: conditionType,
+    driver: conditionType
+  };
+}
+
+function getHealthLevelRank_(healthLevel) {
+  const ranks = {
+    'Healthy': 1,
+    'Attention Soon': 2,
+    'At Risk': 3,
+    'Escalated': 4,
+    'Critical': 5
+  };
+
+  return ranks[healthLevel] || 0;
+}
+
+function getConditionSeverityRank_(conditionType) {
+  const ranking = HEALTH_CONFIG.conditionSeverityRanking || [];
+  const index = ranking.indexOf(conditionType);
+
+  if (index === -1) {
+    return 999;
+  }
+
+  return index;
 }
 
 function recordHealthHistoryIfChanged_(claimId, previousHealthLevel, evaluationData, inputs, triggeredBy) {
