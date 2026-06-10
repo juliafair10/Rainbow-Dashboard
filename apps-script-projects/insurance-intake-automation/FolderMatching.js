@@ -202,6 +202,88 @@ function checkOrCreateClaimFolder_(claimData) {
 
     return result;
   }
+
+}
+
+function findExistingClaimFolderForVendor_(claimData, thread) {
+  const result = {
+    success: false,
+    status: 'vendor_claim_folder_not_found',
+    matchedBy: '',
+    folderId: '',
+    folderUrl: '',
+    folderName: '',
+    jobNumber: '',
+    customerName: '',
+    locationOfProperty: '',
+    error: ''
+  };
+
+  try {
+    if (!claimData) {
+      result.status = 'missing_claim_data';
+      result.error = 'Cannot find vendor claim folder without claim data.';
+      return result;
+    }
+
+    const claimNumber = String(claimData.claimNumber || claimData.rainbowJobNumber || '').trim();
+
+    if (claimNumber) {
+      const duplicateResult = claimFolderMapHasDuplicate_(claimData, thread);
+
+      if (duplicateResult && duplicateResult.duplicate && (duplicateResult.existingFolderId || duplicateResult.existingFolderUrl)) {
+        result.success = true;
+        result.status = 'folder_found_by_claim_number';
+        result.matchedBy = 'claim_number';
+        result.folderId = duplicateResult.existingFolderId || extractDriveFolderIdFromUrl_(duplicateResult.existingFolderUrl);
+        result.folderUrl = duplicateResult.existingFolderUrl || (result.folderId ? 'https://drive.google.com/drive/folders/' + result.folderId : '');
+        result.jobNumber = claimNumber;
+        result.customerName = claimData.customerName || claimData.insuredName || '';
+        result.locationOfProperty = claimData.lossAddress || '';
+        return result;
+      }
+
+      const driveClaimNumberResult = findExistingClaimFolderByVendorDriveClaimNumber_(claimData, thread);
+
+      if (driveClaimNumberResult && driveClaimNumberResult.success) {
+        return driveClaimNumberResult;
+      }
+    }
+
+    const locationResult = findExistingClaimFolderByLocationForVendor_(claimData, thread);
+
+    if (locationResult && locationResult.success) {
+      return locationResult;
+    }
+
+    const customerMapFallbackResult = findExistingClaimFolderByVendorCustomerNameFromMap_(claimData, thread);
+
+    if (customerMapFallbackResult && customerMapFallbackResult.success) {
+      return customerMapFallbackResult;
+    }
+
+    const driveFolderResult = findExistingClaimFolderByVendorDriveFolderName_(claimData, thread);
+
+    if (driveFolderResult && driveFolderResult.success) {
+      return driveFolderResult;
+    }
+
+    result.status = 'vendor_claim_folder_not_found';
+    result.error = 'No existing claim folder matched vendor intake. Location status: ' +
+      (locationResult && locationResult.status ? locationResult.status : 'not_checked') + '. ' +
+      (locationResult && locationResult.error ? locationResult.error : '') +
+      ' Customer map fallback status: ' +
+      (customerMapFallbackResult && customerMapFallbackResult.status ? customerMapFallbackResult.status : 'not_checked') + '. ' +
+      (customerMapFallbackResult && customerMapFallbackResult.error ? customerMapFallbackResult.error : '') +
+      ' Drive folder status: ' +
+      (driveFolderResult && driveFolderResult.status ? driveFolderResult.status : 'not_checked') + '. ' +
+      (driveFolderResult && driveFolderResult.error ? driveFolderResult.error : '');
+    return result;
+  } catch (error) {
+    result.status = 'vendor_claim_folder_lookup_exception';
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
 }
 
 function appendClaimFolderMapRow_(claimData, folderResult, thread) {
@@ -502,6 +584,12 @@ function findExistingClaimFolderByLocationForVendor_(claimData, thread) {
     result.matchCount = matches.length;
 
     if (matches.length === 0) {
+      const driveAddressFallbackResult = findExistingClaimFolderByVendorDriveAddress_(candidateAddress, claimData, thread);
+
+      if (driveAddressFallbackResult.success) {
+        return driveAddressFallbackResult;
+      }
+
       const customerFallbackResult = findExistingClaimFolderByVendorCustomerName_(claimData, thread, values, headers);
 
       if (customerFallbackResult.success) {
@@ -516,7 +604,8 @@ function findExistingClaimFolderByLocationForVendor_(claimData, thread) {
 
       result.status = 'location_match_not_found';
       result.error = 'No claim folder map row matched Location of Property: ' + candidateAddress +
-        '. Customer fallback status: ' + customerFallbackResult.status + '. ' + (customerFallbackResult.error || '') +
+        '. Drive address fallback status: ' + driveAddressFallbackResult.status + '. ' + (driveAddressFallbackResult.error || '') +
+        ' Customer fallback status: ' + customerFallbackResult.status + '. ' + (customerFallbackResult.error || '') +
         ' Drive folder fallback status: ' + driveFolderFallbackResult.status + '. ' + (driveFolderFallbackResult.error || '');
       return result;
     }
@@ -550,6 +639,172 @@ function findExistingClaimFolderByLocationForVendor_(claimData, thread) {
     return result;
   } catch (error) {
     result.status = 'location_match_exception';
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
+}
+
+function findExistingClaimFolderByVendorDriveAddress_(candidateAddress, claimData, thread) {
+  const result = {
+    success: false,
+    status: 'drive_folder_address_match_not_found',
+    matchedBy: 'vendor_address_drive_folder',
+    folderId: '',
+    folderUrl: '',
+    folderName: '',
+    jobNumber: '',
+    customerName: '',
+    locationOfProperty: '',
+    candidateAddress: candidateAddress || '',
+    matchCount: 0,
+    error: ''
+  };
+
+  try {
+    const normalizedCandidateAddress = normalizeAddressForMatch_(candidateAddress);
+
+    if (!normalizedCandidateAddress) {
+      result.status = 'missing_address_candidate';
+      result.error = 'No usable address candidate was found for Drive folder fallback.';
+      return result;
+    }
+
+    const rootFolder = DriveApp.getFolderById(CONFIG.claimFolderParentFolderId);
+    const currentYear = String(new Date().getFullYear());
+    const yearFolders = rootFolder.getFoldersByName(currentYear);
+
+    if (!yearFolders.hasNext()) {
+      result.status = 'current_year_folder_missing';
+      result.error = 'Current year folder was not found: ' + currentYear;
+      return result;
+    }
+
+    const yearFolder = yearFolders.next();
+    const folders = yearFolder.getFolders();
+    const matches = [];
+
+    while (folders.hasNext()) {
+      const folder = folders.next();
+      const folderName = folder.getName() || '';
+      const normalizedFolderName = normalizeAddressForMatch_(folderName);
+
+      if (addressLooksLikeMatch_(normalizedCandidateAddress, normalizedFolderName)) {
+        matches.push(folder);
+      }
+    }
+
+    result.matchCount = matches.length;
+
+    if (matches.length !== 1) {
+      result.status = matches.length > 1
+        ? 'drive_folder_address_match_ambiguous'
+        : 'drive_folder_address_match_not_found';
+      result.error = 'Drive folder address fallback found ' + matches.length + ' match(es) for: ' + candidateAddress;
+      return result;
+    }
+
+    const matchedFolder = matches[0];
+    const folderName = matchedFolder.getName() || '';
+    const claimNumberMatch = folderName.match(/([0-9]{7,10})/);
+
+    result.success = true;
+    result.status = 'folder_found_by_drive_folder_address';
+    result.folderId = matchedFolder.getId();
+    result.folderUrl = matchedFolder.getUrl();
+    result.folderName = folderName;
+    result.jobNumber = claimNumberMatch && claimNumberMatch[1] ? claimNumberMatch[1] : '';
+    result.customerName = claimData && (claimData.customerName || claimData.insuredName) ? String(claimData.customerName || claimData.insuredName || '').trim() : '';
+    result.locationOfProperty = candidateAddress || '';
+    return result;
+  } catch (error) {
+    result.status = 'drive_folder_address_match_exception';
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
+}
+
+function findExistingClaimFolderByVendorDriveClaimNumber_(claimData, thread) {
+  const result = {
+    success: false,
+    status: 'drive_folder_claim_number_match_not_found',
+    matchedBy: 'vendor_claim_number_drive_folder',
+    folderId: '',
+    folderUrl: '',
+    folderName: '',
+    jobNumber: '',
+    customerName: '',
+    locationOfProperty: '',
+    candidateClaimNumber: '',
+    matchCount: 0,
+    error: ''
+  };
+
+  try {
+    const candidateClaimNumber = String(claimData && (claimData.claimNumber || claimData.rainbowJobNumber) || '').trim();
+    result.candidateClaimNumber = candidateClaimNumber;
+
+    if (!candidateClaimNumber) {
+      result.status = 'missing_claim_number_candidate';
+      result.error = 'No usable claim number candidate was found in vendor thread.';
+      return result;
+    }
+
+    const normalizedCandidateClaimNumber = candidateClaimNumber.replace(/[^0-9]/g, '');
+
+    if (!normalizedCandidateClaimNumber) {
+      result.status = 'invalid_claim_number_candidate';
+      result.error = 'Claim number candidate could not be normalized.';
+      return result;
+    }
+
+    const rootFolder = DriveApp.getFolderById(CONFIG.claimFolderParentFolderId);
+    const currentYear = String(new Date().getFullYear());
+    const yearFolders = rootFolder.getFoldersByName(currentYear);
+
+    if (!yearFolders.hasNext()) {
+      result.status = 'current_year_folder_missing';
+      result.error = 'Current year folder was not found: ' + currentYear;
+      return result;
+    }
+
+    const yearFolder = yearFolders.next();
+    const folders = yearFolder.getFolders();
+    const matches = [];
+
+    while (folders.hasNext()) {
+      const folder = folders.next();
+      const folderName = folder.getName() || '';
+      const normalizedFolderNameDigits = String(folderName || '').replace(/[^0-9]/g, '');
+
+      if (normalizedFolderNameDigits.indexOf(normalizedCandidateClaimNumber) !== -1) {
+        matches.push(folder);
+      }
+    }
+
+    result.matchCount = matches.length;
+
+    if (matches.length !== 1) {
+      result.status = matches.length > 1
+        ? 'drive_folder_claim_number_match_ambiguous'
+        : 'drive_folder_claim_number_match_not_found';
+      result.error = 'Drive folder claim-number fallback found ' + matches.length + ' match(es) for: ' + candidateClaimNumber;
+      return result;
+    }
+
+    const matchedFolder = matches[0];
+    const folderName = matchedFolder.getName() || '';
+
+    result.success = true;
+    result.status = 'folder_found_by_drive_folder_claim_number';
+    result.folderId = matchedFolder.getId();
+    result.folderUrl = matchedFolder.getUrl();
+    result.folderName = folderName;
+    result.jobNumber = candidateClaimNumber;
+    result.customerName = claimData && (claimData.customerName || claimData.insuredName) ? String(claimData.customerName || claimData.insuredName || '').trim() : '';
+    result.locationOfProperty = claimData && claimData.lossAddress ? claimData.lossAddress : '';
+    return result;
+  } catch (error) {
+    result.status = 'drive_folder_claim_number_match_exception';
     result.error = error && error.message ? error.message : error.toString();
     return result;
   }
@@ -859,8 +1114,18 @@ function extractVendorCustomerCandidate_(claimData, thread) {
 }
 
 function normalizeCustomerNameForMatch_(name) {
-  return String(name || '')
+  let cleanedName = String(name || '')
     .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const commaNameMatch = cleanedName.match(/^([^,]+),\s*(.+)$/);
+
+  if (commaNameMatch && commaNameMatch[1] && commaNameMatch[2]) {
+    cleanedName = commaNameMatch[2] + ' ' + commaNameMatch[1];
+  }
+
+  return cleanedName
     .replace(/[^a-z]/g, '')
     .trim();
 }
@@ -949,21 +1214,53 @@ function extractVendorLocationCandidate_(claimData, thread) {
 }
 
 function normalizeAddressForMatch_(address) {
+  const streetSuffixMap = {
+    street: 'st',
+    st: 'st',
+    avenue: 'ave',
+    ave: 'ave',
+    road: 'rd',
+    rd: 'rd',
+    court: 'ct',
+    ct: 'ct',
+    drive: 'dr',
+    dr: 'dr',
+    lane: 'ln',
+    ln: 'ln',
+    place: 'pl',
+    pl: 'pl',
+    circle: 'cir',
+    cir: 'cir',
+    trail: 'trl',
+    trl: 'trl',
+    trace: 'tr',
+    tr: 'tr',
+    parkway: 'pkwy',
+    pkwy: 'pkwy',
+    terrace: 'ter',
+    ter: 'ter',
+    way: 'way',
+    boulevard: 'blvd',
+    blvd: 'blvd',
+    highway: 'hwy',
+    hwy: 'hwy',
+    place: 'pl',
+    plaza: 'plz',
+    plz: 'plz'
+  };
+
   return String(address || '')
     .toLowerCase()
-    .replace(/\b(street)\b/g, 'st')
-    .replace(/\b(avenue)\b/g, 'ave')
-    .replace(/\b(road)\b/g, 'rd')
-    .replace(/\b(court)\b/g, 'ct')
-    .replace(/\b(drive)\b/g, 'dr')
-    .replace(/\b(lane)\b/g, 'ln')
-    .replace(/\b(place)\b/g, 'pl')
-    .replace(/\b(circle)\b/g, 'cir')
-    .replace(/\b(trail)\b/g, 'trl')
-    .replace(/\b(parkway)\b/g, 'pkwy')
-    .replace(/\b(georgia)\b/g, 'ga')
     .replace(/\b(usa|united states)\b/g, '')
-    .replace(/[^a-z0-9]/g, '')
+    .replace(/\b(georgia)\b/g, 'ga')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map(function(part) {
+      return streetSuffixMap[part] || part;
+    })
+    .join('')
     .trim();
 }
 
@@ -1007,3 +1304,62 @@ function getClaimFolderMapHeaders_() {
   ];
 }
 
+
+function findExistingClaimFolderByVendorCustomerNameFromMap_(claimData, thread) {
+  const result = {
+    success: false,
+    status: 'customer_name_map_lookup_not_started',
+    matchedBy: 'vendor_customer_name',
+    folderId: '',
+    folderUrl: '',
+    folderName: '',
+    jobNumber: '',
+    customerName: '',
+    locationOfProperty: '',
+    candidateCustomerName: '',
+    matchCount: 0,
+    error: ''
+  };
+
+  try {
+    const candidateCustomerName = extractVendorCustomerCandidate_(claimData, thread);
+    result.candidateCustomerName = candidateCustomerName;
+
+    if (!candidateCustomerName) {
+      result.status = 'missing_customer_candidate';
+      result.error = 'No usable customer name candidate was found in vendor thread.';
+      return result;
+    }
+
+    const ss = SpreadsheetApp.openById(CONFIG.claimFolderMapSpreadsheetId);
+    const sheet = ss.getSheetByName(CONFIG.claimFolderMapSheetName);
+
+    if (!sheet) {
+      result.status = 'claim_folder_map_missing';
+      result.error = 'Claim Folder Map sheet was not found.';
+      return result;
+    }
+
+    ensureClaimFolderMapHeader_(sheet);
+
+    const lastRow = sheet.getLastRow();
+    const lastColumn = sheet.getLastColumn();
+
+    if (lastRow < 2 || lastColumn < 1) {
+      result.status = 'claim_folder_map_empty';
+      result.error = 'Claim Folder Map has no data rows.';
+      return result;
+    }
+
+    const values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
+    const headers = values[0].map(function(header) {
+      return String(header || '').trim().toLowerCase();
+    });
+
+    return findExistingClaimFolderByVendorCustomerName_(claimData, thread, values, headers);
+  } catch (error) {
+    result.status = 'customer_name_map_lookup_exception';
+    result.error = error && error.message ? error.message : error.toString();
+    return result;
+  }
+}

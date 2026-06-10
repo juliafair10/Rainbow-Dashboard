@@ -1,0 +1,1901 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rainbow EOJ Intake Mockup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --panel-soft: #f9faf6;
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #dfe4dc;
+      --brand: #227c70;
+      --brand-dark: #175d54;
+      --blue: #4267b2;
+      --green: #2f855a;
+      --gold: #b7791f;
+      --red: #c2413b;
+      --purple: #6b46c1;
+      --shadow: 0 18px 42px rgba(31, 41, 51, 0.08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(180deg, rgba(34, 124, 112, 0.08), transparent 240px),
+        var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.4;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app-shell {
+      width: min(100%, 980px);
+      margin: 0 auto;
+      padding: 18px 14px 36px;
+    }
+
+    .app-header {
+      display: grid;
+      gap: 14px;
+      padding: 2px 0 14px;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 10px;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      box-shadow: 0 8px 22px rgba(31, 41, 51, 0.12);
+      display: grid;
+      grid-template-rows: repeat(5, 1fr);
+      flex: 0 0 auto;
+    }
+
+    .brand-mark span:nth-child(1) { background: #d83a3a; }
+    .brand-mark span:nth-child(2) { background: #edb020; }
+    .brand-mark span:nth-child(3) { background: #39a96b; }
+    .brand-mark span:nth-child(4) { background: #2f80ed; }
+    .brand-mark span:nth-child(5) { background: #6b46c1; }
+
+    .brand-text {
+      min-width: 0;
+    }
+
+    .brand-text h1 {
+      margin: 0;
+      font-size: 1.16rem;
+      line-height: 1.12;
+      font-weight: 760;
+    }
+
+    .brand-text p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .status-pill {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid rgba(34, 124, 112, 0.18);
+      border-radius: 999px;
+      background: rgba(34, 124, 112, 0.08);
+      color: var(--brand-dark);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .view-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.7);
+      box-shadow: 0 10px 26px rgba(31, 41, 51, 0.06);
+    }
+
+    .view-tab {
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      padding: 11px 10px;
+      font-weight: 720;
+    }
+
+    .view-tab.active {
+      background: var(--ink);
+      color: #fff;
+      box-shadow: 0 8px 18px rgba(31, 41, 51, 0.16);
+    }
+
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: grid;
+      gap: 14px;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .section.soft {
+      background: var(--panel-soft);
+      box-shadow: none;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 13px;
+    }
+
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.2;
+      font-weight: 760;
+    }
+
+    h2 {
+      font-size: 1rem;
+    }
+
+    h3 {
+      font-size: 0.93rem;
+    }
+
+    .helper {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .two-col {
+      display: grid;
+      gap: 12px;
+    }
+
+    label.field {
+      display: grid;
+      gap: 6px;
+      color: var(--ink);
+      font-weight: 690;
+      font-size: 0.88rem;
+    }
+
+    .field span {
+      display: inline-flex;
+      color: var(--ink);
+    }
+
+    input[type="text"],
+    input[type="date"],
+    input[type="time"],
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid #cfd7ce;
+      background: #fff;
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 11px 12px;
+      outline: none;
+      min-height: 44px;
+    }
+
+    textarea {
+      min-height: 112px;
+      resize: vertical;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(34, 124, 112, 0.14);
+    }
+
+    .search-results,
+    .recent-list,
+    .history-stack {
+      display: grid;
+      gap: 9px;
+    }
+
+    .job-result,
+    .selected-job,
+    .history-card,
+    .equipment-row,
+    .outstanding-item,
+    .health-note {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .job-result {
+      display: grid;
+      gap: 4px;
+      width: 100%;
+      text-align: left;
+      padding: 12px;
+    }
+
+    .job-result:hover,
+    .job-result.selected {
+      border-color: var(--brand);
+      background: rgba(34, 124, 112, 0.05);
+    }
+
+    .job-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 760;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .selected-job {
+      padding: 13px;
+      display: grid;
+      gap: 7px;
+      background: linear-gradient(180deg, #ffffff, #f7fbf6);
+    }
+
+    .selected-job strong {
+      font-size: 0.98rem;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid #d8ddd4;
+      color: #45515f;
+      background: #fff;
+      padding: 5px 9px;
+      font-size: 0.78rem;
+      font-weight: 680;
+    }
+
+    .chip.green {
+      border-color: rgba(47, 133, 90, 0.24);
+      color: var(--green);
+      background: rgba(47, 133, 90, 0.08);
+    }
+
+    .chip.gold {
+      border-color: rgba(183, 121, 31, 0.28);
+      color: #8a5b17;
+      background: rgba(183, 121, 31, 0.1);
+    }
+
+    .chip.red {
+      border-color: rgba(194, 65, 59, 0.24);
+      color: var(--red);
+      background: rgba(194, 65, 59, 0.08);
+    }
+
+    .option-grid {
+      display: grid;
+      gap: 9px;
+    }
+
+    .option-grid.compact {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .radio-card,
+    .check-card {
+      position: relative;
+      display: grid;
+      gap: 3px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 11px 12px 11px 38px;
+      min-height: 48px;
+    }
+
+    .radio-card input,
+    .check-card input {
+      position: absolute;
+      left: 12px;
+      top: 14px;
+      accent-color: var(--brand);
+    }
+
+    .radio-card:has(input:checked),
+    .check-card:has(input:checked) {
+      border-color: var(--brand);
+      background: rgba(34, 124, 112, 0.06);
+    }
+
+    .option-title {
+      font-weight: 720;
+      font-size: 0.91rem;
+    }
+
+    .option-helper {
+      color: var(--muted);
+      font-size: 0.79rem;
+    }
+
+    .subsection {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .conditional {
+      display: none;
+    }
+
+    .conditional.active {
+      display: grid;
+      gap: 12px;
+    }
+
+    .split-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .health-note {
+      display: none;
+      gap: 7px;
+      padding: 10px 11px;
+      border-color: rgba(183, 121, 31, 0.28);
+      background: rgba(183, 121, 31, 0.09);
+      color: #6c4a1a;
+      font-size: 0.84rem;
+    }
+
+    .health-note.active {
+      display: grid;
+    }
+
+    .follow-up-fields {
+      border: 1px solid rgba(183, 121, 31, 0.28);
+      border-radius: 8px;
+      background: rgba(183, 121, 31, 0.07);
+      padding: 12px;
+    }
+
+    .required-marker {
+      color: var(--red);
+      font-weight: 760;
+    }
+
+    .outstanding-item {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .outstanding-title {
+      font-weight: 750;
+    }
+
+    .mini-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .mini-option {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 38px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: #344054;
+      font-size: 0.84rem;
+      font-weight: 650;
+    }
+
+    .mini-option input {
+      accent-color: var(--brand);
+    }
+
+    .quantity-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .quantity-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 52px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .quantity-name {
+      font-weight: 730;
+      min-width: 0;
+    }
+
+    .stepper {
+      display: grid;
+      grid-template-columns: 36px 42px 36px;
+      align-items: center;
+      border: 1px solid #d8ddd4;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      flex: 0 0 auto;
+    }
+
+    .stepper-button {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      background: #f5f7f2;
+      color: var(--ink);
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .stepper-button:active {
+      background: rgba(34, 124, 112, 0.1);
+    }
+
+    .stepper-value {
+      text-align: center;
+      font-weight: 780;
+    }
+
+    .submit-row {
+      position: sticky;
+      bottom: 0;
+      z-index: 4;
+      margin: 0 -14px -36px;
+      padding: 12px 14px 16px;
+      background: linear-gradient(180deg, rgba(246, 247, 244, 0), rgba(246, 247, 244, 0.95) 28%);
+    }
+
+    .submit-button {
+      width: 100%;
+      min-height: 52px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 780;
+      box-shadow: 0 16px 28px rgba(34, 124, 112, 0.22);
+    }
+
+    .submit-button:active {
+      transform: translateY(1px);
+    }
+
+    .lookup-layout {
+      display: grid;
+      gap: 14px;
+    }
+
+    .last-summary {
+      display: grid;
+      gap: 8px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    details.history-card {
+      overflow: hidden;
+    }
+
+    details.history-card summary {
+      display: grid;
+      gap: 3px;
+      padding: 12px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    details.history-card summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .history-body {
+      border-top: 1px solid var(--line);
+      padding: 12px;
+      color: #344054;
+      font-size: 0.9rem;
+    }
+
+    .equipment-row {
+      padding: 11px 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .equipment-row span {
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .toast {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      z-index: 10;
+      display: none;
+      border-radius: 8px;
+      background: var(--ink);
+      color: #fff;
+      padding: 12px 14px;
+      box-shadow: 0 20px 45px rgba(31, 41, 51, 0.22);
+      font-weight: 700;
+    }
+
+    .toast.active {
+      display: block;
+    }
+
+    @media (min-width: 720px) {
+      .app-shell {
+        padding: 30px 22px 54px;
+      }
+
+      .app-header {
+        grid-template-columns: 1fr auto;
+        align-items: center;
+      }
+
+      .view-tabs {
+        width: 360px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+      }
+
+      .view.active {
+        gap: 18px;
+      }
+
+      .section {
+        padding: 20px;
+      }
+
+      .two-col {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .option-grid.visit-type {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .option-grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .option-grid.four {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .option-grid.equipment {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .lookup-layout {
+        grid-template-columns: 0.9fr 1.1fr;
+        align-items: start;
+      }
+
+      .submit-row {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        position: static;
+      }
+
+      .submit-button {
+        width: auto;
+        min-width: 220px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand-row">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="brand-text">
+            <h1>Rainbow EOJ Intake</h1>
+            <p>End of Job reporting for field visits</p>
+          </div>
+        </div>
+        <div class="status-pill"><span class="dot"></span>Mockup mode</div>
+      </div>
+
+      <nav class="view-tabs" aria-label="EOJ views">
+        <button class="view-tab active" type="button" data-view-button="submit">Submit Report</button>
+        <button class="view-tab" type="button" data-view-button="lookup">Job Lookup</button>
+      </nav>
+    </header>
+
+    <section class="view active" id="submitView">
+      <section class="section" id="jobDetailsSection">
+        <div class="section-header">
+          <div>
+            <h2>Job Details</h2>
+            <p class="helper">Start with the job record for this visit.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>Technician</span>
+            <select id="technicianSelect">
+              <option>Alex Rivera</option>
+              <option>Casey Martin</option>
+              <option>Jordan Lee</option>
+              <option>Morgan Smith</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Search for a job</span>
+            <input id="jobSearch" type="text" placeholder="Search by customer, claim #, or address" autocomplete="off">
+          </label>
+          <div class="search-results" id="jobResults"></div>
+          <div id="selectedJobCard"></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <h2>Visit Type</h2>
+            <p class="helper">Choose the visit that best matches the field activity.</p>
+          </div>
+        </div>
+        <div class="option-grid visit-type" id="visitTypeOptions">
+          <label class="radio-card">
+            <input type="radio" name="visitType" value="inspection" checked>
+            <span class="option-title">Inspection</span>
+            <span class="option-helper">Initial assessment or first visit</span>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="visitType" value="demo">
+            <span class="option-title">Demo</span>
+            <span class="option-helper">Demo-only or continued demo visit</span>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="visitType" value="monitoring">
+            <span class="option-title">Monitoring</span>
+            <span class="option-helper">Drying or equipment check</span>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="visitType" value="final">
+            <span class="option-title">Final Completion</span>
+            <span class="option-helper">Field work completed</span>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="visitType" value="general">
+            <span class="option-title">General Visit / Update</span>
+            <span class="option-helper">Other operational field activity</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <h2>Visit Summary</h2>
+            <p class="helper" id="summaryHelper">Describe what was found during the visit.</p>
+          </div>
+        </div>
+        <textarea id="visitSummary" placeholder="Write the operational summary for this visit."></textarea>
+      </section>
+
+      <section class="section conditional active" data-visit-section="inspection">
+        <div class="section-header">
+          <div>
+            <h2>Inspection Details</h2>
+          </div>
+        </div>
+
+        <div class="subsection" style="margin-top:0; padding-top:0; border-top:0;">
+          <h3>X1 Sketch Uploaded <span class="required-marker">*</span></h3>
+          <div class="option-grid compact">
+            <label class="radio-card">
+              <input type="radio" name="x1SketchUploaded" value="yes" required>
+              <span class="option-title">Yes</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="x1SketchUploaded" value="no">
+              <span class="option-title">No</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <div class="split-title">
+            <h3>Asbestos</h3>
+          </div>
+          <p class="helper">Is an asbestos test needed?</p>
+          <div class="option-grid compact">
+            <label class="radio-card">
+              <input type="radio" name="asbestosNeeded" value="no" checked>
+              <span class="option-title">No</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="asbestosNeeded" value="yes">
+              <span class="option-title">Yes</span>
+            </label>
+          </div>
+
+          <div class="conditional" id="asbestosHandlingBlock">
+            <p class="helper">Who is handling testing?</p>
+            <div class="option-grid compact">
+              <label class="radio-card">
+                <input type="radio" name="asbestosHandling" value="ours" checked>
+                <span class="option-title">We are handling it</span>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="asbestosHandling" value="branch">
+                <span class="option-title">Send to Branch</span>
+              </label>
+            </div>
+
+            <div class="conditional active" id="samplesTakenBlock">
+              <p class="helper">Were samples taken today?</p>
+              <div class="option-grid compact">
+                <label class="radio-card">
+                  <input type="radio" name="samplesTaken" value="yes" checked>
+                  <span class="option-title">Yes</span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="samplesTaken" value="followup">
+                  <span class="option-title">No &mdash; follow-up needed</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="conditional follow-up-fields" id="samplesFollowUp">
+              <label class="field">
+                <span>What does the office need to do? <span class="required-marker">*</span></span>
+                <textarea required placeholder="Describe the asbestos follow-up needed."></textarea>
+              </label>
+              <div class="two-col">
+                <label class="field">
+                  <span>Assign To</span>
+                  <select>
+                    <option>Julia</option>
+                    <option>Clarence</option>
+                    <option>Marcus</option>
+                    <option>Devon</option>
+                    <option>Ray</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Due Date</span>
+                  <input type="date" required>
+                </label>
+              </div>
+            </div>
+
+            <div class="conditional follow-up-fields" id="branchFollowUp">
+              <label class="field">
+                <span>What needs to be sent to Branch? <span class="required-marker">*</span></span>
+                <textarea required placeholder="Describe what Branch needs."></textarea>
+              </label>
+              <div class="two-col">
+                <label class="field">
+                  <span>Assign To</span>
+                  <select>
+                    <option>Julia</option>
+                    <option>Clarence</option>
+                    <option>Marcus</option>
+                    <option>Devon</option>
+                    <option>Ray</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Due Date</span>
+                  <input type="date" required>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Work Completed Today</h3>
+          <div class="option-grid equipment">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Inspection Only</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Demo started</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment set</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Drying started</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other work completed</span></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="section conditional" data-visit-section="monitoring">
+        <div class="section-header">
+          <div>
+            <h2>Monitoring Details</h2>
+          </div>
+        </div>
+
+        <div class="subsection" style="margin-top:0; padding-top:0; border-top:0;">
+          <h3>Monitoring Status</h3>
+          <p class="helper">Is additional monitoring needed?</p>
+          <div class="option-grid three">
+            <label class="radio-card"><input type="radio" name="monitoringStatus" checked><span class="option-title">Yes</span></label>
+            <label class="radio-card"><input type="radio" name="monitoringStatus"><span class="option-title">No - drying complete</span></label>
+            <label class="radio-card"><input type="radio" name="monitoringStatus"><span class="option-title">Unsure / revisit recommended</span></label>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Work Completed Today</h3>
+          <div class="option-grid equipment">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Additional demo completed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment added</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment removed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Drying continued</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other work completed</span></label>
+          </div>
+        </div>
+
+        <div class="subsection" data-outstanding-wrapper>
+          <h3>Outstanding Operational Items</h3>
+          <div class="form-grid" data-outstanding-items></div>
+        </div>
+      </section>
+
+      <section class="section conditional" data-visit-section="demo">
+        <div class="section-header">
+          <div>
+            <h2>Demo Details</h2>
+          </div>
+        </div>
+
+        <div class="subsection" style="margin-top:0; padding-top:0; border-top:0;">
+          <h3>Work Completed Today</h3>
+          <div class="option-grid equipment">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Demo continued</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Demo completed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment set</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Drying started</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Photos uploaded</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other work completed</span></label>
+          </div>
+        </div>
+
+        <div class="subsection" data-outstanding-wrapper>
+          <h3>Outstanding Operational Items</h3>
+          <div class="form-grid" data-outstanding-items></div>
+        </div>
+      </section>
+
+      <section class="section conditional" data-visit-section="final">
+        <div class="section-header">
+          <div>
+            <h2>Final Completion Details</h2>
+          </div>
+        </div>
+
+        <div class="subsection" style="margin-top:0; padding-top:0; border-top:0;">
+          <h3>Completion Status</h3>
+          <p class="helper">Is the job fully complete?</p>
+          <div class="option-grid compact">
+            <label class="radio-card"><input type="radio" name="completionStatus" value="yes" checked><span class="option-title">Yes &mdash; work completed</span></label>
+            <label class="radio-card"><input type="radio" name="completionStatus" value="no"><span class="option-title">No &mdash; additional work required</span></label>
+          </div>
+          <div class="conditional" id="additionalWorkReason">
+            <label class="field">
+              <span>Explain why additional work is needed <span class="required-marker">*</span></span>
+              <p class="helper">Describe what additional work is still needed.</p>
+              <textarea required></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Work Completed Today</h3>
+          <div class="option-grid equipment">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment removed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Final photos uploaded</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Final cleanup completed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">COS signed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other work completed</span></label>
+          </div>
+        </div>
+
+        <div class="subsection">
+          <h3>Final System Updates</h3>
+          <div class="form-grid">
+            <label class="field">
+              <span>Completion ClaimX Video</span>
+              <select id="completionClaimXStatus">
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+                <option value="office">Needs office to upload</option>
+                <option value="not_completed">Not completed</option>
+                <option value="na">N/A</option>
+              </select>
+            </label>
+            <div class="conditional" id="completionClaimXWhere">
+              <p class="helper">Where?</p>
+              <div class="option-grid compact">
+                <label class="check-card"><input type="checkbox" name="completionClaimXWhere" value="companycam"><span class="option-title">CompanyCam</span></label>
+                <label class="check-card"><input type="checkbox" name="completionClaimXWhere" value="claimx"><span class="option-title">ClaimX Link</span></label>
+              </div>
+            </div>
+          </div>
+          <div class="health-note" id="completionClaimXHealth">This will show as an office-facing completion item in Rainbow.</div>
+          <div class="conditional follow-up-fields" id="completionClaimXFollowUp">
+            <label class="field">
+              <span>What does the office need to do? <span class="required-marker">*</span></span>
+              <textarea required placeholder="Describe the Completion ClaimX follow-up."></textarea>
+            </label>
+            <div class="two-col">
+              <label class="field">
+                <span>Assign To</span>
+                <select>
+                  <option>Julia</option>
+                  <option>Clarence</option>
+                  <option>Marcus</option>
+                  <option>Devon</option>
+                  <option>Ray</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Due Date</span>
+                <input type="date" required>
+              </label>
+            </div>
+          </div>
+          <label class="field">
+            <span>COS</span>
+            <select id="cosStatus">
+              <option>Signed</option>
+              <option>Needs office follow-up</option>
+              <option>Not signed yet</option>
+              <option>N/A</option>
+            </select>
+          </label>
+          <div class="health-note" id="cosHealth">This will show as an office-facing completion item in Rainbow.</div>
+          <div class="conditional follow-up-fields" id="cosFollowUp">
+            <label class="field">
+              <span>What does the office need to do? <span class="required-marker">*</span></span>
+              <textarea required placeholder="Describe the COS follow-up."></textarea>
+            </label>
+            <div class="two-col">
+              <label class="field">
+                <span>Assign To</span>
+                <select>
+                  <option>Julia</option>
+                  <option>Clarence</option>
+                  <option>Marcus</option>
+                  <option>Devon</option>
+                  <option>Ray</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Due Date</span>
+                <input type="date" required>
+              </label>
+            </div>
+          </div>
+          <label class="field">
+            <span>MICA</span>
+            <select id="finalMicaStatus">
+              <option>Updated</option>
+              <option>Waiting until...</option>
+            </select>
+          </label>
+          <div class="two-col conditional" id="finalMicaWhen">
+            <label class="field">
+              <span>Date</span>
+              <input type="date">
+            </label>
+            <label class="field">
+              <span>Time</span>
+              <input type="time">
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="section conditional" data-visit-section="general">
+        <div class="section-header">
+          <div>
+            <h2>General Visit / Update</h2>
+          </div>
+        </div>
+        <div class="subsection" style="margin-top:0; padding-top:0; border-top:0;">
+          <h3>Work Completed Today</h3>
+          <div class="option-grid equipment">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment delivered</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Equipment removed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Additional work completed</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Photos uploaded</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other work completed</span></label>
+          </div>
+        </div>
+        <div class="subsection" data-outstanding-wrapper>
+          <h3>Outstanding Operational Items</h3>
+          <div class="form-grid" data-outstanding-items></div>
+        </div>
+      </section>
+
+      <section class="section" id="waitingOnSection">
+        <div class="section-header">
+          <div>
+            <h2>Waiting On</h2>
+            <p class="helper">Operational holding states or blockers.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="option-grid equipment" id="waitingOnOptions">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Coverage approval</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Pack-out</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Asbestos results</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Customer decision</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Carrier response</span></label>
+            <label class="check-card"><input type="checkbox"><span class="option-title">Other</span></label>
+          </div>
+          <div class="conditional follow-up-fields" id="waitingOnFollowUp">
+            <label class="field">
+              <span>What does the office need to do? <span class="required-marker">*</span></span>
+              <textarea required placeholder="Describe the follow-up for this holding item."></textarea>
+            </label>
+            <div class="two-col">
+              <label class="field">
+                <span>Assign To</span>
+                <select>
+                  <option>Julia</option>
+                  <option>Clarence</option>
+                  <option>Marcus</option>
+                  <option>Devon</option>
+                  <option>Ray</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Due Date</span>
+                <input type="date" required>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <h2>Equipment Used During This Visit</h2>
+            <p class="helper" id="equipmentHelper">Optional quick selections.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="quantity-list">
+            <div class="quantity-row" data-equipment="Air Movers">
+              <span class="quantity-name">Air Movers</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+            <div class="quantity-row" data-equipment="Dehumidifiers">
+              <span class="quantity-name">Dehumidifiers</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+            <div class="quantity-row" data-equipment="HEPA">
+              <span class="quantity-name">HEPA</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+            <div class="quantity-row" data-equipment="Fans">
+              <span class="quantity-name">Fans</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+            <div class="quantity-row" data-equipment="Containment">
+              <span class="quantity-name">Containment</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+            <div class="quantity-row" data-equipment="Other">
+              <span class="quantity-name">Other</span>
+              <div class="stepper">
+                <button class="stepper-button" type="button" data-step="-1">-</button>
+                <span class="stepper-value">0</span>
+                <button class="stepper-button" type="button" data-step="1">+</button>
+              </div>
+            </div>
+          </div>
+          <label class="field">
+            <span>Equipment Notes</span>
+            <textarea id="equipmentNotes" placeholder="Equipment details for this visit."></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section class="section" id="systemUpdatesSection">
+        <div class="section-header">
+          <div>
+            <h2>System Updates</h2>
+            <p class="helper">Operational system and workflow states.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-grid" id="inspectionSystemFields">
+            <label class="check-card"><input type="checkbox"><span class="option-title">Photos uploaded</span></label>
+
+            <label class="field">
+              <span>ESA</span>
+              <select id="esaStatus">
+                <option>Signed &amp; uploaded</option>
+                <option>Needs office to send</option>
+                <option>N/A (inspection only)</option>
+              </select>
+            </label>
+            <div class="health-note" id="esaHealth">This unresolved ESA can roll forward as an operational item.</div>
+            <div class="conditional follow-up-fields" id="esaFollowUp">
+              <label class="field">
+                <span>What does the office need to do? <span class="required-marker">*</span></span>
+                <textarea required placeholder="Describe the ESA follow-up."></textarea>
+              </label>
+              <div class="two-col">
+                <label class="field">
+                  <span>Assign To</span>
+                  <select>
+                    <option>Julia</option>
+                    <option>Clarence</option>
+                    <option>Marcus</option>
+                    <option>Devon</option>
+                    <option>Ray</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Due Date</span>
+                  <input type="date" required>
+                </label>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Initial ClaimX Video</span>
+              <select id="initialClaimXStatus">
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+                <option value="office">Needs office to upload</option>
+                <option value="not_completed">Not completed</option>
+                <option value="na">N/A</option>
+              </select>
+            </label>
+            <div class="conditional" id="initialClaimXWhere">
+              <p class="helper">Where?</p>
+              <div class="option-grid compact">
+                <label class="check-card"><input type="checkbox" name="initialClaimXWhereValue" value="companycam"><span class="option-title">CompanyCam</span></label>
+                <label class="check-card"><input type="checkbox" name="initialClaimXWhereValue" value="claimx"><span class="option-title">ClaimX Link</span></label>
+              </div>
+            </div>
+            <div class="health-note" id="initialClaimXHealth">This unresolved upload will roll forward as an operational requirement.</div>
+            <div class="conditional follow-up-fields" id="initialClaimXFollowUp">
+              <label class="field">
+                <span>What does the office need to do? <span class="required-marker">*</span></span>
+                <textarea required placeholder="Describe the Initial ClaimX follow-up."></textarea>
+              </label>
+              <div class="two-col">
+                <label class="field">
+                  <span>Assign To</span>
+                  <select>
+                    <option>Julia</option>
+                    <option>Clarence</option>
+                    <option>Marcus</option>
+                    <option>Devon</option>
+                    <option>Ray</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Due Date</span>
+                  <input type="date" required>
+                </label>
+              </div>
+            </div>
+          </div>
+          <label class="field">
+            <span>MICA</span>
+            <select id="micaStatus">
+              <option>Updated</option>
+              <option>Waiting until...</option>
+            </select>
+          </label>
+          <div class="two-col conditional" id="micaWhen">
+            <label class="field">
+              <span>Date</span>
+              <input type="date">
+            </label>
+            <label class="field">
+              <span>Time</span>
+              <input type="time">
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <h2>Next Step</h2>
+            <p class="helper">Future operational continuation.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <p class="helper">Is another action needed?</p>
+            <div class="option-grid three">
+              <label class="radio-card"><input type="radio" name="nextAction" value="none" checked><span class="option-title">No next step needed</span></label>
+              <label class="radio-card"><input type="radio" name="nextAction" value="schedule"><span class="option-title">Schedule another visit</span></label>
+              <label class="radio-card"><input type="radio" name="nextAction" value="office"><span class="option-title">Office follow-up needed</span></label>
+            </div>
+          </div>
+          <div class="conditional" id="nextVisitBlock">
+            <div class="two-col">
+              <label class="field">
+                <span>Next Visit Type</span>
+                <select>
+                  <option>Monitoring</option>
+                  <option>Continue demo</option>
+                  <option>Asbestos testing</option>
+                  <option>Equipment pickup</option>
+                  <option>Additional work</option>
+                  <option>Final walkthrough</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Technician</span>
+                <select>
+                  <option>Alex Rivera</option>
+                  <option>Casey Martin</option>
+                  <option>Jordan Lee</option>
+                  <option>Morgan Smith</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Date</span>
+                <input type="date">
+              </label>
+              <label class="field">
+                <span>Time</span>
+                <input type="time">
+              </label>
+            </div>
+            <label class="field">
+              <span>Next Visit Notes</span>
+              <textarea placeholder="Optional notes for the next scheduled visit."></textarea>
+            </label>
+          </div>
+          <div class="conditional follow-up-fields" id="nextOfficeFollowUp">
+            <label class="field">
+              <span>What does the office need to do? <span class="required-marker">*</span></span>
+              <textarea required></textarea>
+            </label>
+            <div class="two-col">
+              <label class="field">
+                <span>Assign To</span>
+                <select>
+                  <option>Julia</option>
+                  <option>Clarence</option>
+                  <option>Marcus</option>
+                  <option>Devon</option>
+                  <option>Ray</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Due Date</span>
+                <input type="date" required>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <div>
+            <h2>Notes</h2>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>Note for Insurance</span>
+            <p class="helper">Insurance-facing note for XA/carrier documentation.</p>
+            <textarea></textarea>
+          </label>
+          <label class="field">
+            <span>Internal Notes</span>
+            <p class="helper">Lockbox codes, customer preferences, or internal job instructions.</p>
+            <textarea></textarea>
+          </label>
+        </div>
+      </section>
+
+      <div class="submit-row">
+        <button class="submit-button" id="submitMock" type="button">Submit EOJ Report</button>
+      </div>
+    </section>
+
+    <section class="view" id="lookupView">
+      <div class="lookup-layout">
+        <section class="section">
+          <div class="section-header">
+            <div>
+              <h2>Job Lookup</h2>
+              <p class="helper">Search field-relevant job history.</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Search</span>
+              <input id="lookupSearch" type="text" placeholder="Search by claim, customer, or address" autocomplete="off">
+            </label>
+            <div>
+              <div class="split-title" style="margin-bottom:9px;">
+                <h3>Recent Jobs</h3>
+              </div>
+              <div class="recent-list" id="recentJobs"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="lookupDetails"></section>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast">Mock EOJ report captured.</div>
+
+  <script>
+    const jobs = [
+      {
+        id: 'rbw-1042',
+        customer: 'Maria Thompson',
+        claim: 'CLM-48291',
+        address: '214 Pinecrest Drive, Fort Myers, FL',
+        status: 'Monitoring',
+        lastVisit: 'May 18, 2026',
+        lastSummary: 'Drying continued in kitchen and hallway. Two air movers remained in place. Customer prefers afternoon visits.',
+        outstanding: [
+          'ESA still needs to be signed',
+          'Initial ClaimX upload still pending'
+        ],
+        mica: 'MICA waiting until May 20, 2026 at 9:00 AM',
+        equipment: [
+          ['Air movers', '4 running'],
+          ['Dehumidifier', '1 running'],
+          ['Containment', 'Kitchen doorway']
+        ],
+        history: [
+          {
+            title: 'Monitoring',
+            date: 'May 18, 2026',
+            tech: 'Alex Rivera',
+            summary: 'Drying improved. Removed one air mover from hallway. Kitchen remains under drying.'
+          },
+          {
+            title: 'Demo',
+            date: 'May 17, 2026',
+            tech: 'Alex Rivera',
+            summary: 'Demo continued in kitchen. Equipment set and drying started.'
+          },
+          {
+            title: 'Inspection',
+            date: 'May 16, 2026',
+            tech: 'Casey Martin',
+            summary: 'Water loss from supply line. Equipment set and drying started.'
+          }
+        ]
+      },
+      {
+        id: 'rbw-1049',
+        customer: 'Riverside Dental',
+        claim: 'CLM-48612',
+        address: '88 Colonial Boulevard, Cape Coral, FL',
+        status: 'Final Completion',
+        lastVisit: 'May 17, 2026',
+        lastSummary: 'Final cleanup completed. Equipment removed. Completion ClaimX needs office upload.',
+        outstanding: [
+          'Completion ClaimX upload pending',
+          'COS not signed'
+        ],
+        mica: '',
+        equipment: [
+          ['Air movers', 'Removed'],
+          ['HEPA', 'Removed'],
+          ['Fans', 'Removed']
+        ],
+        history: [
+          {
+            title: 'Final Completion',
+            date: 'May 17, 2026',
+            tech: 'Jordan Lee',
+            summary: 'Work completed. Final photos uploaded. COS not signed on site.'
+          },
+          {
+            title: 'Monitoring',
+            date: 'May 15, 2026',
+            tech: 'Morgan Smith',
+            summary: 'Drying complete in affected rooms. Equipment pickup scheduled.'
+          }
+        ]
+      },
+      {
+        id: 'rbw-1051',
+        customer: 'Evan Brooks',
+        claim: 'CLM-48703',
+        address: '402 Palmetto Street, Naples, FL',
+        status: 'Inspection',
+        lastVisit: 'May 19, 2026',
+        lastSummary: 'Initial assessment completed. Asbestos testing needed. No samples taken today.',
+        outstanding: [
+          'Asbestos testing follow-up needed',
+          'Initial ClaimX upload still pending'
+        ],
+        mica: 'MICA waiting until May 19, 2026 at 4:30 PM',
+        equipment: [
+          ['Air movers', '2 set'],
+          ['Dehumidifier', '1 set']
+        ],
+        history: [
+          {
+            title: 'Inspection',
+            date: 'May 19, 2026',
+            tech: 'Casey Martin',
+            summary: 'Bathroom water loss. Demo not started. Customer available after noon tomorrow.'
+          }
+        ]
+      }
+    ];
+
+    const summaryHelpers = {
+      inspection: 'Describe what was found during the visit.',
+      monitoring: 'Describe drying progress, equipment status, or changes since the last visit.',
+      demo: 'Summarize demo progress, rooms completed, and any changes to the job plan.',
+      final: 'Summarize completed work, final job status, and any remaining follow-up items.',
+      general: 'Summarize what happened during this visit.'
+    };
+
+    let selectedJob = jobs[0];
+    let lookupJob = jobs[0];
+
+    const $ = (selector, scope = document) => scope.querySelector(selector);
+    const $$ = (selector, scope = document) => Array.from(scope.querySelectorAll(selector));
+
+    function escapeHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function matchesJob(job, query) {
+      const text = [job.customer, job.claim, job.address, job.status].join(' ').toLowerCase();
+      return text.includes(String(query || '').toLowerCase().trim());
+    }
+
+    function jobButton(job, selectedId) {
+      return `
+        <button class="job-result ${job.id === selectedId ? 'selected' : ''}" type="button" data-job-id="${job.id}">
+          <span class="job-title">
+            <span>${escapeHtml(job.customer)}</span>
+            <span class="chip">${escapeHtml(job.claim)}</span>
+          </span>
+          <span class="meta">${escapeHtml(job.address)}</span>
+          <span class="chips">
+            <span class="chip green">${escapeHtml(job.status)}</span>
+            ${job.outstanding.length ? '<span class="chip gold">' + job.outstanding.length + ' open item(s)</span>' : ''}
+          </span>
+        </button>
+      `;
+    }
+
+    function renderJobResults() {
+      const query = $('#jobSearch').value;
+      const filtered = jobs.filter((job) => matchesJob(job, query));
+      $('#jobResults').innerHTML = filtered.map((job) => jobButton(job, selectedJob.id)).join('');
+      $('#selectedJobCard').innerHTML = `
+        <div class="selected-job">
+          <strong>${escapeHtml(selectedJob.customer)}</strong>
+          <span class="meta">${escapeHtml(selectedJob.claim)} - ${escapeHtml(selectedJob.address)}</span>
+          <div class="chips">
+            <span class="chip green">Selected job</span>
+            ${selectedJob.outstanding.length ? '<span class="chip gold">' + selectedJob.outstanding.length + ' operational item(s)</span>' : ''}
+          </div>
+        </div>
+      `;
+      renderOutstandingItems();
+    }
+
+    function getVisitType() {
+      return $('input[name="visitType"]:checked').value;
+    }
+
+    function renderOutstandingItems() {
+      const items = selectedJob ? selectedJob.outstanding : [];
+      $$('[data-outstanding-wrapper]').forEach((wrapper) => {
+        wrapper.style.display = items.length ? '' : 'none';
+      });
+      $$('[data-outstanding-items]').forEach((container) => {
+        container.innerHTML = items.map((item, index) => `
+          <div class="outstanding-item">
+            <div class="outstanding-title">${escapeHtml(item)}</div>
+            <div class="mini-options">
+              <label class="mini-option"><input type="radio" name="outstanding_${index}_${container.closest('[data-visit-section]').dataset.visitSection}" checked> Still pending</label>
+              <label class="mini-option"><input type="radio" name="outstanding_${index}_${container.closest('[data-visit-section]').dataset.visitSection}"> ${getOutstandingResolvedLabel(item)}</label>
+            </div>
+          </div>
+        `).join('');
+      });
+    }
+
+    function getOutstandingResolvedLabel(item) {
+      if (item.includes('ClaimX')) {
+        return 'Uploaded during this visit';
+      }
+
+      if (item.includes('MICA')) {
+        return 'Updated during this visit';
+      }
+
+      if (item.includes('COS') || item.includes('ESA')) {
+        return 'Signed during this visit';
+      }
+
+      return 'Resolved during this visit';
+    }
+
+    function updateVisitType() {
+      const visitType = getVisitType();
+      $('#summaryHelper').textContent = summaryHelpers[visitType];
+      $('#equipmentHelper').textContent = visitType === 'monitoring'
+        ? 'Note equipment added, removed, or still running.'
+        : 'Optional quick selections.';
+      $$('[data-visit-section]').forEach((section) => {
+        section.classList.toggle('active', section.dataset.visitSection === visitType);
+      });
+      $('#systemUpdatesSection').style.display = visitType === 'final' ? 'none' : '';
+      $('#waitingOnSection').style.display = visitType === 'final' ? 'none' : '';
+      $('#inspectionSystemFields').style.display = visitType === 'inspection' ? 'grid' : 'none';
+      updateSystemHealthNotes();
+    }
+
+    function updateAsbestos() {
+      const needed = $('input[name="asbestosNeeded"]:checked').value;
+      const handling = $('input[name="asbestosHandling"]:checked').value;
+      const samples = $('input[name="samplesTaken"]:checked').value;
+      const isNeeded = needed === 'yes';
+      const isOurs = handling === 'ours';
+
+      $('#asbestosHandlingBlock').classList.toggle('active', isNeeded);
+      $('#samplesTakenBlock').classList.toggle('active', isNeeded && isOurs);
+      $('#samplesFollowUp').classList.toggle('active', isNeeded && isOurs && samples === 'followup');
+      $('#branchFollowUp').classList.toggle('active', isNeeded && handling === 'branch');
+    }
+
+    function updateMica() {
+      $('#micaWhen').classList.toggle('active', $('#micaStatus').value === 'Waiting until...');
+    }
+
+    function updateFinalMica() {
+      $('#finalMicaWhen').classList.toggle('active', $('#finalMicaStatus').value === 'Waiting until...');
+    }
+
+    function updateCompletionStatus() {
+      $('#additionalWorkReason').classList.toggle(
+        'active',
+        $('input[name="completionStatus"]:checked').value === 'no'
+      );
+    }
+
+    function updateNextStep() {
+      const value = $('input[name="nextAction"]:checked').value;
+      $('#nextVisitBlock').classList.toggle('active', value === 'schedule');
+      $('#nextOfficeFollowUp').classList.toggle('active', value === 'office');
+    }
+
+    function updateWaitingOn() {
+      const hasSelection = $$('#waitingOnOptions input[type="checkbox"]').some((input) => input.checked);
+      $('#waitingOnFollowUp').classList.toggle('active', hasSelection);
+    }
+
+    function updateSystemHealthNotes() {
+      const visitType = getVisitType();
+      const initialClaimX = $('#initialClaimXStatus').value;
+      const completionClaimX = $('#completionClaimXStatus').value;
+      const esaStatus = $('#esaStatus').value;
+      const cosStatus = $('#cosStatus').value;
+
+      $('#esaHealth').classList.toggle('active', visitType === 'inspection' && esaStatus === 'Needs office to send');
+      $('#esaFollowUp').classList.toggle('active', visitType === 'inspection' && esaStatus === 'Needs office to send');
+      $('#initialClaimXWhere').classList.toggle('active', visitType === 'inspection' && initialClaimX === 'yes');
+      $('#initialClaimXHealth').classList.toggle(
+        'active',
+        visitType === 'inspection' && (initialClaimX === 'no' || initialClaimX === 'office' || initialClaimX === 'not_completed')
+      );
+      $('#initialClaimXFollowUp').classList.toggle('active', visitType === 'inspection' && initialClaimX === 'office');
+      $('#completionClaimXWhere').classList.toggle('active', completionClaimX === 'yes');
+      $('#completionClaimXHealth').classList.toggle(
+        'active',
+        completionClaimX === 'no' || completionClaimX === 'office' || completionClaimX === 'not_completed'
+      );
+      $('#completionClaimXFollowUp').classList.toggle('active', completionClaimX === 'office');
+      $('#cosHealth').classList.toggle(
+        'active',
+        cosStatus === 'Needs office follow-up' || cosStatus === 'Not signed yet'
+      );
+      $('#cosFollowUp').classList.toggle('active', cosStatus === 'Needs office follow-up');
+    }
+
+    function renderLookupResults() {
+      const query = $('#lookupSearch').value;
+      const filtered = jobs.filter((job) => matchesJob(job, query));
+      $('#recentJobs').innerHTML = filtered.map((job) => jobButton(job, lookupJob.id)).join('');
+      renderLookupDetails();
+    }
+
+    function renderLookupDetails() {
+      const outstanding = lookupJob.outstanding.map((item) => `<span class="chip gold">${escapeHtml(item)}</span>`).join('');
+      const equipment = lookupJob.equipment.map(([name, status]) => `
+        <div class="equipment-row">
+          <strong>${escapeHtml(name)}</strong>
+          <span>${escapeHtml(status)}</span>
+        </div>
+      `).join('');
+      const history = lookupJob.history.map((entry, index) => `
+        <details class="history-card" ${index === 0 ? 'open' : ''}>
+          <summary>
+            <span class="job-title">
+              <span>${escapeHtml(entry.title)}</span>
+              <span class="chip">${escapeHtml(entry.date)}</span>
+            </span>
+            <span class="meta">${escapeHtml(entry.tech)}</span>
+          </summary>
+          <div class="history-body">${escapeHtml(entry.summary)}</div>
+        </details>
+      `).join('');
+
+      $('#lookupDetails').innerHTML = `
+        <div class="section-header">
+          <div>
+            <h2>${escapeHtml(lookupJob.customer)}</h2>
+            <p class="helper">${escapeHtml(lookupJob.claim)} - ${escapeHtml(lookupJob.address)}</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="last-summary">
+            <div class="split-title">
+              <h3>Last EOJ Summary</h3>
+              <span class="chip green">${escapeHtml(lookupJob.lastVisit)}</span>
+            </div>
+            <p class="helper" style="margin:0;">${escapeHtml(lookupJob.lastSummary)}</p>
+          </div>
+          <div>
+            <div class="split-title" style="margin-bottom:9px;">
+              <h3>Outstanding Operational Items</h3>
+            </div>
+            <div class="chips">
+              ${outstanding || '<span class="chip green">No open operational items</span>'}
+              ${lookupJob.mica ? '<span class="chip gold">' + escapeHtml(lookupJob.mica) + '</span>' : ''}
+            </div>
+          </div>
+          <div>
+            <div class="split-title" style="margin-bottom:9px;">
+              <h3>Full EOJ History</h3>
+            </div>
+            <div class="history-stack">${history}</div>
+          </div>
+          <div>
+            <div class="split-title" style="margin-bottom:9px;">
+              <h3>Equipment History</h3>
+            </div>
+            <div class="history-stack">${equipment}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function setView(view) {
+      $$('.view-tab').forEach((button) => button.classList.toggle('active', button.dataset.viewButton === view));
+      $('#submitView').classList.toggle('active', view === 'submit');
+      $('#lookupView').classList.toggle('active', view === 'lookup');
+    }
+
+    document.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-view-button]');
+      if (tab) {
+        setView(tab.dataset.viewButton);
+      }
+
+      const stepperButton = event.target.closest('[data-step]');
+      if (stepperButton) {
+        const row = stepperButton.closest('.quantity-row');
+        const valueElement = $('.stepper-value', row);
+        const nextValue = Math.max(0, Number(valueElement.textContent || 0) + Number(stepperButton.dataset.step));
+        valueElement.textContent = nextValue;
+      }
+
+      const jobButtonElement = event.target.closest('[data-job-id]');
+      if (jobButtonElement) {
+        const job = jobs.find((item) => item.id === jobButtonElement.dataset.jobId);
+        if (jobButtonElement.closest('#jobResults')) {
+          selectedJob = job;
+          renderJobResults();
+        }
+        if (jobButtonElement.closest('#recentJobs')) {
+          lookupJob = job;
+          renderLookupResults();
+        }
+      }
+    });
+
+    $$('input[name="visitType"]').forEach((input) => input.addEventListener('change', updateVisitType));
+    $$('input[name="asbestosNeeded"]').forEach((input) => input.addEventListener('change', updateAsbestos));
+    $$('input[name="asbestosHandling"]').forEach((input) => input.addEventListener('change', updateAsbestos));
+    $$('input[name="samplesTaken"]').forEach((input) => input.addEventListener('change', updateAsbestos));
+    $$('input[name="completionStatus"]').forEach((input) => input.addEventListener('change', updateCompletionStatus));
+    $('#initialClaimXStatus').addEventListener('change', updateSystemHealthNotes);
+    $('#completionClaimXStatus').addEventListener('change', updateSystemHealthNotes);
+    $$('#waitingOnOptions input[type="checkbox"]').forEach((input) => input.addEventListener('change', updateWaitingOn));
+    $$('input[name="nextAction"]').forEach((input) => input.addEventListener('change', updateNextStep));
+    $('#micaStatus').addEventListener('change', updateMica);
+    $('#finalMicaStatus').addEventListener('change', updateFinalMica);
+    $('#esaStatus').addEventListener('change', updateSystemHealthNotes);
+    $('#cosStatus').addEventListener('change', updateSystemHealthNotes);
+    $('#jobSearch').addEventListener('input', renderJobResults);
+    $('#lookupSearch').addEventListener('input', renderLookupResults);
+    $('#submitMock').addEventListener('click', () => {
+      if (getVisitType() === 'inspection' && !$('input[name="x1SketchUploaded"]:checked')) {
+        showToast('X1 Sketch Uploaded is required for inspection.');
+        return;
+      }
+
+      showToast('Mock EOJ report captured.');
+    });
+
+    function showToast(message) {
+      const toast = $('#toast');
+      toast.textContent = message;
+      toast.classList.add('active');
+      window.setTimeout(() => toast.classList.remove('active'), 2200);
+    }
+
+    renderJobResults();
+    renderLookupResults();
+    updateVisitType();
+    updateAsbestos();
+    updateMica();
+    updateFinalMica();
+    updateCompletionStatus();
+    updateNextStep();
+    updateWaitingOn();
+  </script>
+</body>
+</html>

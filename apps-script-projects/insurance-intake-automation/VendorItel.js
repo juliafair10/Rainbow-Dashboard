@@ -60,6 +60,37 @@ function processItelAttachments() {
         updateAttachmentSummary_(summary, attachmentResult);
 
         if (!claimData.claimNumber) {
+          itemResult.extractionDebug.itelFallbackVersion = '2026-05-20-v2';
+
+          const itelClaimSearchParts = [
+            itemResult.subject || '',
+            claimData.subject || '',
+            thread.getFirstMessageSubject ? thread.getFirstMessageSubject() : ''
+          ];
+
+          const itelMessages = thread.getMessages();
+
+          itelMessages.forEach(function(message) {
+            itelClaimSearchParts.push(message.getSubject() || '');
+            itelClaimSearchParts.push(message.getPlainBody() || '');
+          });
+
+          const itelClaimSearchText = itelClaimSearchParts.join('\n');
+          const itelClaimMatch = String(itelClaimSearchText || '').match(/clm\s*#?\s*(\d{8,12})|claim\s*#?\s*(\d{8,12})/i);
+          const extractedItelClaimNumber = itelClaimMatch ? String(itelClaimMatch[1] || itelClaimMatch[2] || '').trim() : '';
+
+          itemResult.extractionDebug.itelFallbackChecked = true;
+          itemResult.extractionDebug.itelFallbackPreview = String(itelClaimSearchText || '').slice(0, 250);
+
+          if (extractedItelClaimNumber) {
+            claimData.claimNumber = extractedItelClaimNumber;
+            itemResult.claimNumber = claimData.claimNumber;
+            itemResult.extractionDebug.claimNumber = claimData.claimNumber;
+            itemResult.extractionDebug.source = 'VendorItel direct message fallback v2';
+          }
+        }
+
+        if (!claimData.claimNumber) {
           itemResult.status = 'needs_review_missing_claim_number';
           itemResult.warnings.push('No claim number could be extracted from Itel thread.');
 
@@ -82,14 +113,14 @@ function processItelAttachments() {
           continue;
         }
 
-        const folderResult = findExistingClaimFolderForVendor_(claimData);
+        const folderResult = findExistingClaimFolderForVendor_(claimData, thread);
         itemResult.folderResult = folderResult;
 
         if (!folderResult.success) {
           itemResult.status = folderResult.status || 'folder_check_failed';
           itemResult.errors.push(folderResult.error);
-
-          const folderFailureLabel = folderResult.status === 'pending_claim_folder'
+          
+          const folderFailureLabel = folderResult.status === 'pending_claim_folder' || folderResult.status === 'vendor_claim_folder_not_found'
             ? CONFIG.itelPendingClaimFolderLabel
             : CONFIG.itelErrorLabel;
 

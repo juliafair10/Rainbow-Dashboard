@@ -19,10 +19,29 @@ function parseInsuranceIntakeThread(thread) {
   });
 
   const fullText = normalizeInsuranceIntakeText_(bodyParts.join('\n'));
-  const claimNumber = extractInsuranceClaimNumber_(fullText);
-  const rainbowJobNumber = extractRainbowJobNumber_(fullText);
-  const customerName = extractInsuranceCustomerName_(fullText);
-  const lossAddress = extractInsuranceLossAddress_(fullText);
+  const normalizedIntakeFields = parseNormalizedRainbowIntakeFields_(fullText);
+  const fusionJobNumber = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'fusion job number');
+  let claimNumber = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'claim number') || extractInsuranceClaimNumber_(fullText);
+
+  if (!claimNumber) {
+    const subjectClaimMatch = String(subject || '').match(/(?:clm|claim)\s*#\s*(\d{8,12})/i);
+
+    if (subjectClaimMatch && subjectClaimMatch[1]) {
+      claimNumber = String(subjectClaimMatch[1]).trim();
+    }
+  }
+
+  if (!claimNumber && fusionJobNumber) {
+    claimNumber = fusionJobNumber;
+  }
+
+  const rainbowJobNumber = fusionJobNumber || extractRainbowJobNumber_(fullText);
+  const customerName = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'insured name') || extractInsuranceCustomerName_(fullText);
+  const lossAddress = cleanExtractedAddress_(getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'location of property') || extractInsuranceLossAddress_(fullText));
+  const carrierName = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'insurance carrier') || getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'carrier') || extractInsuranceCarrierName_(fullText);
+  const phone = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'phone') || extractInsurancePhone_(fullText);
+  const email = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'email address') || extractInsuranceEmail_(fullText);
+  const lossDescription = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'loss description') || extractInsuranceLossDescription_(fullText);
 
   return {
     subject: subject,
@@ -37,11 +56,19 @@ function parseInsuranceIntakeThread(thread) {
     customerName: customerName,
     insuredName: customerName,
     lossAddress: lossAddress,
-    lossCity: extractInsuranceField_(fullText, /Loss City:\s*([^\n]+)/i),
-    lossState: extractInsuranceField_(fullText, /Loss State:\s*([^\n]+)/i),
-    lossZip: extractInsuranceField_(fullText, /(?:Loss Zip Code|zipcode):\s*([^\n]+)/i),
-    dateOfLoss: extractInsuranceField_(fullText, /Date of Loss:\s*([^\n]+)/i),
-    typeOfLoss: extractInsuranceField_(fullText, /(?:Type of Loss|Services):\s*([^\n]+)/i),
+    propertyAddress: lossAddress,
+    lossCity: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'loss city') || extractInsuranceField_(fullText, /Loss City:\s*([^\n]+)/i),
+    lossState: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'loss state') || extractInsuranceField_(fullText, /Loss State:\s*([^\n]+)/i),
+    lossZip: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'loss zip code') || extractInsuranceField_(fullText, /(?:Loss Zip Code|zipcode):\s*([^\n]+)/i),
+    dateOfLoss: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'date of loss') || extractInsuranceField_(fullText, /Date of Loss:\s*([^\n]+)/i),
+    typeOfLoss: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'type of loss') || getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'services') || extractInsuranceField_(fullText, /(?:Type of Loss|Services):\s*([^\n]+)/i),
+    lossType: getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'type of loss') || getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'services') || extractInsuranceField_(fullText, /(?:Type of Loss|Services):\s*([^\n]+)/i),
+    lossDescription: lossDescription,
+    phone: phone,
+    email: email,
+    carrier: carrierName,
+    carrierName: carrierName,
+    carrierAbbrev: getInsuranceCarrierAbbrev_(carrierName),
     client: extractInsuranceField_(fullText, /Client:\s*([^\n]+)/i),
     source: 'parseInsuranceIntakeThread'
   };
@@ -61,9 +88,72 @@ function normalizeInsuranceIntakeText_(text) {
     .trim();
 }
 
+function parseNormalizedRainbowIntakeFields_(text) {
+  const labels = [
+    'insured name',
+    'phone',
+    'email address',
+    'insurance carrier',
+    'carrier',
+    'claim number',
+    'fusion job number',
+    'date of loss',
+    'type of loss',
+    'loss description',
+    'location of property',
+    'loss city',
+    'loss state',
+    'loss zip code',
+    'services',
+    'notes'
+  ];
+
+  const fields = {};
+  const sourceText = String(text || '');
+
+  labels.forEach(function(label) {
+    const labelPattern = label.replace(/\s+/g, '\\s+');
+    const nextLabelPattern = labels
+      .filter(function(nextLabel) {
+        return nextLabel !== label;
+      })
+      .map(function(nextLabel) {
+        return nextLabel.replace(/\s+/g, '\\s+');
+      })
+      .join('|');
+
+    const pattern = new RegExp('(?:^|\\n)\\s*(' + labelPattern + ')\\s*(?:\\||:)\\s*([\\s\\S]*?)(?=\\n\\s*(?:' + nextLabelPattern + ')\\s*(?:\\||:)|$)', 'i');
+    const match = sourceText.match(pattern);
+
+    if (match && match[2]) {
+      fields[label] = cleanNormalizedRainbowIntakeValue_(match[2]);
+    }
+  });
+
+  return fields;
+}
+
+function getNormalizedRainbowIntakeField_(fields, label) {
+  if (!fields) {
+    return '';
+  }
+
+  const value = fields[String(label || '').toLowerCase()] || '';
+  return cleanNormalizedRainbowIntakeValue_(value);
+}
+
+function cleanNormalizedRainbowIntakeValue_(value) {
+  return cleanExtractedInsuranceValue_(String(value || '')
+    .replace(/^\s*[|:]\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim());
+}
+
 function extractInsuranceClaimNumber_(text) {
   const patterns = [
-    /Claim Number:\s*([A-Z0-9-]+)/i,
+    /(?:clm|claim)\s*#\s*(\d{8,12})/i,
+    /Claim Number\s*(?:\||:)\s*([A-Z0-9]+(?:-[A-Z0-9]+)*|\d{6,12})/i,
+    /Fusion Job Number\s*(?:\||:)\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i,
     /claim #\s*([A-Z0-9-]+)/i,
     /Claim No:\s*([*A-Z0-9-]+)/i,
     /Claim:\s*\n?\s*(?:Rainbow:\s*)?([A-Z0-9-]+)/i
@@ -73,7 +163,7 @@ function extractInsuranceClaimNumber_(text) {
     const match = text.match(patterns[i]);
 
     if (match && match[1]) {
-      return String(match[1]).replace(/\*/g, '').trim();
+      return String(match[1]).replace(/\*/g, '').replace(/\s+/g, '').trim();
     }
   }
 
@@ -81,12 +171,29 @@ function extractInsuranceClaimNumber_(text) {
 }
 
 function extractRainbowJobNumber_(text) {
-  const match = text.match(/Rainbow:\s*([A-Z0-9-]+)/i);
-  return match && match[1] ? String(match[1]).trim() : '';
+  const patterns = [
+    /Fusion Job Number\s*(?:\||:)\s*([A-Z0-9]+(?:-[A-Z0-9]+)+)/i,
+    /Rainbow:\s*([A-Z0-9-]+)/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return String(match[1]).replace(/\s+/g, '').trim();
+    }
+  }
+
+  return '';
 }
 
 function extractInsuranceCustomerName_(text) {
   const patterns = [
+    /EMSL report, invoice, COC for order\(s\)\s+\d+\s*\(\s*\d+\s*-\s*([^\)]+?)\s*\)/i,
+    /Report, invoice, COC for order\(s\):\s*\n\s*\d+\s*-\s*([^\n]+)/i,
+    /\(\s*\d{6,12}\s*-\s*([^\)]+?)\s*\)/i,
+    /^\s*\d{6,12}\s*-\s*([^\n]+)/m,
+    /ITEL Lab Report\s*-\s*([^-]+?)\s*-\s*(?:clm|claim)\s*#/i,
     /Insured Name:\s*([^\n]+)/i,
     /Customer:\s*\n\s*([^\n]+)/i,
     /Customer:\s*([^\n]+)/i,
@@ -98,7 +205,7 @@ function extractInsuranceCustomerName_(text) {
     const match = text.match(patterns[i]);
 
     if (match && match[1]) {
-      return String(match[1]).replace(/\*/g, '').trim();
+      return cleanExtractedInsuranceValue_(match[1]);
     }
   }
 
@@ -140,11 +247,128 @@ function extractInsuranceLossAddress_(text) {
   return '';
 }
 
+function extractInsuranceCarrierName_(text) {
+  const patterns = [
+    /From:\s*([^\-\n]+?)\s*-\s*Rainbow/i,
+    /From:\s*([^\n]+)/i,
+    /Claim Originator:\s*([^\n]+)/i,
+    /Carrier:\s*([^\n]+)/i,
+    /Insurance Carrier:\s*([^\n]+)/i,
+    /Client:\s*([^\n]+)/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return cleanExtractedInsuranceValue_(match[1]);
+    }
+  }
+
+  return '';
+}
+
+function getInsuranceCarrierAbbrev_(carrierName) {
+  const abbrevs = {
+    allstate: 'AS',
+    'state farm': 'SF',
+    geico: 'GEICO',
+    progressive: 'PROG',
+    'liberty mutual': 'LM',
+    amica: 'AMICA',
+    farmers: 'FARM',
+    nationwide: 'NW',
+    usaa: 'USAA',
+    travelers: 'TRAV'
+  };
+
+  const carrierText = String(carrierName || '').trim();
+  const lower = carrierText.toLowerCase();
+
+  for (const key in abbrevs) {
+    if (lower.indexOf(key) !== -1) {
+      return abbrevs[key];
+    }
+  }
+
+  if (!carrierText) {
+    return '';
+  }
+
+  return carrierText
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(function(word) {
+      return word[0];
+    })
+    .join('')
+    .toUpperCase()
+    .substring(0, 3);
+}
+
+function extractInsurancePhone_(text) {
+  const patterns = [
+    /(?:Evening Phone|Day Phone|Mobile Phone|Cell Phone|Phone):\s*([\d\(\)\-\s\.]+)/i,
+    /phone:\s*(\([^)]+\)[^,\n]+)/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return cleanExtractedInsuranceValue_(match[1]);
+    }
+  }
+
+  return '';
+}
+
+function extractInsuranceEmail_(text) {
+  const patterns = [
+    /Email Address:\s*([^\s\n]+@[^\s\n]+)/i,
+    /Email:\s*([^\s\n]+@[^\s\n]+)/i,
+    /([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return cleanExtractedInsuranceValue_(match[1]);
+    }
+  }
+
+  return '';
+}
+
+function extractInsuranceLossDescription_(text) {
+  const patterns = [
+    /Loss Description:\s*([^\n]+)/i,
+    /Location Description:\s*([^\n]+)/i,
+    /Description of Loss:\s*([^\n]+)/i,
+    /has assigned you a new\s+([^,]+),\s*claim:/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
+
+    if (match && match[1]) {
+      return cleanExtractedInsuranceValue_(match[1]);
+    }
+  }
+
+  return '';
+}
+
 function cleanExtractedAddress_(address) {
   return String(address || '')
-    .replace(/\s+Google Maps\s+MapQuest.*$/i, '')
-    .replace(/\s+View Map.*$/i, '')
+    .replace(/\s+Google\s+Maps\s+MapQuest.*$/i, '')
+    .replace(/\s+Google\s+Maps.*$/i, '')
+    .replace(/\s+MapQuest.*$/i, '')
+    .replace(/\s+View\s+Map.*$/i, '')
     .replace(/\s+Map.*$/i, '')
+    .replace(/\s+\d{1,3}(?:\.\d+)?\s*[º°]?\s*[NS]\s*,\s*\d{1,3}(?:\.\d+)?\s*[º°]?\s*[EW].*$/i, '')
+    .replace(/\s+\d{1,3}[º°]\s*\d{1,2}(?:\.\d+)?'?\s*[NS]\s*,\s*\d{1,3}[º°]\s*\d{1,2}(?:\.\d+)?'?\s*[EW].*$/i, '')
     .replace(/[).,\s]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -152,5 +376,13 @@ function cleanExtractedAddress_(address) {
 
 function extractInsuranceField_(text, pattern) {
   const match = text.match(pattern);
-  return match && match[1] ? String(match[1]).trim() : '';
+  return match && match[1] ? cleanExtractedInsuranceValue_(match[1]) : '';
+}
+
+function cleanExtractedInsuranceValue_(value) {
+  return String(value || '')
+    .replace(/\*/g, '')
+    .replace(/\s+(?:Evening Phone|Day Phone|Mobile Phone|Cell Phone|Phone|Email Address|Type of Loss|XA ID|Location of Property|Instructions|Claim Number|Insured Name|Date of Loss|Loss Description|Location Description|Policy Line Code|RoofTypeCd)\s*:?\s*.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

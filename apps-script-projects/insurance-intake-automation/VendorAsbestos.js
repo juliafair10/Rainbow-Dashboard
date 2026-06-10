@@ -65,9 +65,36 @@ function processAsbestosAttachments() {
           folderResult = findExistingClaimFolderByLocationForVendor_(claimData, thread);
           itemResult.locationMatchResult = folderResult;
 
+          if (!folderResult.success && claimData.customerName) {
+            const customerFallbackResult = findExistingClaimFolderForVendor_(claimData, thread);
+            itemResult.customerNameFallbackResult = customerFallbackResult;
+
+            if (customerFallbackResult.success) {
+              folderResult = customerFallbackResult;
+            }
+          }
+
           if (!folderResult.success) {
             itemResult.status = 'needs_review_missing_claim_number';
-            itemResult.warnings.push('No claim number could be extracted from Asbestos thread and no confident Location of Property match was found.');
+
+            const locationStatus = itemResult.locationMatchResult && itemResult.locationMatchResult.status
+              ? itemResult.locationMatchResult.status
+              : 'not_checked';
+            const locationError = itemResult.locationMatchResult && itemResult.locationMatchResult.error
+              ? itemResult.locationMatchResult.error
+              : '';
+            const customerStatus = itemResult.customerNameFallbackResult && itemResult.customerNameFallbackResult.status
+              ? itemResult.customerNameFallbackResult.status
+              : 'not_checked';
+            const customerError = itemResult.customerNameFallbackResult && itemResult.customerNameFallbackResult.error
+              ? itemResult.customerNameFallbackResult.error
+              : '';
+
+            itemResult.warnings.push(
+              'No claim number could be extracted from Asbestos thread, and neither Location of Property nor customer-name fallback found a confident claim folder match. ' +
+              'Location status: ' + locationStatus + '. ' + locationError + ' ' +
+              'Customer fallback status: ' + customerStatus + '. ' + customerError
+            );
 
             const labelResult = applyInsuranceIntakeLabels_(thread, {
               add: [CONFIG.asbestosNeedsReviewLabel],
@@ -94,10 +121,10 @@ function processAsbestosAttachments() {
           claimData.lossAddress = folderResult.locationOfProperty || claimData.lossAddress || '';
           itemResult.claimNumber = claimData.claimNumber;
           itemResult.customerName = claimData.customerName;
-          itemResult.warnings.push('Matched Asbestos thread to claim folder by Location of Property because claim number was missing.');
+          itemResult.warnings.push('Matched Asbestos thread to claim folder by fallback matching because claim number was missing.');
           summary.warnings++;
         } else {
-          folderResult = findExistingClaimFolderForVendor_(claimData);
+          folderResult = findExistingClaimFolderForVendor_(claimData, thread);
         }
         itemResult.folderResult = folderResult;
 
@@ -105,7 +132,7 @@ function processAsbestosAttachments() {
           itemResult.status = folderResult.status || 'folder_check_failed';
           itemResult.errors.push(folderResult.error);
 
-          const folderFailureLabel = folderResult.status === 'pending_claim_folder'
+          const folderFailureLabel = folderResult.status === 'pending_claim_folder' || folderResult.status === 'vendor_claim_folder_not_found'
             ? CONFIG.asbestosPendingClaimFolderLabel
             : CONFIG.asbestosErrorLabel;
 
