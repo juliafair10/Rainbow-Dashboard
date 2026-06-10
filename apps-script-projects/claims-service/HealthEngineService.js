@@ -8,9 +8,9 @@
  * - gather health inputs
  * - evaluate basic health
  * - apply health to Claims sheet
+ * - record health history only when health level changes
  *
  * Future phases:
- * - history tracking
  * - suppression rules
  * - overrides
  * - escalation persistence
@@ -64,6 +64,8 @@ function evaluateClaimHealth(claimId) {
 function applyClaimHealth(claimId) {
   try {
     const targetClaimId = claimId || getFirstClaimIdForHealthTest_();
+    const inputs = gatherHealthInputs_(targetClaimId);
+    const previousHealthLevel = inputs.operationalHealth || '';
     const evaluation = evaluateClaimHealth(targetClaimId);
 
     if (!evaluation.success) {
@@ -82,12 +84,22 @@ function applyClaimHealth(claimId) {
       return updateResult;
     }
 
+    const historyResult = recordHealthHistoryIfChanged_(
+      targetClaimId,
+      previousHealthLevel,
+      evaluation.data,
+      inputs,
+      'applyClaimHealth'
+    );
+
     const response = successResponse({
       claimId: targetClaimId,
+      previousHealthLevel: previousHealthLevel,
       healthLevel: evaluation.data.healthLevel,
       healthReason: evaluation.data.healthReason,
       healthUpdatedAt: evaluatedAt,
-      updateResult: updateResult
+      updateResult: updateResult,
+      historyResult: historyResult
     }, 'Claim health applied successfully.');
 
     Logger.log(JSON.stringify(response, null, 2));
@@ -256,6 +268,58 @@ function determineHealthReason_(inputs) {
   }
 
   return 'No active health-driving condition requires attention.';
+}
+
+function recordHealthHistoryIfChanged_(claimId, previousHealthLevel, evaluationData, inputs, triggeredBy) {
+  const newHealthLevel = evaluationData.healthLevel || '';
+
+  if (previousHealthLevel === newHealthLevel) {
+    return {
+      skipped: true,
+      reason: 'Health level unchanged.',
+      previousHealthLevel: previousHealthLevel,
+      newHealthLevel: newHealthLevel
+    };
+  }
+
+  const historyRecord = {
+    Health_Record_ID: generateHealthRecordId_(),
+    Claim_ID: claimId,
+    Health_Level: newHealthLevel,
+    Health_Reason: evaluationData.healthReason || '',
+    Previous_Health_Level: previousHealthLevel || '',
+    Evaluated_At: evaluationData.evaluatedAt || nowIso(),
+    Triggered_By: triggeredBy || '',
+    Is_Override: false,
+    Override_Expires_At: '',
+    Active_Conditions_Snapshot: stringifyJson(inputs.activeConditions || []),
+    Lifecycle_State_At_Evaluation: inputs.lifecycleState || '',
+    Ownership_Area_At_Evaluation: inputs.ownershipArea || '',
+    Last_Meaningful_Activity_At_Evaluation: inputs.lastMeaningfulActivityAt || '',
+    Notes: ''
+  };
+
+  const appendResult = appendRow(CLAIM_SHEET_NAMES.healthHistory, historyRecord);
+
+  return {
+    skipped: false,
+    healthRecordId: historyRecord.Health_Record_ID,
+    previousHealthLevel: previousHealthLevel,
+    newHealthLevel: newHealthLevel,
+    appendResult: appendResult
+  };
+}
+
+function generateHealthRecordId_() {
+  const datePart = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    'yyyyMMdd'
+  );
+
+  const randomPart = Math.floor(Math.random() * 900000) + 100000;
+
+  return 'HLT-' + datePart + '-' + randomPart;
 }
 
 function hasActiveCondition_(inputs, conditionType) {
