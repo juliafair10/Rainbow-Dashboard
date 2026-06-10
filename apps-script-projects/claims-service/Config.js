@@ -20,6 +20,7 @@ const CLAIM_SHEET_NAMES = {
   ownershipHistory: 'Claim_Ownership_History',
   financialTracks: 'Financial_Tracks',
   externalLinks: 'External_Links',
+  healthHistory: 'Claim_Health_History',
   serviceLog: 'Claim_Service_Log'
 };
 
@@ -29,9 +30,12 @@ const CLAIM_FOUNDATION_SHEETS = {
     'Adjuster_Name', 'Adjuster_Email', 'Policy_Number', 'Loss_Date', 'Date_Received',
     'Source_System', 'Source_Email_Thread_ID', 'Claim_Folder_ID', 'Claim_Folder_URL',
     'Lifecycle_State', 'Ownership_Area', 'Primary_Owner', 'Operational_Health',
+    'Health_Reason', 'Health_Updated_At', 'Health_Override', 'Health_Override_Reason',
+    'Health_Override_Expires_At', 'Health_Override_Set_By',
     'Is_Active', 'Is_Not_Sold', 'Is_Operationally_Complete', 'Created_At',
-    'Updated_At', 'Last_Meaningful_Activity_At', 'Last_EOJ_At',
-    'Last_Condition_Update_At', 'Last_Alert_Update_At', 'Notes'
+    'Updated_At', 'Owner_Updated_At', 'Last_Meaningful_Activity_At', 'Last_EOJ_At',
+    'Last_Payment_At', 'Last_Revision_At', 'Last_Carrier_Activity_At',
+    'Last_Follow_Up_At', 'Last_Condition_Update_At', 'Last_Alert_Update_At', 'Notes'
   ],
 
   Claim_Timeline: [
@@ -70,6 +74,14 @@ const CLAIM_FOUNDATION_SHEETS = {
   External_Links: [
     'External_Link_ID', 'Claim_ID', 'Financial_Track_ID', 'Link_Type',
     'URL', 'Label', 'Created_At', 'Updated_At', 'Notes'
+  ],
+
+  Claim_Health_History: [
+    'Health_Record_ID', 'Claim_ID', 'Health_Level', 'Health_Reason',
+    'Previous_Health_Level', 'Evaluated_At', 'Triggered_By', 'Is_Override',
+    'Override_Expires_At', 'Active_Conditions_Snapshot',
+    'Lifecycle_State_At_Evaluation', 'Ownership_Area_At_Evaluation',
+    'Last_Meaningful_Activity_At_Evaluation', 'Notes'
   ],
 
   Claim_Service_Log: [
@@ -137,6 +149,39 @@ const CLAIM_HEALTH_LEVELS = [
   'Escalated',
   'Critical'
 ];
+
+const HEALTH_CONFIG = {
+  staleAttentionDays: 7,
+  staleAtRiskDays: 14,
+  staleEscalatedDays: 21,
+  staleCriticalDays: 30,
+
+  monitoringCadenceDays: 3,
+  revisionStaleDays: 5,
+  coverageFollowupDays: 7,
+  paymentAgingDays: 30,
+
+  escalationPersistenceDays: 7,
+  criticalPersistenceDays: 30,
+
+  overrideDefaultExpiryDays: 7,
+
+  conditionSeverityRanking: [
+    'Positive Asbestos Result',
+    'Abatement Required',
+    'Revision Active',
+    'Carrier Revision Requested',
+    'Supplement Under Review',
+    'Waiting on Payment',
+    'Asbestos Testing Pending',
+    'Waiting on Lab Results',
+    'Coverage Pending',
+    'Estimate Under Review',
+    'Monitoring Active',
+    'Source of Loss Unresolved',
+    'Waiting on Customer Decision'
+  ]
+};
 
 const CLAIM_CONDITION_TYPES = [
   'Waiting on Customer Decision',

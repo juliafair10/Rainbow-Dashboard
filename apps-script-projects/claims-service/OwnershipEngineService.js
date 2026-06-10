@@ -50,6 +50,7 @@ function applyOwnershipTransition(claimId) {
 
   const updateResult = updateClaim(claimId, {
     Ownership_Area: ownership.ownerArea,
+    Owner_Updated_At: nowIso(),
     Updated_At: nowIso()
   });
 

@@ -119,6 +119,7 @@ function updateRowByKey(sheetName, keyColumn, keyValue, updates) {
   });
 }
 
+
 function writeServiceLog(action, status, message, details) {
   const logRow = {
     Log_ID: generateId(CLAIM_ID_PREFIXES.log),
@@ -134,6 +135,132 @@ function writeServiceLog(action, status, message, details) {
   };
 
   return appendRow(CLAIM_SHEET_NAMES.serviceLog, logRow);
+}
+
+function runPhase7HealthPrerequisiteMigration() {
+  const results = {
+    claimsColumns: ensureSheetColumns_(CLAIM_SHEET_NAMES.claims, CLAIM_FOUNDATION_SHEETS.Claims),
+    healthHistorySheet: ensureSheetExistsWithHeaders_(CLAIM_SHEET_NAMES.healthHistory, CLAIM_FOUNDATION_SHEETS.Claim_Health_History),
+    blankConditionCleanup: cleanupBlankConditionRows_()
+  };
+
+  writeServiceLog('runPhase7HealthPrerequisiteMigration', 'Success', 'Phase 7 health prerequisites completed.', {
+    sourceSystem: CLAIM_SERVICE.name,
+    results: results
+  });
+
+  return successResponse(results, 'Phase 7 health prerequisites completed.');
+}
+
+function ensureSheetExistsWithHeaders_(sheetName, requiredHeaders) {
+  const ss = getClaimFoundationSpreadsheet_();
+  let sheet = ss.getSheetByName(sheetName);
+  let created = false;
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    created = true;
+  }
+
+  const columnResult = ensureSheetColumns_(sheetName, requiredHeaders || []);
+
+  sheet.setFrozenRows(1);
+
+  const headerCount = getHeaders(sheetName).length;
+  if (headerCount > 0) {
+    sheet.getRange(1, 1, 1, headerCount).setFontWeight('bold');
+    sheet.autoResizeColumns(1, headerCount);
+  }
+
+  return {
+    sheetName: sheetName,
+    created: created,
+    columnResult: columnResult
+  };
+}
+
+function ensureSheetColumns_(sheetName, requiredHeaders) {
+  const sheet = getSheet(sheetName);
+  const existingHeaders = getHeaders(sheetName);
+  const addedColumns = [];
+
+  if (existingHeaders.length === 0 && requiredHeaders.length > 0) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+
+    return {
+      sheetName: sheetName,
+      addedColumns: requiredHeaders,
+      alreadyPresentCount: 0
+    };
+  }
+
+  (requiredHeaders || []).forEach(function(header) {
+    const currentHeaders = getHeaders(sheetName);
+
+    if (currentHeaders.indexOf(header) === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      addedColumns.push(header);
+    }
+  });
+
+  return {
+    sheetName: sheetName,
+    addedColumns: addedColumns,
+    alreadyPresentCount: requiredHeaders.length - addedColumns.length
+  };
+}
+
+function cleanupBlankConditionRows_() {
+  const sheet = getSheet(CLAIM_SHEET_NAMES.conditions);
+  const headers = getHeaders(CLAIM_SHEET_NAMES.conditions);
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 2) {
+    return {
+      sheetName: CLAIM_SHEET_NAMES.conditions,
+      cleanedRows: 0,
+      deletedConditionIds: []
+    };
+  }
+
+  const conditionIdIndex = headers.indexOf('Condition_ID');
+  const conditionTypeIndex = headers.indexOf('Condition_Type');
+  const conditionStatusIndex = headers.indexOf('Condition_Status');
+  const openedAtIndex = headers.indexOf('Opened_At');
+
+  if (conditionIdIndex === -1 || conditionTypeIndex === -1 || conditionStatusIndex === -1 || openedAtIndex === -1) {
+    return {
+      sheetName: CLAIM_SHEET_NAMES.conditions,
+      skipped: true,
+      reason: 'Required condition columns were not found.',
+      cleanedRows: 0,
+      deletedConditionIds: []
+    };
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const deletedConditionIds = [];
+
+  for (let i = values.length - 1; i >= 0; i--) {
+    const row = values[i];
+    const conditionId = row[conditionIdIndex];
+    const conditionType = row[conditionTypeIndex];
+    const conditionStatus = row[conditionStatusIndex];
+    const openedAt = row[openedAtIndex];
+
+    const isBlankCondition = conditionId && !conditionType && !conditionStatus && !openedAt;
+
+    if (isBlankCondition) {
+      sheet.deleteRow(i + 2);
+      deletedConditionIds.push(conditionId);
+    }
+  }
+
+  return {
+    sheetName: CLAIM_SHEET_NAMES.conditions,
+    cleanedRows: deletedConditionIds.length,
+    deletedConditionIds: deletedConditionIds
+  };
 }
 
 function testClaimFoundationSheetConnection() {
