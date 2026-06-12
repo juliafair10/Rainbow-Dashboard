@@ -583,6 +583,62 @@
       padding: 10px 0;
     }
 
+    .homepage-alerts-panel {
+      margin-top: 18px;
+      border-top: 1px solid rgba(229, 231, 235, 0.9);
+      padding-top: 16px;
+    }
+
+    .homepage-alerts-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 10px 0;
+    }
+
+    .homepage-alert-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .homepage-alert-item {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .homepage-alert-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .homepage-alert-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .homepage-alert-meta {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .homepage-alert-reason {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .homepage-alert-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 0;
+    }
+
     .operations-summary {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -1329,6 +1385,13 @@
           <div class="homepage-priority-empty">Loading priorities...</div>
         </div>
       </div>
+
+      <div class="homepage-alerts-panel">
+        <h3 class="homepage-alerts-title">Operational Alerts</h3>
+        <div id="homepageOperationalAlerts" class="homepage-alert-list">
+          <div class="homepage-alert-empty">Loading alerts...</div>
+        </div>
+      </div>
     </section>
 
     <div class="workspace-layout">
@@ -1385,6 +1448,7 @@
       setHomepageKpiValue('homepage-kpi-waitingOnInsurance', kpis.waitingOnInsurance);
       setHomepageKpiValue('homepage-kpi-monitoringActive', kpis.monitoringActive);
       renderHomepageTodayPriorities(data.todayPriorities || []);
+      renderHomepageOperationalAlerts(data.operationalAlerts || []);
 
       const status = data.systemStatus || {};
       const statusText = status.homepageService === 'Connected'
@@ -1448,6 +1512,45 @@
             <div class="homepage-priority-reason">
               ${escapeHtml(priority.claimDisplayName || '')}
               ${priority.reason ? ' — ' + escapeHtml(priority.reason) : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderHomepageOperationalAlerts(alerts) {
+      const container = document.getElementById('homepageOperationalAlerts');
+      if (!container) {
+        return;
+      }
+
+      if (!alerts || alerts.length === 0) {
+        container.innerHTML = '<div class="homepage-alert-empty">No open operational alerts right now.</div>';
+        return;
+      }
+
+      container.innerHTML = alerts.map(function(alert) {
+        const meta = [
+          alert.severity || '',
+          alert.primaryOwner || '',
+          alert.ownershipArea || ''
+        ].filter(Boolean).join(' • ');
+
+        const reason = alert.reason || alert.recommendedAction || '';
+
+        return `
+          <div class="homepage-alert-item">
+            <div class="homepage-alert-top">
+              <div class="homepage-alert-title">
+                ${escapeHtml(alert.alertType || 'Operational Alert')}
+              </div>
+              <div class="homepage-alert-meta">
+                ${escapeHtml(meta)}
+              </div>
+            </div>
+            <div class="homepage-alert-reason">
+              ${escapeHtml(alert.claimDisplayName || '')}
+              ${reason ? ' — ' + escapeHtml(reason) : ''}
             </div>
           </div>
         `;

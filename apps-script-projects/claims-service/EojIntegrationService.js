@@ -1,5 +1,3 @@
-
-
 /**
  * EOJ integration service.
  * Rainbow Phase 4 - Claim Foundation
@@ -110,13 +108,7 @@ function testProcessEojOutputs() {
       Reason: 'Monitoring visit recorded.'
     }],
 
-    alerts: [{
-      Alert_Type: 'Missing EOJ Photos',
-      Severity: 'Medium',
-      Source_System: 'eoj-processing-engine',
-      Source_Record_ID: 'TEST-EOJ-001',
-      Reason: 'EOJ photo package not attached.'
-    }],
+    alerts: [],
 
     ownershipChange: {
       Ownership_Area: 'Field Operations',
@@ -126,4 +118,57 @@ function testProcessEojOutputs() {
       Trigger_Event: 'EOJ processed.'
     }
   });
+}
+
+function cleanupNonCanonicalEojPhotoAlerts() {
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.alerts);
+
+  if (!sheet) {
+    return errorResponse('Claim_Alerts sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.alerts
+    });
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return successResponse({
+      removedCount: 0,
+      removedRows: []
+    }, 'No alert rows found to clean.');
+  }
+
+  const headers = values[0];
+  const alertTypeIndex = headers.indexOf('Alert_Type');
+
+  if (alertTypeIndex === -1) {
+    return errorResponse('Alert_Type column not found in Claim_Alerts.', {
+      headers: headers
+    });
+  }
+
+  const removedRows = [];
+
+  for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex--) {
+    const row = values[rowIndex];
+    const alertType = row[alertTypeIndex];
+
+    if (alertType === 'Missing EOJ Photos') {
+      const sheetRowNumber = rowIndex + 1;
+      removedRows.push(sheetRowNumber);
+      sheet.deleteRow(sheetRowNumber);
+    }
+  }
+
+  return successResponse({
+    removedCount: removedRows.length,
+    removedRows: removedRows.reverse()
+  }, 'Non-canonical EOJ photo alerts cleaned successfully.');
+}
+
+function testCleanupNonCanonicalEojPhotoAlerts() {
+  const response = cleanupNonCanonicalEojPhotoAlerts();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
 }

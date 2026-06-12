@@ -1,4 +1,3 @@
-
 const HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID = '1oIakFjdJSigre_abJ-iiM74Trr1nfoC4_rjFi0lWrts';
 
 const HOMEPAGE_CLAIM_SHEET_NAMES = {
@@ -49,7 +48,11 @@ function getHomepageClaimSummaryData() {
       ]),
       monitoringActive: countHomepageClaimsWithAnyCondition_(activeConditions, ['Monitoring Active'])
     },
-    todayPriorities: getHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts)
+    todayPriorities: getHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts),
+    todaySchedule: getHomepageTodaySchedule_(activeClaims, activeConditions, activeAlerts),
+    becomingStale: getHomepageBecomingStale_(activeClaims, activeConditions, activeAlerts),
+    recentActivity: getHomepageRecentActivity_(activeClaims),
+    operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts)
   };
 }
 
@@ -232,4 +235,54 @@ function getHomepageTodayPriorities_(claims, conditions, alerts) {
   });
 
   return priorities;
+}
+
+function getHomepageTodaySchedule_(claims, conditions, alerts) {
+  return [];
+}
+
+function getHomepageBecomingStale_(claims, conditions, alerts) {
+  return [];
+}
+
+function getHomepageRecentActivity_(claims) {
+  return [];
+}
+
+function getHomepageOperationalAlerts_(claims, alerts) {
+  const claimMap = {};
+  const seenKeys = {};
+
+  (claims || []).forEach(function(claim) {
+    if (claim.Claim_ID) {
+      claimMap[claim.Claim_ID] = claim;
+    }
+  });
+
+  return (alerts || []).filter(function(alert) {
+    const key = alert.Claim_ID + '|alert|' + (alert.Alert_Type || '');
+    if (seenKeys[key]) {
+      return false;
+    }
+    seenKeys[key] = true;
+    return true;
+  }).map(function(alert) {
+    const claim = claimMap[alert.Claim_ID] || {};
+
+    return {
+      claimId: alert.Claim_ID || '',
+      claimDisplayName: (claim.Customer_Name || 'Unknown Customer') + ' · ' + (claim.Claim_Number || ''),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      ownershipArea: claim.Ownership_Area || '',
+      primaryOwner: claim.Primary_Owner || '',
+      alertType: alert.Alert_Type || 'Alert',
+      severity: alert.Severity || '',
+      reason: alert.Reason || '',
+      recommendedAction: alert.Recommended_Action || '',
+      createdAt: alert.Created_At || '',
+      targetWorkspace: 'claims'
+    };
+  });
 }

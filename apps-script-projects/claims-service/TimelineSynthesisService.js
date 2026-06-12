@@ -1,5 +1,3 @@
-
-
 /**
  * TimelineSynthesisService
  * Rainbow Phase 5 - Step 5
@@ -384,7 +382,7 @@ function testSynthesizeMonitoringBucket() {
         {
           Claim_ID: 'TEST-CLAIM',
           Event_Type: 'Alert Added',
-          Summary: 'Missing EOJ Photos',
+          Summary: 'Missing EOJ',
           Source_Record_ID: 'TEST-EOJ-001',
           Source_System: 'eoj-processing-engine',
           Event_Date: now
