@@ -527,6 +527,62 @@
       color: #991b1b;
     }
 
+    .homepage-priorities-panel {
+      margin-top: 18px;
+      border-top: 1px solid rgba(229, 231, 235, 0.9);
+      padding-top: 16px;
+    }
+
+    .homepage-priorities-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 10px 0;
+    }
+
+    .homepage-priority-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .homepage-priority-item {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .homepage-priority-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .homepage-priority-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .homepage-priority-meta {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .homepage-priority-reason {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .homepage-priority-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 0;
+    }
+
     .operations-summary {
       background: var(--card-bg);
       border: 1px solid var(--border);
@@ -1266,6 +1322,13 @@
           <div id="homepage-kpi-monitoringActive" class="homepage-kpi-value">—</div>
         </div>
       </div>
+
+      <div class="homepage-priorities-panel">
+        <h3 class="homepage-priorities-title">Today’s Priorities</h3>
+        <div id="homepageTodayPriorities" class="homepage-priority-list">
+          <div class="homepage-priority-empty">Loading priorities...</div>
+        </div>
+      </div>
     </section>
 
     <div class="workspace-layout">
@@ -1321,6 +1384,7 @@
       setHomepageKpiValue('homepage-kpi-critical', kpis.critical);
       setHomepageKpiValue('homepage-kpi-waitingOnInsurance', kpis.waitingOnInsurance);
       setHomepageKpiValue('homepage-kpi-monitoringActive', kpis.monitoringActive);
+      renderHomepageTodayPriorities(data.todayPriorities || []);
 
       const status = data.systemStatus || {};
       const statusText = status.homepageService === 'Connected'
@@ -1351,6 +1415,43 @@
       element.textContent = value === null || value === undefined || value === ''
         ? '—'
         : value;
+    }
+
+    function renderHomepageTodayPriorities(priorities) {
+      const container = document.getElementById('homepageTodayPriorities');
+      if (!container) {
+        return;
+      }
+
+      if (!priorities || priorities.length === 0) {
+        container.innerHTML = '<div class="homepage-priority-empty">No operational priorities require action right now.</div>';
+        return;
+      }
+
+      container.innerHTML = priorities.map(function(priority) {
+        const meta = [
+          priority.healthLevel || '',
+          priority.primaryOwner || '',
+          priority.ownershipArea || ''
+        ].filter(Boolean).join(' • ');
+
+        return `
+          <div class="homepage-priority-item">
+            <div class="homepage-priority-top">
+              <div class="homepage-priority-title">
+                ${escapeHtml(priority.title || 'Operational priority')}
+              </div>
+              <div class="homepage-priority-meta">
+                ${escapeHtml(meta)}
+              </div>
+            </div>
+            <div class="homepage-priority-reason">
+              ${escapeHtml(priority.claimDisplayName || '')}
+              ${priority.reason ? ' — ' + escapeHtml(priority.reason) : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     const OPERATIONS_ACTIONS = [

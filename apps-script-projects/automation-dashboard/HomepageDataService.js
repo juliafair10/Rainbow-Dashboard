@@ -48,7 +48,8 @@ function getHomepageClaimSummaryData() {
         'Waiting on Payment'
       ]),
       monitoringActive: countHomepageClaimsWithAnyCondition_(activeConditions, ['Monitoring Active'])
-    }
+    },
+    todayPriorities: getHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts)
   };
 }
 
@@ -149,4 +150,86 @@ function countHomepageClaimsWithAnyCondition_(conditions, conditionTypes) {
   });
 
   return Object.keys(countedClaimIds).length;
+}
+
+function getHomepageTodayPriorities_(claims, conditions, alerts) {
+  const claimMap = {};
+
+  (claims || []).forEach(function(claim) {
+    if (claim.Claim_ID) {
+      claimMap[claim.Claim_ID] = claim;
+    }
+  });
+
+  const priorities = [];
+  const seenKeys = {};
+
+  (conditions || []).forEach(function(condition) {
+    if (condition.Condition_Type !== 'Monitoring Active') {
+      return;
+    }
+
+    const key = condition.Claim_ID + '|condition|' + condition.Condition_Type;
+    if (seenKeys[key]) {
+      return;
+    }
+    seenKeys[key] = true;
+
+    const claim = claimMap[condition.Claim_ID] || {};
+
+    priorities.push({
+      claimId: condition.Claim_ID,
+      claimDisplayName: (claim.Customer_Name || 'Unknown Customer') + ' · ' + (claim.Claim_Number || ''),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      ownershipArea: claim.Ownership_Area || '',
+      primaryOwner: claim.Primary_Owner || '',
+      healthLevel: claim.Operational_Health || 'Healthy',
+      title: 'Monitoring follow-up is overdue',
+      reason: condition.Reason || '',
+      type: 'Condition',
+      conditionType: condition.Condition_Type || '',
+      alertType: '',
+      followUpDate: condition.Follow_Up_Date || '',
+      priorityRank: 25,
+      targetWorkspace: 'claims'
+    });
+  });
+
+  (alerts || []).forEach(function(alert) {
+    const key = alert.Claim_ID + '|alert|' + (alert.Alert_Type || '');
+
+    if (seenKeys[key]) {
+      return;
+    }
+    seenKeys[key] = true;
+
+    const claim = claimMap[alert.Claim_ID] || {};
+
+    priorities.push({
+      claimId: alert.Claim_ID,
+      claimDisplayName: (claim.Customer_Name || 'Unknown Customer') + ' · ' + (claim.Claim_Number || ''),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      ownershipArea: claim.Ownership_Area || '',
+      primaryOwner: claim.Primary_Owner || '',
+      healthLevel: claim.Operational_Health || 'Healthy',
+      title: alert.Alert_Type || 'Alert',
+      reason: alert.Reason || '',
+      type: 'Alert',
+      conditionType: '',
+      alertType: alert.Alert_Type || '',
+      followUpDate: '',
+      priorityRank: 30,
+      targetWorkspace: 'claims'
+    });
+  });
+
+  priorities.sort(function(a, b) {
+    return (a.priorityRank || 999) - (b.priorityRank || 999);
+  });
+
+  return priorities;
 }

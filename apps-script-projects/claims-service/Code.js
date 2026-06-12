@@ -84,6 +84,9 @@ function routeClaimServiceRequest_(e, method) {
           spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID
         }, 'claims-service is reachable.'));
 
+      case 'homepageClaimSummary':
+        return jsonResponse_(getHomepageClaimSummary());
+
       case 'lookupClaim':
         return jsonResponse_(lookupClaim(payload));
 

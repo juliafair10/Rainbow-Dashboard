@@ -10,7 +10,7 @@ function getHomepageSummary() {
       generatedAt: generatedAt,
       data: {
         kpis: claimSummary.kpis,
-        todayPriorities: [],
+        todayPriorities: claimSummary.todayPriorities || [],
         todaySchedule: [],
         becomingStale: [],
         recentActivity: [],
