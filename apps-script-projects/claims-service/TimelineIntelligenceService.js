@@ -1,5 +1,3 @@
-
-
 /**
  * TimelineIntelligenceService
  * Rainbow Phase 5 - Step 4

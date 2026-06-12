@@ -197,3 +197,58 @@ function testGetTimelineForClaim() {
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }
+
+function cleanupNonCanonicalEojPhotoTimelineEvents() {
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.timeline);
+
+  if (!sheet) {
+    return errorResponse('Claim_Timeline sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.timeline
+    });
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return successResponse({
+      removedCount: 0,
+      removedRows: []
+    }, 'No timeline rows found to clean.');
+  }
+
+  const headers = values[0];
+  const eventTypeIndex = headers.indexOf('Event_Type');
+  const summaryIndex = headers.indexOf('Summary');
+
+  if (eventTypeIndex === -1 || summaryIndex === -1) {
+    return errorResponse('Required timeline columns not found.', {
+      headers: headers
+    });
+  }
+
+  const removedRows = [];
+
+  for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex--) {
+    const row = values[rowIndex];
+    const eventType = row[eventTypeIndex];
+    const summary = row[summaryIndex];
+
+    if (eventType === 'Alert Added' && summary === 'Missing EOJ Photos') {
+      const sheetRowNumber = rowIndex + 1;
+      removedRows.push(sheetRowNumber);
+      sheet.deleteRow(sheetRowNumber);
+    }
+  }
+
+  return successResponse({
+    removedCount: removedRows.length,
+    removedRows: removedRows.reverse()
+  }, 'Non-canonical EOJ photo timeline events cleaned successfully.');
+}
+
+function testCleanupNonCanonicalEojPhotoTimelineEvents() {
+  const response = cleanupNonCanonicalEojPhotoTimelineEvents();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}

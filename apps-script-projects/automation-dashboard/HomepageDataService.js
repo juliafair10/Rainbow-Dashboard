@@ -2,12 +2,14 @@ const HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID = '1oIakFjdJSigre_abJ-iiM74Trr1nf
 
 const HOMEPAGE_CLAIM_SHEET_NAMES = {
   claims: 'Claims',
+  timeline: 'Claim_Timeline',
   conditions: 'Claim_Conditions',
   alerts: 'Claim_Alerts'
 };
 
 function getHomepageClaimSummaryData() {
   const claims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims);
+  const timeline = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.timeline);
   const conditions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.conditions);
   const alerts = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.alerts);
 
@@ -51,7 +53,7 @@ function getHomepageClaimSummaryData() {
     todayPriorities: getHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts),
     todaySchedule: getHomepageTodaySchedule_(activeClaims, activeConditions, activeAlerts),
     becomingStale: getHomepageBecomingStale_(activeClaims, activeConditions, activeAlerts),
-    recentActivity: getHomepageRecentActivity_(activeClaims),
+    recentActivity: getHomepageRecentActivity_(activeClaims, timeline),
     operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts)
   };
 }
@@ -245,8 +247,42 @@ function getHomepageBecomingStale_(claims, conditions, alerts) {
   return [];
 }
 
-function getHomepageRecentActivity_(claims) {
-  return [];
+function getHomepageRecentActivity_(claims, timeline) {
+  const activeClaimIds = {};
+  const claimMap = {};
+
+  (claims || []).forEach(function(claim) {
+    if (claim.Claim_ID) {
+      activeClaimIds[claim.Claim_ID] = true;
+      claimMap[claim.Claim_ID] = claim;
+    }
+  });
+
+  return (timeline || []).filter(function(event) {
+    return event.Claim_ID && activeClaimIds[event.Claim_ID];
+  }).sort(function(a, b) {
+    const aDate = new Date(a.Event_Date || a.Created_At || 0).getTime();
+    const bDate = new Date(b.Event_Date || b.Created_At || 0).getTime();
+    return bDate - aDate;
+  }).slice(0, 8).map(function(event) {
+    const claim = claimMap[event.Claim_ID] || {};
+
+    return {
+      timelineEventId: event.Timeline_Event_ID || '',
+      claimId: event.Claim_ID || '',
+      claimDisplayName: (claim.Customer_Name || 'Unknown Customer') + ' · ' + (claim.Claim_Number || ''),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      eventDate: event.Event_Date || event.Created_At || '',
+      eventType: event.Event_Type || '',
+      summary: event.Summary || event.Event_Type || 'Timeline activity',
+      detail: event.Detail || '',
+      sourceSystem: event.Source_System || event.Event_Source || '',
+      relatedWorkflow: event.Related_Workflow || '',
+      isMeaningful: event.Is_Meaningful_Activity === true || event.Is_Meaningful_Activity === 'TRUE',
+      targetWorkspace: 'claims'
+    };
+  });
 }
 
 function getHomepageOperationalAlerts_(claims, alerts) {
