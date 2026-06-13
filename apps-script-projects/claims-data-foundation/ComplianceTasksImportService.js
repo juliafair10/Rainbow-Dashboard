@@ -270,3 +270,85 @@ function determineComplianceActionStatus_(record) {
 
   return 'Open';
 }
+
+function testEnrichClaimsWithComplianceAddresses() {
+  const ss = SpreadsheetApp.openById(CONFIG.database.spreadsheetId);
+
+  const claimsSheet = ss.getSheetByName('Claims');
+  const complianceSheet = ss.getSheetByName('Compliance_Actions');
+
+  if (!claimsSheet) {
+    throw new Error('Missing sheet: Claims');
+  }
+
+  if (!complianceSheet) {
+    throw new Error('Missing sheet: Compliance_Actions');
+  }
+
+  enrichClaimsWithComplianceAddresses_(claimsSheet, complianceSheet);
+}
+
+function enrichClaimsWithComplianceAddresses_(claimsSheet, complianceSheet) {
+  const addressMap = buildAddressMapFromComplianceActions_(complianceSheet);
+
+  const lastRow = claimsSheet.getLastRow();
+
+  if (lastRow < 3) {
+    Logger.log('No Claims records found.');
+    return;
+  }
+
+  const claimData = claimsSheet.getRange(3, 1, lastRow - 2, 14).getValues();
+
+  let updatedCount = 0;
+
+  claimData.forEach(function(row) {
+    const jobNumber = String(row[1] || '').trim();
+    const currentAddress = String(row[4] || '').trim();
+
+    if (!jobNumber || currentAddress) {
+      return;
+    }
+
+    const address = addressMap[jobNumber];
+
+    if (!address) {
+      return;
+    }
+
+    row[4] = address;
+    updatedCount++;
+  });
+
+  claimsSheet.getRange(3, 1, claimData.length, claimData[0].length)
+    .setValues(claimData);
+
+  Logger.log('Claims addresses updated: ' + updatedCount);
+}
+
+function buildAddressMapFromComplianceActions_(sheet) {
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 3) {
+    return {};
+  }
+
+  const values = sheet.getRange(3, 1, lastRow - 2, 10).getValues();
+
+  const map = {};
+
+  values.forEach(function(row) {
+    const jobNumber = String(row[2] || '').trim();
+    const address = String(row[9] || '').trim();
+
+    if (!jobNumber || !address) {
+      return;
+    }
+
+    if (!map[jobNumber]) {
+      map[jobNumber] = address;
+    }
+  });
+
+  return map;
+}
