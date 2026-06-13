@@ -1,5 +1,4 @@
 function runReportIntake() {
-
   Logger.log('Starting Report Intake...');
 
   processDailyNotesEmails();
@@ -21,7 +20,6 @@ function testHistoricalIntake() {
   processHistoricalNotesEmails();
 }
 
-
 function testDriveApi() {
   const result = Drive.Files.list({
     maxResults: 1
@@ -30,7 +28,6 @@ function testDriveApi() {
   Logger.log(JSON.stringify(result));
 }
 
-// === Phase 8.5B: Daily Notes Importer Scaffolding ===
 function testDailyNotesImport() {
   importLatestDailyNotes();
 }
@@ -45,16 +42,11 @@ function importLatestDailyNotes() {
   }
 
   Logger.log('Found file: ' + file.getName());
-
-  // Conversion and parsing will be implemented next.
   Logger.log('Daily Notes import scaffolding verified.');
 }
 
 function findLatestDailyNotesFile_() {
-  const parentFolder = DriveApp.getFolderById(
-    CONFIG.folders.dailyNotes
-  );
-
+  const parentFolder = DriveApp.getFolderById(CONFIG.folders.dailyNotes);
   const monthFolders = parentFolder.getFolders();
 
   let newestFile = null;
@@ -66,7 +58,6 @@ function findLatestDailyNotesFile_() {
 
     while (files.hasNext()) {
       const file = files.next();
-
       const updated = file.getLastUpdated().getTime();
 
       if (updated > newestTimestamp) {
@@ -79,13 +70,10 @@ function findLatestDailyNotesFile_() {
   return newestFile;
 }
 
-
 function inspectLatestDailyNotesFile() {
-
   const file = findLatestDailyNotesFile_();
 
   Logger.log('Name: ' + file.getName());
   Logger.log('Mime Type: ' + file.getMimeType());
   Logger.log('Id: ' + file.getId());
-
 }
