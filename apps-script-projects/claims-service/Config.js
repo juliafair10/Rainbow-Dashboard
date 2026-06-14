@@ -4,6 +4,7 @@
  */
 
 const CLAIM_FOUNDATION_SPREADSHEET_ID = '1oIakFjdJSigre_abJ-iiM74Trr1nfoC4_rjFi0lWrts';
+const CLAIMS_DATABASE_SPREADSHEET_ID = '1LWUazEVzAbA5H0TDfvRJT0XZRJVN2ueZLfNJ_H-zj7c';
 
 const CLAIM_SERVICE = {
   name: 'claims-service',

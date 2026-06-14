@@ -1,3 +1,4 @@
+
 /**
  * claims-service
  * Rainbow Phase 4 — Claim Foundation
@@ -86,6 +87,29 @@ function routeClaimServiceRequest_(e, method) {
 
       case 'homepageClaimSummary':
         return jsonResponse_(getHomepageClaimSummary());
+
+      case 'getClaimsWorkspace':
+        return jsonResponse_(ClaimsWorkspaceService.getClaimsWorkspace(payload));
+
+      case 'getClaimsList':
+        return jsonResponse_(ClaimsWorkspaceService.getClaimsList(
+          payload.lensId || (e.parameter && e.parameter.lensId) || 'all',
+          payload
+        ));
+
+      case 'getClaimDrawer':
+        return jsonResponse_(
+          ClaimDrawerService.getClaimDrawer(
+            payload.claimId || (e.parameter && e.parameter.claimId)
+          )
+        );
+
+      case 'getClaimDetail':
+        return jsonResponse_(
+          ClaimDetailService.getClaimDetail(
+            payload.claimId || (e.parameter && e.parameter.claimId)
+          )
+        );
 
       case 'lookupClaim':
         return jsonResponse_(lookupClaim(payload));
