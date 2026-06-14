@@ -1,32 +1,68 @@
-
-
 /**
- * Phase 8.5E
- * Historical Notes Import Service
+ * Phase 8.5E / Historical Notes Import Service
  *
- * Initial goal:
- * Read Historical Notes XLSX structure and validate extraction.
+ * Current architecture:
+ * historical-notes-sync maintains the native Google Sheet archive.
+ * claims-data-foundation reads that archive and projects it into Timeline_Events.
+ *
+ * Canonical source:
+ * Rainbow - Historical Notes Archive -> Historical_Notes
  */
 
 function testHistoricalNotesExtraction() {
+  const source = getHistoricalNotesSource_();
+
+  Logger.log('Using source: ' + source.description);
+
+  const result = readHistoricalNotesRows_(source.spreadsheetId, source.sheetName);
+
+  Logger.log('Total Rows: ' + result.rowCount);
+  Logger.log('Headers: ' + JSON.stringify(result.headers));
+  Logger.log('First Data Row: ' + JSON.stringify(result.firstRow));
+}
+
+function getHistoricalNotesSource_() {
+  if (
+    CONFIG.historicalNotesArchive &&
+    CONFIG.historicalNotesArchive.spreadsheetId &&
+    CONFIG.historicalNotesArchive.sheetName
+  ) {
+    return {
+      spreadsheetId: CONFIG.historicalNotesArchive.spreadsheetId,
+      sheetName: CONFIG.historicalNotesArchive.sheetName,
+      description: 'Rainbow - Historical Notes Archive / ' + CONFIG.historicalNotesArchive.sheetName,
+      isNativeArchive: true
+    };
+  }
+
   const file = findLatestHistoricalNotesFile_();
 
   if (!file) {
     throw new Error('No Historical Notes file found.');
   }
 
-  Logger.log('Using file: ' + file.getName());
+  if (file.getMimeType() === MimeType.GOOGLE_SHEETS) {
+    return {
+      spreadsheetId: file.getId(),
+      sheetName: null,
+      description: file.getName(),
+      isNativeArchive: true
+    };
+  }
 
   const tempSheetId = convertExcelToSheet_(file.getId());
 
-  try {
-    const result = readHistoricalNotesRows_(tempSheetId);
+  return {
+    spreadsheetId: tempSheetId,
+    sheetName: null,
+    description: file.getName(),
+    isTemporarySheet: true
+  };
+}
 
-    Logger.log('Total Rows: ' + result.rowCount);
-    Logger.log('Headers: ' + JSON.stringify(result.headers));
-    Logger.log('First Data Row: ' + JSON.stringify(result.firstRow));
-  } finally {
-    cleanupTemporarySheet_(tempSheetId);
+function cleanupHistoricalNotesSource_(source) {
+  if (source && source.isTemporarySheet) {
+    cleanupTemporarySheet_(source.spreadsheetId);
   }
 }
 
@@ -50,10 +86,8 @@ function findLatestHistoricalNotesFile_() {
     }
   }
 
-  // Support files uploaded directly into Historical Notes parent folder.
   inspectFilesInFolder_(parentFolder);
 
-  // Support files uploaded into monthly YYYY-MM subfolders.
   const monthFolders = parentFolder.getFolders();
 
   while (monthFolders.hasNext()) {
@@ -63,13 +97,28 @@ function findLatestHistoricalNotesFile_() {
   return newestFile;
 }
 
-function readHistoricalNotesRows_(sheetId) {
-  const ss = SpreadsheetApp.openById(sheetId);
-  const sheet = ss.getSheets()[0];
+function getHistoricalNotesSheet_(spreadsheetId, sheetName) {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+
+  if (sheetName) {
+    const namedSheet = ss.getSheetByName(sheetName);
+
+    if (!namedSheet) {
+      throw new Error('Missing Historical Notes sheet: ' + sheetName);
+    }
+
+    return namedSheet;
+  }
+
+  return ss.getSheets()[0];
+}
+
+function readHistoricalNotesRows_(spreadsheetId, sheetName) {
+  const sheet = getHistoricalNotesSheet_(spreadsheetId, sheetName);
   const values = sheet.getDataRange().getValues();
 
   if (values.length < 2) {
-    throw new Error('Historical Notes file contains no data rows.');
+    throw new Error('Historical Notes source contains no data rows.');
   }
 
   return {
@@ -80,34 +129,27 @@ function readHistoricalNotesRows_(sheetId) {
 }
 
 function testHistoricalNotesRecordExtraction() {
-  const file = findLatestHistoricalNotesFile_();
+  const source = getHistoricalNotesSource_();
 
-  if (!file) {
-    throw new Error('No Historical Notes file found.');
-  }
-
-  Logger.log('Using file: ' + file.getName());
-
-  const tempSheetId = convertExcelToSheet_(file.getId());
+  Logger.log('Using source: ' + source.description);
 
   try {
-    const records = extractHistoricalNotesRecords_(tempSheetId);
+    const records = extractHistoricalNotesRecords_(source.spreadsheetId, source.sheetName);
 
     Logger.log('Total Records: ' + records.length);
     Logger.log('First Record: ' + JSON.stringify(records[0] || null));
     Logger.log('Last Record: ' + JSON.stringify(records[records.length - 1] || null));
   } finally {
-    cleanupTemporarySheet_(tempSheetId);
+    cleanupHistoricalNotesSource_(source);
   }
 }
 
-function extractHistoricalNotesRecords_(sheetId) {
-  const ss = SpreadsheetApp.openById(sheetId);
-  const sheet = ss.getSheets()[0];
+function extractHistoricalNotesRecords_(spreadsheetId, sheetName) {
+  const sheet = getHistoricalNotesSheet_(spreadsheetId, sheetName);
   const values = sheet.getDataRange().getValues();
 
   if (values.length < 2) {
-    throw new Error('Historical Notes file contains no data rows.');
+    throw new Error('Historical Notes source contains no data rows.');
   }
 
   const headers = values[0].map(function(header) {
@@ -127,6 +169,8 @@ function extractHistoricalNotesRecords_(sheetId) {
     }
 
     records.push({
+      noteId: columnMap.noteId !== undefined ? String(row[columnMap.noteId] || '').trim() : '',
+      fusionJobNumber: columnMap.fusionJobNumber !== undefined ? String(row[columnMap.fusionJobNumber] || '').trim() : '',
       jobNumber: jobNumber,
       customerName: String(row[columnMap.customer] || '').trim(),
       addedBy: String(row[columnMap.addedBy] || '').trim(),
@@ -140,50 +184,47 @@ function extractHistoricalNotesRecords_(sheetId) {
 }
 
 function buildHistoricalNotesColumnMap_(headers) {
-  const requiredColumns = {
-    jobNumber: 'Job Number',
-    customer: 'Customer',
-    addedBy: 'Added By',
-    eventDate: 'Event Date',
-    note: 'Note',
-    visibility: 'Visibility'
+  return {
+    noteId: findHistoricalColumnIndex_(headers, ['noteId', 'Note ID'], false),
+    fusionJobNumber: findHistoricalColumnIndex_(headers, ['fusionJobNumber', 'Fusion Job Number'], false),
+    jobNumber: findHistoricalColumnIndex_(headers, ['jobNumber', 'Job Number'], true),
+    customer: findHistoricalColumnIndex_(headers, ['customerName', 'Customer Name', 'Customer'], true),
+    addedBy: findHistoricalColumnIndex_(headers, ['noteAuthor', 'Added By', 'Author'], true),
+    eventDate: findHistoricalColumnIndex_(headers, ['noteDate', 'Event Date', 'Date'], true),
+    note: findHistoricalColumnIndex_(headers, ['noteText', 'Note Text', 'Note'], true),
+    visibility: findHistoricalColumnIndex_(headers, ['visibility', 'Visibility'], true)
   };
+}
 
-  const columnMap = {};
+function findHistoricalColumnIndex_(headers, possibleNames, required) {
+  for (let i = 0; i < possibleNames.length; i++) {
+    const index = headers.indexOf(possibleNames[i]);
 
-  Object.keys(requiredColumns).forEach(function(key) {
-    const headerName = requiredColumns[key];
-    const index = headers.indexOf(headerName);
-
-    if (index === -1) {
-      throw new Error('Missing required Historical Notes column: ' + headerName);
+    if (index !== -1) {
+      return index;
     }
+  }
 
-    columnMap[key] = index;
-  });
+  if (required) {
+    throw new Error('Missing required Historical Notes column. Expected one of: ' + possibleNames.join(', '));
+  }
 
-  return columnMap;
+  return undefined;
 }
 
 function testWriteHistoricalNotesTimelineEvents() {
-  const file = findLatestHistoricalNotesFile_();
+  const source = getHistoricalNotesSource_();
 
-  if (!file) {
-    throw new Error('No Historical Notes file found.');
-  }
-
-  Logger.log('Using file: ' + file.getName());
-
-  const tempSheetId = convertExcelToSheet_(file.getId());
+  Logger.log('Using source: ' + source.description);
 
   try {
-    const records = extractHistoricalNotesRecords_(tempSheetId);
+    const records = extractHistoricalNotesRecords_(source.spreadsheetId, source.sheetName);
 
     Logger.log('Extracted Records: ' + records.length);
 
     writeHistoricalNotesTimelineEvents_(records);
     appendImportLog_({
-      source: 'Historical Notes',
+      source: 'Historical Notes Archive',
       recordsRead: records.length,
       recordsImported: records.length,
       warnings: '',
@@ -193,7 +234,7 @@ function testWriteHistoricalNotesTimelineEvents() {
 
     Logger.log('Historical Notes Timeline_Events written successfully.');
   } finally {
-    cleanupTemporarySheet_(tempSheetId);
+    cleanupHistoricalNotesSource_(source);
   }
 }
 
@@ -233,6 +274,10 @@ function writeHistoricalNotesTimelineEvents_(records) {
 }
 
 function generateHistoricalTimelineEventId_(record, index) {
+  if (record.noteId) {
+    return 'TLN-' + record.noteId;
+  }
+
   const base = [
     record.jobNumber || 'NOJOB',
     record.eventDate || 'NODATE',
