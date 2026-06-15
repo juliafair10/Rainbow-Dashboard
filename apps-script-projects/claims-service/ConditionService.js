@@ -16,18 +16,17 @@ function addCondition(claimId, conditionType, details) {
     return validationErrorResponse(['Unknown condition: ' + conditionType]);
   }
 
-  const existing = getActiveConditions(claimId);
-  if (existing.success) {
-    const duplicate = existing.data.conditions.find(function(c) {
-      return c.Condition_Type === conditionType;
-    });
+  const existing = getActiveConditionsForPersistence_(claimId);
+  const duplicate = existing.find(function(c) {
+    const existingType = getConditionPersistenceValue_(c, ['Condition_Type', 'Condition Type', 'Type']);
+    return String(existingType || '') === String(conditionType || '');
+  });
 
-    if (duplicate) {
-      return successResponse({
-        condition: duplicate,
-        created: false
-      }, 'Condition already active.');
-    }
+  if (duplicate) {
+    return successResponse({
+      condition: duplicate,
+      created: false
+    }, 'Condition already active.');
   }
 
   const now = nowIso();
@@ -51,19 +50,37 @@ function addCondition(claimId, conditionType, details) {
 
   const appendResult = appendRow(CLAIM_SHEET_NAMES.conditions, condition);
 
-  updateClaim(claimId, {
-    Last_Condition_Update_At: now
-  });
+  try {
+    updateClaim(claimId, {
+      Last_Condition_Update_At: now
+    });
+  } catch (error) {
+    writeServiceLog('addCondition.updateClaim', 'Warning', 'Condition was written, but claim metadata update failed.', {
+      claimId: claimId,
+      conditionId: condition.Condition_ID,
+      conditionType: condition.Condition_Type,
+      message: error && error.message ? error.message : String(error)
+    });
+  }
 
-  appendTimelineEvent(claimId, {
-    Event_Type: 'Condition Added',
-    Summary: conditionType,
-    Detail: condition.Reason,
-    Source_System: condition.Source_System,
-    Source_Record_ID: condition.Source_Record_ID,
-    Related_Workflow: 'Condition Management',
-    Is_Meaningful_Activity: true
-  });
+  try {
+    appendTimelineEvent(claimId, {
+      Event_Type: 'Condition Added',
+      Summary: conditionType,
+      Detail: condition.Reason,
+      Source_System: condition.Source_System,
+      Source_Record_ID: condition.Source_Record_ID,
+      Related_Workflow: 'Condition Management',
+      Is_Meaningful_Activity: true
+    });
+  } catch (error) {
+    writeServiceLog('addCondition.appendTimelineEvent', 'Warning', 'Condition was written, but timeline event append failed.', {
+      claimId: claimId,
+      conditionId: condition.Condition_ID,
+      conditionType: condition.Condition_Type,
+      message: error && error.message ? error.message : String(error)
+    });
+  }
 
   writeServiceLog('addCondition', 'Success', 'Condition added.', {
     claimId: claimId,
@@ -241,5 +258,128 @@ function testHardWriteConditionRow() {
     appendResult: result
   });
 
+  return result;
+}
+function getActiveConditionsForPersistence_(claimId) {
+  const rows = getConditionPersistenceRows_(CLAIM_SHEET_NAMES.conditions);
+
+  return rows.filter(function(row) {
+    const rowClaimId = getConditionPersistenceValue_(row, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']);
+    const status = getConditionPersistenceValue_(row, ['Condition_Status', 'Condition Status', 'Status', 'ConditionStatus']);
+
+    return String(rowClaimId || '') === String(claimId || '')
+      && String(status || '').toLowerCase() === 'active';
+  });
+}
+
+function getConditionPersistenceRows_(sheetName) {
+  const ss = getConditionPersistenceSpreadsheet_();
+  const sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error('Missing sheet: ' + sheetName);
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return [];
+  }
+
+  const headerRowIndex = findConditionPersistenceHeaderRowIndex_(values);
+  const headers = values[headerRowIndex];
+
+  return values.slice(headerRowIndex + 1).filter(function(row) {
+    return row.some(function(cell) {
+      return cell !== '' && cell !== null;
+    });
+  }).map(function(row) {
+    const record = {};
+
+    headers.forEach(function(header, index) {
+      if (header) {
+        record[String(header)] = row[index];
+      }
+    });
+
+    return record;
+  });
+}
+
+function findConditionPersistenceHeaderRowIndex_(values) {
+  const maxRowsToInspect = Math.min(values.length, 10);
+
+  for (let rowIndex = 0; rowIndex < maxRowsToInspect; rowIndex++) {
+    const normalizedHeaders = values[rowIndex].map(function(value) {
+      return normalizeConditionPersistenceValue_(value);
+    });
+
+    const hasClaimId = normalizedHeaders.indexOf('claimid') !== -1;
+    const hasConditionType = normalizedHeaders.indexOf('conditiontype') !== -1;
+    const hasConditionStatus = normalizedHeaders.indexOf('conditionstatus') !== -1;
+    const hasConditionId = normalizedHeaders.indexOf('conditionid') !== -1;
+
+    if (hasClaimId && (hasConditionType || hasConditionStatus || hasConditionId)) {
+      return rowIndex;
+    }
+  }
+
+  return 0;
+}
+
+function getConditionPersistenceSpreadsheet_() {
+  const spreadsheetId = typeof CONFIG !== 'undefined' && CONFIG.CLAIMS_DATABASE_SPREADSHEET_ID
+    ? CONFIG.CLAIMS_DATABASE_SPREADSHEET_ID
+    : CLAIM_FOUNDATION_SPREADSHEET_ID;
+
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+function getConditionPersistenceValue_(record, possibleKeys) {
+  for (let i = 0; i < possibleKeys.length; i++) {
+    const key = possibleKeys[i];
+    if (record[key] !== undefined && record[key] !== null && record[key] !== '') {
+      return record[key];
+    }
+  }
+
+  const normalizedRecord = {};
+
+  Object.keys(record).forEach(function(key) {
+    normalizedRecord[normalizeConditionPersistenceValue_(key)] = record[key];
+  });
+
+  for (let j = 0; j < possibleKeys.length; j++) {
+    const normalizedKey = normalizeConditionPersistenceValue_(possibleKeys[j]);
+    if (normalizedRecord[normalizedKey] !== undefined && normalizedRecord[normalizedKey] !== null && normalizedRecord[normalizedKey] !== '') {
+      return normalizedRecord[normalizedKey];
+    }
+  }
+
+  return '';
+}
+
+function normalizeConditionPersistenceValue_(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function testConditionPersistenceWriteSafety() {
+  const result = addCondition('CLM-26A-0034-WTR', 'Coverage Pending', {
+    Reason: 'Condition persistence safety test. This verifies condition writing does not fail when Claims sheet uses display headers.',
+    Source_System: 'claims-service condition persistence test',
+    Source_Record_ID: 'TEST-CONDITION-PERSISTENCE-SAFETY',
+    Owner_Area: 'Office Operations',
+    Notes: 'Created during Phase 8B.5 condition persistence hardening.'
+  });
+
+  Logger.log('CONDITION_PERSISTENCE_WRITE_SAFETY ' + JSON.stringify(result));
+  return result;
+}
+
+function testResolveConditionPersistenceSafetyRow() {
+  const result = resolveCondition('CON-20260615-746657');
+  Logger.log('CONDITION_PERSISTENCE_CLEANUP ' + JSON.stringify(result));
   return result;
 }

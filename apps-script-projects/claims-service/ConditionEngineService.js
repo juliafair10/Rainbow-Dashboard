@@ -856,6 +856,85 @@ function testConditionEngineBatchReadiness() {
   Logger.log(JSON.stringify(response, null, 2));
   return response;
 }
+
+function testConditionEngineBatchReadinessCompact() {
+  const claims = findConditionEngineClaimsRows_();
+  const activeClaims = claims.filter(function(claim) {
+    const state = String(getConditionEngineLifecycleStateFromRow_(claim)).trim();
+    return state !== 'Operationally Complete' && state !== 'Not Sold';
+  });
+
+  const conditionCounts = {};
+  const claimsWithConditions = [];
+  const errors = [];
+
+  activeClaims.forEach(function(claim) {
+    const claimId = getConditionEngineClaimIdFromRow_(claim);
+    const jobNumber = getConditionEngineJobNumberFromRow_(claim);
+
+    if (!claimId) {
+      errors.push({
+        claimId: 'UNKNOWN',
+        jobNumber: jobNumber,
+        message: 'Missing claim id.'
+      });
+      return;
+    }
+
+    try {
+      const result = evaluateClaimConditions(claimId);
+
+      if (!result.success) {
+        errors.push({
+          claimId: claimId,
+          jobNumber: jobNumber,
+          message: result.message || 'Condition evaluation failed.',
+          errors: result.errors || []
+        });
+        return;
+      }
+
+      const recommendedConditions = result.data.recommendedConditions || [];
+
+      recommendedConditions.forEach(function(conditionName) {
+        conditionCounts[conditionName] = (conditionCounts[conditionName] || 0) + 1;
+      });
+
+      if (recommendedConditions.length > 0) {
+        claimsWithConditions.push({
+          claimId: claimId,
+          jobNumber: jobNumber,
+          recommendedConditions: recommendedConditions,
+          signals: result.data.signals || {}
+        });
+      }
+    } catch (error) {
+      errors.push({
+        claimId: claimId,
+        jobNumber: jobNumber,
+        message: error && error.message ? error.message : String(error)
+      });
+    }
+  });
+
+  const summary = {
+    status: 'Success',
+    dryRun: true,
+    totalClaimRows: claims.length,
+    activeClaimRows: activeClaims.length,
+    claimsWithRecommendedConditions: claimsWithConditions.length,
+    totalRecommendedConditions: Object.keys(conditionCounts).reduce(function(total, key) {
+      return total + conditionCounts[key];
+    }, 0),
+    conditionCounts: conditionCounts,
+    sampleClaimsWithConditions: claimsWithConditions.slice(0, 10),
+    errorCount: errors.length,
+    errors: errors
+  };
+
+  Logger.log('CONDITION_ENGINE_BATCH_READINESS_SUMMARY ' + JSON.stringify(summary));
+  return successResponse(summary, 'Compact Condition Engine batch readiness checked.');
+}
 function testConditionEngineHardenedSignalsForKnownClaim() {
   const claimId = 'CLM-26A-0034-WTR';
   const result = evaluateClaimConditions(claimId);
