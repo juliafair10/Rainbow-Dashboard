@@ -4,6 +4,8 @@ const HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID = '1LWUazEVzAbA5H0TDfvRJT0XZRJVN2
 const HOMEPAGE_CLAIM_SHEET_NAMES = {
   claims: 'Claims',
   timeline: 'Timeline_Events',
+  conditions: 'Claim_Conditions',
+  alerts: 'Claim_Alerts',
   complianceActions: 'Compliance_Actions',
   claimSummaries: 'Claim_Summaries',
   importLog: 'Import_Log'
@@ -12,6 +14,8 @@ const HOMEPAGE_CLAIM_SHEET_NAMES = {
 function getHomepageClaimSummaryData() {
   const claims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims).map(normalizeHomepageClaim_);
   const timeline = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.timeline).map(normalizeHomepageTimelineEvent_);
+  const claimConditions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.conditions).map(normalizeHomepageCondition_);
+  const claimAlerts = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.alerts).map(normalizeHomepageAlert_);
   const complianceActions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.complianceActions).map(normalizeHomepageComplianceAction_);
   const claimSummaries = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claimSummaries).map(normalizeHomepageClaimSummary_);
 
@@ -33,8 +37,15 @@ function getHomepageClaimSummaryData() {
       isHomepageOpenStatus_(action.Action_Status || action.Status);
   });
 
-  const activeConditions = getHomepageConditionsFromClaims_(activeClaims);
-  const activeAlerts = getHomepageAlertsFromClaims_(activeClaims);
+  const activeConditions = claimConditions.filter(function(condition) {
+    return homepageRecordMatchesActiveClaim_(condition, activeClaimIds) &&
+      isHomepageOpenStatus_(condition.Condition_Status || condition.Status || condition.Action_Status);
+  }).concat(getHomepageConditionsFromClaims_(activeClaims));
+
+  const activeAlerts = claimAlerts.filter(function(alert) {
+    return homepageRecordMatchesActiveClaim_(alert, activeClaimIds) &&
+      isHomepageOpenStatus_(alert.Alert_Status || alert.Status || alert.Action_Status);
+  }).concat(getHomepageAlertsFromClaims_(activeClaims));
 
   return {
     generatedAt: new Date().toISOString(),
@@ -46,10 +57,14 @@ function getHomepageClaimSummaryData() {
     activeClaimSummaryCount: activeClaimSummaries.length,
     claimSummaryMetrics: getHomepageClaimSummaryMetrics_(activeClaimSummaries),
     kpis: {
+      activeClaims: activeClaims.length,
+      healthCounts: countHomepageHealthLevels_(activeClaims),
       needsAttention: countHomepageClaimsByHealth_(activeClaims, ['Attention Soon', 'At Risk', 'Escalated', 'Critical']),
+      atRiskEscalated: countHomepageClaimsByHealth_(activeClaims, ['At Risk', 'Escalated', 'Critical']),
       atRisk: countHomepageClaimsByHealth_(activeClaims, ['At Risk']),
       escalated: countHomepageClaimsByHealth_(activeClaims, ['Escalated']),
       critical: countHomepageClaimsByHealth_(activeClaims, ['Critical']),
+      followUpsDue: countHomepageDueFollowUps_(activeConditions, activeAlerts, openComplianceActions),
       waitingOnInsurance: countHomepageClaimsWithAnyCondition_(activeConditions, [
         'Coverage Pending',
         'Estimate Under Review',
@@ -58,12 +73,12 @@ function getHomepageClaimSummaryData() {
       ]),
       monitoringActive: countHomepageClaimsWithAnyCondition_(activeConditions, ['Monitoring Active']),
       recentActivityClaims: countHomepageSummariesWithRecentActivity_(activeClaimSummaries),
-      openComplianceActions: sumHomepageOpenComplianceActions_(activeClaimSummaries),
+      openComplianceActions: openComplianceActions.length,
       timelineEvents: sumHomepageTimelineEvents_(activeClaimSummaries)
     },
     todayPriorities: getHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts, openComplianceActions),
     todaySchedule: getHomepageTodaySchedule_(activeClaims, activeConditions, activeAlerts),
-    becomingStale: getHomepageBecomingStale_(activeClaims, activeConditions, activeAlerts),
+    becomingStale: getHomepageBecomingStale_(activeClaims, activeConditions, activeAlerts, activeClaimSummaries),
     recentActivity: getHomepageRecentActivity_(activeClaims, timeline),
     recentClaimSummaries: getHomepageRecentClaimSummaries_(activeClaimSummaries),
     operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts)
@@ -161,6 +176,8 @@ function findHomepageHeaderRowIndex_(values, sheetName) {
   const expectedHeaderSets = {
     Claims: ['Claim ID', 'Claim_ID'],
     Timeline_Events: ['Claim ID', 'Claim_ID', 'Event Date', 'Event_Date'],
+    Claim_Conditions: ['Claim ID', 'Claim_ID', 'Condition Type', 'Condition_Type', 'Condition Status', 'Condition_Status'],
+    Claim_Alerts: ['Claim ID', 'Claim_ID', 'Alert Type', 'Alert_Type', 'Alert Status', 'Alert_Status'],
     Compliance_Actions: ['Claim ID', 'Claim_ID', 'Status', 'Action Status', 'Action_Status'],
     Claim_Summaries: ['Claim ID', 'Claim_ID', 'Summary', 'Claim Summary'],
     Import_Log: ['Import ID', 'Import_ID', 'Imported At', 'Imported_At']
@@ -241,6 +258,7 @@ function normalizeHomepageClaim_(row) {
   };
 }
 
+
 function normalizeHomepageTimelineEvent_(row) {
   return {
     Timeline_Event_ID: getHomepageValue_(row, ['Timeline_Event_ID', 'Timeline Event ID', 'Event ID']),
@@ -256,6 +274,56 @@ function normalizeHomepageTimelineEvent_(row) {
     Actor: getHomepageValue_(row, ['Actor', 'Owner', 'Primary Owner']),
     Category: getHomepageValue_(row, ['Category', 'Event Category']),
     Is_Meaningful_Activity: normalizeHomepageBoolean_(getHomepageValue_(row, ['Is_Meaningful_Activity', 'Is Meaningful Activity', 'Meaningful']))
+  };
+}
+
+function normalizeHomepageCondition_(row) {
+  const conditionType = getHomepageValue_(row, ['Condition_Type', 'Condition Type', 'Type', 'Condition']);
+  const status = getHomepageValue_(row, ['Condition_Status', 'Condition Status', 'Status', 'Action_Status', 'Action Status']);
+  const recommendedAction = getHomepageValue_(row, ['Recommended_Action', 'Recommended Action', 'Next_Action', 'Next Action', 'Required_Action', 'Required Action']);
+
+  return {
+    Condition_ID: getHomepageValue_(row, ['Condition_ID', 'Condition ID', 'ID']),
+    Claim_ID: getHomepageValue_(row, ['Claim_ID', 'Claim ID']),
+    Job_Number: getHomepageValue_(row, ['Job_Number', 'Job Number']),
+    Claim_Number: getHomepageValue_(row, ['Claim_Number', 'Claim Number']),
+    Condition_Type: conditionType,
+    Condition_Status: status || 'Open',
+    Action_Status: status || 'Open',
+    Status: status || 'Open',
+    Severity: getHomepageValue_(row, ['Severity', 'Priority']),
+    Priority: getHomepageValue_(row, ['Priority', 'Severity']),
+    Reason: getHomepageValue_(row, ['Reason', 'Description', 'Notes', 'Condition_Reason', 'Condition Reason']),
+    Recommended_Action: recommendedAction,
+    Follow_Up_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Follow_Up_Date', 'Follow Up Date', 'Next_Follow_Up_Date', 'Next Follow Up Date', 'Due Date'])),
+    Due_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Due_Date', 'Due Date', 'Follow_Up_Date', 'Follow Up Date'])),
+    Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Created_At', 'Created At', 'Created Date'])),
+    Updated_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Updated_At', 'Updated At', 'Last Updated']))
+  };
+}
+
+function normalizeHomepageAlert_(row) {
+  const alertType = getHomepageValue_(row, ['Alert_Type', 'Alert Type', 'Type', 'Alert']);
+  const status = getHomepageValue_(row, ['Alert_Status', 'Alert Status', 'Status', 'Action_Status', 'Action Status']);
+  const recommendedAction = getHomepageValue_(row, ['Recommended_Action', 'Recommended Action', 'Next_Action', 'Next Action', 'Required_Action', 'Required Action']);
+
+  return {
+    Alert_ID: getHomepageValue_(row, ['Alert_ID', 'Alert ID', 'ID']),
+    Claim_ID: getHomepageValue_(row, ['Claim_ID', 'Claim ID']),
+    Job_Number: getHomepageValue_(row, ['Job_Number', 'Job Number']),
+    Claim_Number: getHomepageValue_(row, ['Claim_Number', 'Claim Number']),
+    Alert_Type: alertType,
+    Alert_Status: status || 'Open',
+    Action_Status: status || 'Open',
+    Status: status || 'Open',
+    Severity: getHomepageValue_(row, ['Severity', 'Priority']),
+    Priority: getHomepageValue_(row, ['Priority', 'Severity']),
+    Reason: getHomepageValue_(row, ['Reason', 'Description', 'Notes', 'Alert_Reason', 'Alert Reason']),
+    Recommended_Action: recommendedAction,
+    Follow_Up_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Follow_Up_Date', 'Follow Up Date', 'Next_Follow_Up_Date', 'Next Follow Up Date', 'Due Date'])),
+    Due_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Due_Date', 'Due Date', 'Follow_Up_Date', 'Follow Up Date'])),
+    Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Created_At', 'Created At', 'Created Date'])),
+    Updated_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Updated_At', 'Updated At', 'Last Updated']))
   };
 }
 
@@ -401,6 +469,71 @@ function countHomepageClaimsByHealth_(claims, healthLevels) {
   return Object.keys(countedClaimIds).length;
 }
 
+function countHomepageHealthLevels_(claims) {
+  return (claims || []).reduce(function(counts, claim) {
+    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Not Evaluated';
+    counts[healthLevel] = (counts[healthLevel] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function countHomepageDueFollowUps_(conditions, alerts, complianceActions) {
+  const today = new Date();
+  const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).getTime();
+  const seenKeys = {};
+  let count = 0;
+
+  function countIfDue(record, sourceType) {
+    const dueValue = record.Due_Date || record.Follow_Up_Date || '';
+    if (!dueValue) {
+      return;
+    }
+
+    const dueTime = new Date(dueValue).getTime();
+    if (isNaN(dueTime) || dueTime > endOfToday) {
+      return;
+    }
+
+    const key = (record.Claim_ID || record.Job_Number || '') + '|' + sourceType + '|' + dueValue + '|' + (record.Condition_Type || record.Alert_Type || record.Action_Title || record.Required_Action || '');
+    if (seenKeys[key]) {
+      return;
+    }
+
+    seenKeys[key] = true;
+    count++;
+  }
+
+  (conditions || []).forEach(function(condition) {
+    countIfDue(condition, 'condition');
+  });
+
+  (alerts || []).forEach(function(alert) {
+    countIfDue(alert, 'alert');
+  });
+
+  (complianceActions || []).forEach(function(action) {
+    countIfDue(action, 'compliance');
+  });
+
+  return count;
+}
+function isHomepageDueTodayOrOverdue_(dateValue) {
+  if (!dateValue) {
+    return false;
+  }
+
+  const parsed = new Date(dateValue);
+  if (isNaN(parsed.getTime())) {
+    return false;
+  }
+
+  const today = new Date();
+  const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).getTime();
+
+  return parsed.getTime() <= endOfToday;
+}
+
+
 function countHomepageClaimsWithAnyCondition_(conditions, conditionTypes) {
   const typeMap = (conditionTypes || []).reduce(function(map, conditionType) {
     map[conditionType] = true;
@@ -480,7 +613,7 @@ function getHomepagePriorityRank_(priority) {
   return 50;
 }
 
-function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActions) {
+function buildHomepageClaimMap_(claims) {
   const claimMap = {};
 
   (claims || []).forEach(function(claim) {
@@ -499,11 +632,149 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     }
   });
 
+  return claimMap;
+}
+
+function isHomepageActionHealth_(healthLevel) {
+  return healthLevel === 'Attention Soon' ||
+    healthLevel === 'At Risk' ||
+    healthLevel === 'Escalated' ||
+    healthLevel === 'Critical';
+}
+
+function getHomepageHealthPriorityRank_(healthLevel) {
+  if (healthLevel === 'Critical') return 1;
+  if (healthLevel === 'Escalated') return 5;
+  if (healthLevel === 'At Risk') return 10;
+  if (healthLevel === 'Attention Soon') return 20;
+  return 50;
+}
+
+function getHomepageHealthPriorityTitle_(healthLevel) {
+  if (healthLevel === 'Critical') return 'Critical claim needs immediate review';
+  if (healthLevel === 'Escalated') return 'Escalated claim needs intervention';
+  if (healthLevel === 'At Risk') return 'At-risk claim needs follow-up';
+  if (healthLevel === 'Attention Soon') return 'Claim needs attention soon';
+  return 'Claim needs review';
+}
+
+function getHomepageConditionPriority_(conditionType) {
+  const priorities = {
+    'Carrier Revision Requested': {
+      title: 'Carrier revision response needed',
+      rank: 12
+    },
+    'Positive Asbestos Result': {
+      title: 'Positive asbestos result needs coordination',
+      rank: 14
+    },
+    'Abatement Required': {
+      title: 'Abatement coordination needed',
+      rank: 18
+    },
+    'Revision Active': {
+      title: 'Active revision needs follow-up cadence',
+      rank: 22
+    },
+    'Waiting on Payment': {
+      title: 'Payment follow-up may be needed',
+      rank: 24
+    },
+    'Monitoring Active': {
+      title: 'Monitoring follow-up is overdue',
+      rank: 25
+    },
+    'Waiting on Lab Results': {
+      title: 'Lab result follow-up may be needed',
+      rank: 26
+    },
+    'Coverage Pending': {
+      title: 'Coverage follow-up may be needed',
+      rank: 28
+    },
+    'Estimate Under Review': {
+      title: 'Estimate review follow-up may be needed',
+      rank: 30
+    },
+    'Supplement Under Review': {
+      title: 'Supplement review follow-up may be needed',
+      rank: 32
+    },
+    'Waiting on Customer Decision': {
+      title: 'Customer decision follow-up may be needed',
+      rank: 34
+    },
+    'Source of Loss Unresolved': {
+      title: 'Source of loss needs resolution',
+      rank: 36
+    },
+    'Asbestos Testing Pending': {
+      title: 'Asbestos testing follow-up may be needed',
+      rank: 38
+    }
+  };
+
+  return priorities[conditionType] || null;
+}
+
+function getHomepageAlertPriorityRank_(alertType, severity) {
+  const severityRank = getHomepagePriorityRank_(severity);
+
+  if (severityRank !== 50) {
+    return severityRank;
+  }
+
+  const normalizedAlert = String(alertType || '').toLowerCase();
+
+  if (normalizedAlert.indexOf('missing eoj') !== -1) return 18;
+  if (normalizedAlert.indexOf('review') !== -1) return 22;
+  if (normalizedAlert.indexOf('missing') !== -1) return 30;
+
+  return 35;
+}
+
+function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActions) {
+  const claimMap = buildHomepageClaimMap_(claims);
   const priorities = [];
   const seenKeys = {};
 
+  (claims || []).forEach(function(claim) {
+    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Healthy';
+
+    if (!isHomepageActionHealth_(healthLevel)) {
+      return;
+    }
+
+    const key = claim.Claim_ID + '|health|' + healthLevel;
+    if (seenKeys[key]) {
+      return;
+    }
+    seenKeys[key] = true;
+
+    priorities.push({
+      claimId: claim.Claim_ID || '',
+      claimDisplayName: getHomepageClaimDisplayName_(claim),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      ownershipArea: claim.Ownership_Area || '',
+      primaryOwner: claim.Primary_Owner || '',
+      healthLevel: healthLevel,
+      title: getHomepageHealthPriorityTitle_(healthLevel),
+      reason: claim.Health_Reason || claim.Days_Since_Activity ? String(claim.Health_Reason || '') : '',
+      type: 'Health',
+      conditionType: '',
+      alertType: '',
+      followUpDate: '',
+      priorityRank: getHomepageHealthPriorityRank_(healthLevel),
+      targetWorkspace: 'claims'
+    });
+  });
+
   (conditions || []).forEach(function(condition) {
-    if (condition.Condition_Type !== 'Monitoring Active') {
+    const conditionPriority = getHomepageConditionPriority_(condition.Condition_Type);
+
+    if (!conditionPriority) {
       return;
     }
 
@@ -516,7 +787,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     const claim = claimMap[condition.Claim_ID] || {};
 
     priorities.push({
-      claimId: condition.Claim_ID,
+      claimId: condition.Claim_ID || '',
       claimDisplayName: getHomepageClaimDisplayName_(claim),
       customerName: claim.Customer_Name || '',
       claimNumber: claim.Claim_Number || '',
@@ -524,13 +795,13 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       ownershipArea: claim.Ownership_Area || '',
       primaryOwner: claim.Primary_Owner || '',
       healthLevel: claim.Health_Level || claim.Operational_Health || 'Healthy',
-      title: 'Monitoring follow-up is overdue',
+      title: conditionPriority.title,
       reason: condition.Reason || '',
       type: 'Condition',
       conditionType: condition.Condition_Type || '',
       alertType: '',
       followUpDate: condition.Follow_Up_Date || '',
-      priorityRank: 25,
+      priorityRank: conditionPriority.rank,
       targetWorkspace: 'claims'
     });
   });
@@ -546,7 +817,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     const claim = claimMap[alert.Claim_ID] || {};
 
     priorities.push({
-      claimId: alert.Claim_ID,
+      claimId: alert.Claim_ID || '',
       claimDisplayName: getHomepageClaimDisplayName_(claim),
       customerName: claim.Customer_Name || '',
       claimNumber: claim.Claim_Number || '',
@@ -560,12 +831,17 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       conditionType: '',
       alertType: alert.Alert_Type || '',
       followUpDate: '',
-      priorityRank: 30,
+      priorityRank: getHomepageAlertPriorityRank_(alert.Alert_Type, alert.Severity || alert.Priority),
       targetWorkspace: 'claims'
     });
   });
 
   (complianceActions || []).forEach(function(action) {
+    const dueDate = action.Due_Date || action.Follow_Up_Date || '';
+    if (!isHomepageDueTodayOrOverdue_(dueDate)) {
+      return;
+    }
+
     const key = action.Claim_ID + '|compliance|' + (action.Compliance_Action_ID || action.Action_Title || action.Required_Action || '');
 
     if (seenKeys[key]) {
@@ -576,7 +852,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     const claim = claimMap[action.Claim_ID] || claimMap[action.Job_Number] || claimMap[action.Claim_Number] || {};
 
     priorities.push({
-      claimId: action.Claim_ID,
+      claimId: action.Claim_ID || '',
       claimDisplayName: getHomepageClaimDisplayName_(claim),
       customerName: claim.Customer_Name || '',
       claimNumber: claim.Claim_Number || claim.Job_Number || '',
@@ -584,12 +860,12 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       ownershipArea: claim.Ownership_Area || '',
       primaryOwner: claim.Primary_Owner || '',
       healthLevel: claim.Health_Level || claim.Operational_Health || 'Not Evaluated',
-      title: action.Action_Title || 'Open Compliance Action',
+      title: action.Action_Title || 'Open Compliance Action Due',
       reason: action.Required_Action || action.Reason || '',
       type: 'Compliance Action',
       conditionType: '',
       alertType: '',
-      followUpDate: action.Due_Date || action.Follow_Up_Date || '',
+      followUpDate: dueDate,
       priorityRank: getHomepagePriorityRank_(action.Priority || action.Severity),
       targetWorkspace: 'claims'
     });
@@ -599,7 +875,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     return (a.priorityRank || 999) - (b.priorityRank || 999);
   });
 
-  return priorities;
+  return priorities.slice(0, 10);
 }
 
 function getHomepageTodaySchedule_(claims, conditions, alerts) {
@@ -628,8 +904,74 @@ function getHomepageTodaySchedule_(claims, conditions, alerts) {
   });
 }
 
-function getHomepageBecomingStale_(claims, conditions, alerts) {
-  return [];
+function getHomepageBecomingStale_(claims, conditions, alerts, summaries) {
+  const claimMap = buildHomepageClaimMap_(claims || []);
+  const summaryMap = {};
+
+  (summaries || []).forEach(function(summary) {
+    if (summary.Claim_ID) {
+      summaryMap[summary.Claim_ID] = summary;
+    }
+    if (summary.Job_Number) {
+      summaryMap[summary.Job_Number] = summary;
+      summaryMap['CLM-' + summary.Job_Number] = summary;
+    }
+  });
+
+  const now = new Date().getTime();
+  const staleCandidates = [];
+
+  (claims || []).forEach(function(claim) {
+    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Healthy';
+    const summary = summaryMap[claim.Claim_ID] || summaryMap[claim.Job_Number] || {};
+    const lastActivityValue = claim.Last_Meaningful_Activity_Date || summary.Last_Activity_Date || claim.Updated_At || '';
+    const lastActivityTime = lastActivityValue ? new Date(lastActivityValue).getTime() : NaN;
+    const daysSinceActivity = !isNaN(lastActivityTime)
+      ? Math.floor((now - lastActivityTime) / (1000 * 60 * 60 * 24))
+      : Number(claim.Days_Since_Activity || 0);
+
+    const hasOpenCondition = (conditions || []).some(function(condition) {
+      return condition.Claim_ID === claim.Claim_ID;
+    });
+
+    const hasOpenAlert = (alerts || []).some(function(alert) {
+      return alert.Claim_ID === claim.Claim_ID;
+    });
+
+    const isAlreadyUrgent = healthLevel === 'At Risk' || healthLevel === 'Escalated' || healthLevel === 'Critical';
+    const isAttentionSoon = healthLevel === 'Attention Soon';
+    const isHealthyButDrifting = healthLevel === 'Healthy' && daysSinceActivity >= 3 && !hasOpenCondition && !hasOpenAlert;
+
+    if (!isAlreadyUrgent && !isAttentionSoon && !isHealthyButDrifting) {
+      return;
+    }
+
+    staleCandidates.push({
+      claimId: claim.Claim_ID || '',
+      claimDisplayName: getHomepageClaimDisplayName_(claim),
+      customerName: claim.Customer_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      ownershipArea: claim.Ownership_Area || '',
+      primaryOwner: claim.Primary_Owner || '',
+      healthLevel: healthLevel,
+      healthReason: claim.Health_Reason || '',
+      lastMeaningfulActivityDate: lastActivityValue || '',
+      lastActivityType: summary.Last_Activity_Type || '',
+      lastActivitySummary: summary.Last_Activity_Summary || '',
+      daysSinceActivity: daysSinceActivity,
+      staleReason: isHealthyButDrifting
+        ? 'Healthy claim with no recent activity signal in 3+ days.'
+        : (claim.Health_Reason || 'Claim health indicates attention may be needed soon.'),
+      targetWorkspace: 'claims'
+    });
+  });
+
+  return staleCandidates
+    .sort(function(a, b) {
+      return Number(b.daysSinceActivity || 0) - Number(a.daysSinceActivity || 0);
+    })
+    .slice(0, 8);
 }
 
 function getHomepageRecentActivity_(claims, timeline) {
@@ -701,7 +1043,7 @@ function getHomepageOperationalAlerts_(claims, alerts) {
       alertType: alert.Alert_Type || 'Alert',
       severity: alert.Severity || '',
       reason: alert.Reason || '',
-      recommendedAction: alert.Recommended_Action || '',
+      recommendedAction: alert.Recommended_Action || alert.Required_Action || '',
       createdAt: alert.Created_At || '',
       targetWorkspace: 'claims'
     };
@@ -719,9 +1061,12 @@ function testGetHomepageClaimSummaryData() {
   Logger.log('Active claim summary count: ' + data.activeClaimSummaryCount);
   Logger.log('Claim summary metrics: ' + JSON.stringify(data.claimSummaryMetrics, null, 2));
   Logger.log('KPIs: ' + JSON.stringify(data.kpis, null, 2));
+  Logger.log('Health counts: ' + JSON.stringify(data.kpis.healthCounts || {}, null, 2));
+  Logger.log('Follow-ups due: ' + data.kpis.followUpsDue);
   Logger.log('Today priorities count: ' + data.todayPriorities.length);
   Logger.log('Today schedule count: ' + data.todaySchedule.length);
   Logger.log('Becoming stale count: ' + data.becomingStale.length);
+  Logger.log('Sample becoming stale: ' + JSON.stringify(data.becomingStale[0] || null, null, 2));
   Logger.log('Recent activity count: ' + data.recentActivity.length);
   Logger.log('Recent claim summaries count: ' + data.recentClaimSummaries.length);
   Logger.log('Operational alerts count: ' + data.operationalAlerts.length);
@@ -793,12 +1138,17 @@ function testHomepageSourceInventory() {
   const ss = SpreadsheetApp.openById(HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID);
   const inventory = ss.getSheets().map(function(sheet) {
     const values = sheet.getDataRange().getValues();
+    const detectedHeaderRowIndex = values.length ? findHomepageHeaderRowIndex_(values, sheet.getName()) : 0;
+    const detectedHeaders = values.length ? values[detectedHeaderRowIndex] : [];
+
     return {
       sheetName: sheet.getName(),
       lastRow: sheet.getLastRow(),
       lastColumn: sheet.getLastColumn(),
-      dataRows: Math.max(values.length - 1, 0),
-      headers: values.length ? values[0] : []
+      detectedHeaderRow: detectedHeaderRowIndex + 1,
+      dataRowsAfterDetectedHeader: Math.max(values.length - detectedHeaderRowIndex - 1, 0),
+      firstRow: values.length ? values[0] : [],
+      detectedHeaders: detectedHeaders
     };
   });
 
@@ -806,4 +1156,50 @@ function testHomepageSourceInventory() {
   Logger.log('Homepage source inventory: ' + JSON.stringify(inventory, null, 2));
 
   return inventory;
+}
+
+function testHomepageParsedSourceSamples() {
+  const claims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims).map(normalizeHomepageClaim_);
+  const timeline = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.timeline).map(normalizeHomepageTimelineEvent_);
+  const conditions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.conditions).map(normalizeHomepageCondition_);
+  const alerts = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.alerts).map(normalizeHomepageAlert_);
+  const complianceActions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.complianceActions).map(normalizeHomepageComplianceAction_);
+  const summaries = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claimSummaries).map(normalizeHomepageClaimSummary_);
+
+  const openComplianceActions = complianceActions.filter(function(action) {
+    return isHomepageOpenStatus_(action.Action_Status || action.Status);
+  });
+
+  const result = {
+    claims: {
+      count: claims.length,
+      sample: claims[0] || null
+    },
+    timeline: {
+      count: timeline.length,
+      sample: timeline[0] || null
+    },
+    conditions: {
+      count: conditions.length,
+      sample: conditions[0] || null
+    },
+    alerts: {
+      count: alerts.length,
+      sample: alerts[0] || null
+    },
+    complianceActions: {
+      count: complianceActions.length,
+      openCount: openComplianceActions.length,
+      sample: complianceActions[0] || null,
+      openSample: openComplianceActions[0] || null
+    },
+    claimSummaries: {
+      count: summaries.length,
+      sample: summaries[0] || null
+    }
+  };
+
+  Logger.log('Homepage parsed source samples: ' + JSON.stringify(result, null, 2));
+
+  return result;
 }

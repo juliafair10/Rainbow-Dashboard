@@ -2,7 +2,6 @@ const DASHBOARD_CONFIG = {
   dashboardTitle: 'Automation Dashboard',
   logSpreadsheetName: 'Automation Run Log',
   logSheetName: 'Runs',
-
   automations: [
     {
       id: 'claim-folder-automation',
@@ -676,11 +675,199 @@ const STATUS = {
 
 const FETCH_TIMEOUT_MS = 30000;
 
-function doGet() {
+function include(filename) {
+  return HtmlService
+    .createHtmlOutputFromFile(filename)
+    .getContent();
+}
+
+function doGet(e) {
+  const action = e && e.parameter ? String(e.parameter.action || '') : '';
+  const view = e && e.parameter ? String(e.parameter.view || '') : '';
+
+  if (action === 'getHomepageSummary' || action === 'getHomepageData') {
+    return jsonResponse_(getHomepageSummary());
+  }
+
+  if (action === 'testHomepageService') {
+    return jsonResponse_(testHomepageService_());
+  }
+
+  if (action === 'testHomepageOperationalIntelligence') {
+    return jsonResponse_(testHomepageOperationalIntelligence());
+  }
+
+  if (action === 'getHomepagePriorityFeed') {
+    return jsonResponse_(getHomepagePriorityFeed());
+  }
+
+  if (action === 'getHomepageComplianceSummary') {
+    return jsonResponse_(getHomepageComplianceSummary());
+  }
+
+  if (view === 'homepageShell' || view === 'homepage') {
+    return HtmlService
+      .createTemplateFromFile('HomepageShell')
+      .evaluate()
+      .setTitle('Rainbow Homepage')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
   return HtmlService
     .createHtmlOutputFromFile('Index')
     .setTitle(DASHBOARD_CONFIG.dashboardTitle)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function jsonResponse_(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function testHomepageService_() {
+  try {
+    const payload = getHomepageSummary();
+    const data = payload && payload.data ? payload.data : payload || {};
+
+    return {
+      success: true,
+      generatedAt: new Date().toISOString(),
+      diagnostics: {
+        hasPayload: !!payload,
+        hasData: !!data,
+        kpiCount: data.kpis && typeof data.kpis === 'object' ? Object.keys(data.kpis).length : 0,
+        todayPriorityCount: Array.isArray(data.todayPriorities) ? data.todayPriorities.length : 0,
+        todayScheduleCount: Array.isArray(data.todaySchedule) ? data.todaySchedule.length : 0,
+        becomingStaleCount: Array.isArray(data.becomingStale) ? data.becomingStale.length : 0,
+        recentActivityCount: Array.isArray(data.recentActivity) ? data.recentActivity.length : 0,
+        operationalAlertCount: Array.isArray(data.operationalAlerts) ? data.operationalAlerts.length : 0,
+        hasClaimSummary: !!data.claimSummary,
+        hasSystemStatus: !!data.systemStatus
+      },
+      payload: payload
+    };
+  } catch (err) {
+    return {
+      success: false,
+      generatedAt: new Date().toISOString(),
+      error: err && err.message ? err.message : String(err)
+    };
+  }
+}
+
+
+function getHomepageData_() {
+  const payload = getHomepageSummary();
+  return payload && payload.data ? payload.data : payload || {};
+}
+
+function getHomepagePriorityFeed() {
+  const data = getHomepageData_();
+
+  return {
+    status: 'Success',
+    success: true,
+    generatedAt: new Date().toISOString(),
+    data: {
+      priorityFeed: data.todayPriorities || data.priorityFeed || [],
+      count: Array.isArray(data.todayPriorities)
+        ? data.todayPriorities.length
+        : (Array.isArray(data.priorityFeed) ? data.priorityFeed.length : 0)
+    }
+  };
+}
+
+function getHomepageComplianceSummary() {
+  const data = getHomepageData_();
+  const complianceActions = data.complianceActions || data.openComplianceActions || [];
+
+  return {
+    status: 'Success',
+    success: true,
+    generatedAt: new Date().toISOString(),
+    data: {
+      complianceSummary: data.complianceSummary || {},
+      complianceActions: complianceActions,
+      openComplianceActionCount: Array.isArray(complianceActions) ? complianceActions.length : 0
+    }
+  };
+}
+
+function testHomepageOperationalIntelligence() {
+  try {
+    const data = getHomepageData_();
+    const kpis = data.kpis || {};
+    const claimSummary = data.claimSummary || {};
+    const systemStatus = data.systemStatus || {};
+    const todayPriorities = data.todayPriorities || data.priorityFeed || [];
+    const becomingStale = data.becomingStale || [];
+    const operationalAlerts = data.operationalAlerts || [];
+    const recentActivity = data.recentActivity || [];
+    const complianceActions = data.complianceActions || data.openComplianceActions || [];
+
+    const healthCounts = kpis.healthCounts || claimSummary.healthCounts || data.healthCounts || {};
+
+    const diagnostics = {
+      activeClaimCount: Number(
+        kpis.activeClaims ||
+        claimSummary.activeClaimCount ||
+        data.activeClaimCount ||
+        0
+      ),
+      healthCounts: healthCounts,
+      needsAttentionCount: Number(
+        kpis.needsAttention ||
+        kpis.needsAttentionCount ||
+        0
+      ),
+      atRiskEscalatedCount: Number(
+        kpis.atRiskEscalated ||
+        kpis.atRiskEscalatedCount ||
+        0
+      ),
+      followUpsDueCount: Number(
+        kpis.followUpsDue ||
+        kpis.followUpsDueCount ||
+        0
+      ),
+      priorityItemCount: Array.isArray(todayPriorities) ? todayPriorities.length : 0,
+      staleItemCount: Array.isArray(becomingStale) ? becomingStale.length : 0,
+      openAlertCount: Array.isArray(operationalAlerts) ? operationalAlerts.length : 0,
+      complianceActionCount: Array.isArray(complianceActions) ? complianceActions.length : 0,
+      recentActivityCount: Array.isArray(recentActivity) ? recentActivity.length : 0,
+      systemStatus: systemStatus
+    };
+
+    Logger.log('=== HOMEPAGE OPERATIONAL INTELLIGENCE TEST ===');
+    Logger.log('Active claim count: ' + diagnostics.activeClaimCount);
+    Logger.log('Health counts: ' + JSON.stringify(diagnostics.healthCounts));
+    Logger.log('Needs attention count: ' + diagnostics.needsAttentionCount);
+    Logger.log('At risk / escalated count: ' + diagnostics.atRiskEscalatedCount);
+    Logger.log('Follow-ups due count: ' + diagnostics.followUpsDueCount);
+    Logger.log('Priority item count: ' + diagnostics.priorityItemCount);
+    Logger.log('Stale item count: ' + diagnostics.staleItemCount);
+    Logger.log('Open alert count: ' + diagnostics.openAlertCount);
+    Logger.log('Compliance action count: ' + diagnostics.complianceActionCount);
+    Logger.log('Recent activity count: ' + diagnostics.recentActivityCount);
+
+    return {
+      status: 'Success',
+      success: true,
+      generatedAt: new Date().toISOString(),
+      diagnostics: diagnostics,
+      data: data
+    };
+  } catch (err) {
+    Logger.log('ERROR: Homepage operational intelligence test failed - ' + (err && err.message ? err.message : String(err)));
+
+    return {
+      status: 'Error',
+      success: false,
+      generatedAt: new Date().toISOString(),
+      error: err && err.message ? err.message : String(err)
+    };
+  }
 }
 
 
@@ -1572,4 +1759,25 @@ function clearLegacyEmslDashboardStatus() {
   });
 
   Logger.log('Cleared ' + cleared + ' legacy EMSL dashboard status properties');
+}
+
+function getHomepageShellUrl() {
+  const baseUrl = ScriptApp.getService().getUrl();
+  const homepageUrl = baseUrl + '?view=homepage';
+
+  Logger.log('Homepage URL: ' + homepageUrl);
+
+  return homepageUrl;
+}
+
+function testHomepageShellRoute() {
+  const url = getHomepageShellUrl();
+
+  Logger.log('Homepage URL: ' + url);
+
+  return {
+    status: 'Success',
+    homepageUrl: url,
+    generatedAt: new Date().toISOString()
+  };
 }

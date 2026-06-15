@@ -3,19 +3,19 @@
  * Rainbow Phase 4 — Claim Foundation
  */
 
-const CLAIM_FOUNDATION_SPREADSHEET_ID = '1oIakFjdJSigre_abJ-iiM74Trr1nfoC4_rjFi0lWrts';
+const CLAIM_FOUNDATION_SPREADSHEET_ID = '1LWUazEVzAbA5H0TDfvRJT0XZRJVN2ueZLfNJ_H-zj7c';
 const CLAIMS_DATABASE_SPREADSHEET_ID = '1LWUazEVzAbA5H0TDfvRJT0XZRJVN2ueZLfNJ_H-zj7c';
 
 const CLAIM_SERVICE = {
   name: 'claims-service',
-  phase: 'Phase 4 - Claim Foundation',
+  phase: 'Phase 8C - Production Intelligence Foundation Integration',
   timezone: 'America/New_York',
-  spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID
+  spreadsheetId: CLAIMS_DATABASE_SPREADSHEET_ID
 };
 
 const CLAIM_SHEET_NAMES = {
   claims: 'Claims',
-  timeline: 'Claim_Timeline',
+  timeline: 'Timeline_Events',
   conditions: 'Claim_Conditions',
   alerts: 'Claim_Alerts',
   ownershipHistory: 'Claim_Ownership_History',
@@ -39,7 +39,7 @@ const CLAIM_FOUNDATION_SHEETS = {
     'Last_Follow_Up_At', 'Last_Condition_Update_At', 'Last_Alert_Update_At', 'Notes'
   ],
 
-  Claim_Timeline: [
+  Timeline_Events: [
     'Timeline_Event_ID', 'Claim_ID', 'Event_Date', 'Event_Type', 'Event_Source',
     'Source_Record_ID', 'Source_System', 'Summary', 'Detail', 'Actor',
     'Related_Workflow', 'Related_Financial_Track_ID', 'Is_Meaningful_Activity',
@@ -99,7 +99,6 @@ const CLAIM_LIFECYCLE_STATES = [
   'Operationally Complete',
   'Not Sold'
 ];
-
 
 const CLAIM_OWNERSHIP_AREAS = [
   'Intake',
@@ -212,7 +211,7 @@ const CLAIM_ID_PREFIXES = {
 };
 
 function setupClaimFoundationSheets() {
-  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const ss = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
   const sheetNames = Object.keys(CLAIM_FOUNDATION_SHEETS);
 
   const defaultSheet = ss.getSheetByName('Sheet1');
@@ -244,7 +243,7 @@ function setupClaimFoundationSheets() {
   });
 
   return successResponse({
-    spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID,
+    spreadsheetId: CLAIM_SERVICE.spreadsheetId,
     sheets: sheetNames
-  }, 'Rainbow Claim Foundation sheets are set up.');
+  }, 'Rainbow claims database sheets are set up.');
 }

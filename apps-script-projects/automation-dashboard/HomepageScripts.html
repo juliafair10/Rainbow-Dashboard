@@ -1,0 +1,172 @@
+<script>
+  let homepageData = null;
+
+  document.addEventListener('DOMContentLoaded', function() {
+    loadHomepageData();
+  });
+
+  function loadHomepageData() {
+    google.script.run
+      .withSuccessHandler(handleHomepageDataLoaded)
+      .withFailureHandler(handleHomepageDataError)
+      .getHomepageSummary();
+  }
+
+  function handleHomepageDataLoaded(response) {
+    if (!response || !response.success) {
+      handleHomepageDataError(response || { message: 'Unknown homepage error.' });
+      return;
+    }
+
+    homepageData = response.data;
+
+    renderKpis(homepageData.kpis || {});
+    renderTodayPriorities(homepageData.todayPriorities || []);
+    renderBecomingStale(homepageData.becomingStale || []);
+    renderOperationalAlerts(homepageData.operationalAlerts || []);
+    renderRecentActivity(homepageData.recentActivity || []);
+    renderRecentClaimSummaries(homepageData.recentClaimSummaries || []);
+    renderTodaySchedule(homepageData.todaySchedule || []);
+
+    const statusStrip = document.getElementById('systemStatusStrip');
+    if (statusStrip) {
+      const loadedClaimCount = homepageData.activeClaimCount || homepageData.claimSummaryCount || homepageData.claimCount || homepageData.totalClaimCount || 0;
+      const recentActivityCount = Array.isArray(homepageData.recentActivity) ? homepageData.recentActivity.length : 0;
+      const scheduleCount = Array.isArray(homepageData.todaySchedule) ? homepageData.todaySchedule.length : 0;
+
+      statusStrip.textContent = 'Homepage connected • ' + loadedClaimCount + ' claims loaded • ' + recentActivityCount + ' recent activity • ' + scheduleCount + ' schedule items';
+    }
+  }
+
+  function handleHomepageDataError(error) {
+    console.error(error);
+
+    const statusStrip = document.getElementById('systemStatusStrip');
+    if (statusStrip) {
+      statusStrip.textContent = 'Homepage data load failed.';
+    }
+  }
+
+  function renderKpis(kpis) {
+    setKpiValue('activeClaims', kpis.activeClaims || homepageData.activeClaimCount || homepageData.claimSummaryCount || 0);
+    setKpiValue('recentActivityClaims', kpis.recentActivityClaims || homepageData.recentActivityClaimCount || homepageData.recentActivityClaims || 0);
+    setKpiValue('timelineEvents', kpis.timelineEvents || homepageData.timelineEventCount || homepageData.timelineEventsCount || 0);
+    setKpiValue('openComplianceActions', kpis.openComplianceActions || homepageData.openComplianceActionCount || homepageData.openComplianceActionsCount || 0);
+  }
+
+  function setKpiValue(kpiName, value) {
+    const element = document.querySelector('[data-kpi="' + kpiName + '"]');
+    if (element) {
+      element.textContent = value || 0;
+    }
+  }
+
+  function renderTodayPriorities(items) {
+    document.getElementById('todayPrioritiesCount').textContent = items.length + ' items';
+    renderSimpleList('todayPrioritiesList', items, function(item) {
+      return item.claimDisplayName || 'Claim';
+    });
+  }
+
+  function renderBecomingStale(items) {
+    renderSimpleList('becomingStaleList', items, function(item) {
+      return item.claimDisplayName || 'Claim';
+    });
+  }
+
+  function renderOperationalAlerts(items) {
+    renderSimpleList('operationalAlertsList', items, function(item) {
+      return item.alertType || item.claimDisplayName || 'Alert';
+    });
+  }
+
+  function renderRecentActivity(items) {
+    renderSimpleList('recentActivityList', items, function(item) {
+      return item.claimDisplayName || item.customerName || item.claimId || 'Activity';
+    }, function(item) {
+      return item.summary || item.eventSummary || item.activitySummary || item.eventType || '';
+    });
+  }
+
+  function renderRecentClaimSummaries(items) {
+    renderSimpleList('recentClaimSummariesList', items, function(item) {
+      return item.claimDisplayName || item.customerName || item.claimId || 'Claim Summary';
+    }, function(item) {
+      return item.lastActivitySummary || item.lastActivityType || item.lifecycleState || '';
+    });
+  }
+
+  function renderTodaySchedule(items) {
+    renderSimpleList('todayScheduleList', items, function(item) {
+      return item.title || item.claimDisplayName || item.customerName || 'Calendar Event';
+    }, function(item) {
+      return formatScheduleTime(item);
+    });
+  }
+
+  function formatScheduleTime(item) {
+    if (!item) return '';
+
+    if (item.isAllDayEvent) {
+      return 'All Day';
+    }
+
+    const startValue = item.startTime || item.time || item.scheduledTime || '';
+    const endValue = item.endTime || '';
+
+    if (!startValue) {
+      return item.location || '';
+    }
+
+    const startDate = new Date(startValue);
+    const endDate = endValue ? new Date(endValue) : null;
+
+    if (isNaN(startDate.getTime())) {
+      return startValue;
+    }
+
+    const startText = formatClockTime(startDate);
+
+    if (!endDate || isNaN(endDate.getTime())) {
+      return startText;
+    }
+
+    return startText + ' - ' + formatClockTime(endDate);
+  }
+
+  function formatClockTime(date) {
+    return date.toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
+  function renderSimpleList(containerId, items, titleFn, metaFn) {
+    const container = document.getElementById(containerId);
+
+    if (!container) return;
+
+    if (!items.length) {
+      container.innerHTML = '<div class="rainbow-empty-state">No items available.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(function(item) {
+      return [
+        '<div class="rainbow-list-item">',
+        '<div class="rainbow-list-title">' + escapeHtml(titleFn(item)) + '</div>',
+        '<div class="rainbow-list-meta">' + escapeHtml(metaFn ? metaFn(item) : '') + '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+</script>

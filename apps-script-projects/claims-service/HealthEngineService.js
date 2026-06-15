@@ -83,10 +83,10 @@ function applyClaimHealth(claimId) {
 
     const evaluatedAt = evaluation.data.evaluatedAt || nowIso();
 
-    const updateResult = updateClaim(targetClaimId, {
-      Operational_Health: evaluation.data.healthLevel,
-      Health_Reason: evaluation.data.healthReason,
-      Health_Updated_At: evaluatedAt
+    const updateResult = updateHealthEngineClaimRow_(targetClaimId, {
+      'Health Status': evaluation.data.healthLevel,
+      'Health Reason': evaluation.data.healthReason,
+      'Last Updated': evaluatedAt
     });
 
     if (!updateResult.success) {
@@ -286,32 +286,199 @@ function expireHealthOverrides() {
   }
 }
 
+
+function getHealthEngineValueFromRow_(row, candidateKeys) {
+  if (!row) return '';
+
+  for (let i = 0; i < candidateKeys.length; i++) {
+    const directValue = row[candidateKeys[i]];
+    if (directValue !== undefined && directValue !== null && String(directValue).trim() !== '') {
+      return String(directValue).trim();
+    }
+  }
+
+  const normalizedCandidates = candidateKeys.map(function(key) {
+    return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+  });
+
+  const rowKeys = Object.keys(row);
+  for (let j = 0; j < rowKeys.length; j++) {
+    const rowKey = rowKeys[j];
+    const normalizedRowKey = String(rowKey).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (normalizedCandidates.indexOf(normalizedRowKey) !== -1) {
+      const value = row[rowKey];
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        return String(value).trim();
+      }
+    }
+  }
+
+  return '';
+}
+
+function getHealthEngineClaimIdFromRow_(claim) {
+  return getHealthEngineValueFromRow_(claim, [
+    'Claim_ID',
+    'Claim ID',
+    'ClaimId',
+    'claimId',
+    'Job_Number',
+    'Job Number',
+    'JobNumber',
+    'Job No',
+    'Job #'
+  ]);
+}
+
+function getHealthEngineLifecycleStateFromRow_(claim) {
+  return getHealthEngineValueFromRow_(claim, [
+    'Lifecycle_State',
+    'Lifecycle State',
+    'Lifecycle',
+    'Status',
+    'Claim_Status',
+    'Claim Status'
+  ]);
+}
+
+function findHealthEngineClaimsRows_() {
+  const sheet = getSheet(CLAIM_SHEET_NAMES.claims);
+  const values = sheet.getDataRange().getValues();
+
+  if (!values || values.length === 0) {
+    return [];
+  }
+
+  let headerRowIndex = 0;
+
+  for (let i = 0; i < Math.min(values.length, 10); i++) {
+    const normalizedHeaders = values[i].map(function(value) {
+      return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    });
+
+    if (normalizedHeaders.indexOf('claimid') !== -1 || normalizedHeaders.indexOf('jobnumber') !== -1) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  const headers = values[headerRowIndex].map(function(header) {
+    return String(header || '').trim();
+  });
+
+  return values.slice(headerRowIndex + 1).filter(function(row) {
+    return row.some(function(value) {
+      return String(value || '').trim() !== '';
+    });
+  }).map(function(row) {
+    const record = {};
+
+    headers.forEach(function(header, index) {
+      if (header) {
+        record[header] = row[index];
+      }
+    });
+
+    return record;
+  });
+}
+
+function updateHealthEngineClaimRow_(claimId, updates) {
+  const sheet = getSheet(CLAIM_SHEET_NAMES.claims);
+  const values = sheet.getDataRange().getValues();
+
+  if (!values || values.length === 0) {
+    return errorResponse('Claims sheet is empty.');
+  }
+
+  let headerRowIndex = 0;
+
+  for (let i = 0; i < Math.min(values.length, 10); i++) {
+    const normalizedHeaders = values[i].map(function(value) {
+      return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    });
+
+    if (normalizedHeaders.indexOf('claimid') !== -1 || normalizedHeaders.indexOf('jobnumber') !== -1) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  const headers = values[headerRowIndex].map(function(header) {
+    return String(header || '').trim();
+  });
+
+  const claimIdCol = headers.findIndex(function(header) {
+    return String(header || '').toLowerCase().replace(/[^a-z0-9]/g, '') === 'claimid';
+  });
+
+  if (claimIdCol === -1) {
+    return errorResponse('Missing key column Claim ID in Claims.');
+  }
+
+  let targetRowIndex = -1;
+
+  for (let r = headerRowIndex + 1; r < values.length; r++) {
+    if (String(values[r][claimIdCol] || '').trim() === String(claimId || '').trim()) {
+      targetRowIndex = r;
+      break;
+    }
+  }
+
+  if (targetRowIndex === -1) {
+    return notFoundResponse('No matching claim found for health update.', {
+      claimId: claimId
+    });
+  }
+
+  Object.keys(updates || {}).forEach(function(updateKey) {
+    const normalizedUpdateKey = String(updateKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const colIndex = headers.findIndex(function(header) {
+      return String(header || '').toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedUpdateKey;
+    });
+
+    if (colIndex !== -1) {
+      sheet.getRange(targetRowIndex + 1, colIndex + 1).setValue(updates[updateKey]);
+    }
+  });
+
+  return successResponse({
+    claimId: claimId,
+    updates: updates
+  }, 'Claim health row updated successfully.');
+}
+
 function batchApplyClaimHealth() {
   try {
-    const claims = getRows(CLAIM_SHEET_NAMES.claims);
+    const claims = findHealthEngineClaimsRows_();
     const results = [];
 
     claims.forEach(function(claim) {
-      if (!claim.Claim_ID) {
+      const claimId = getHealthEngineClaimIdFromRow_(claim);
+      const lifecycleState = getHealthEngineLifecycleStateFromRow_(claim);
+
+      if (!claimId) {
         return;
       }
 
-      if (claim.Lifecycle_State === 'Operationally Complete' || claim.Lifecycle_State === 'Not Sold') {
+      if (lifecycleState === 'Operationally Complete' || lifecycleState === 'Not Sold') {
         return;
       }
 
-      const result = applyClaimHealth(claim.Claim_ID);
+      const result = applyClaimHealth(claimId);
       results.push({
-        claimId: claim.Claim_ID,
+        claimId: claimId,
         success: result.success,
         healthLevel: result.success ? result.data.healthLevel : '',
-        message: result.message
+        message: result.message,
+        errors: result.errors || []
       });
     });
 
     const response = successResponse({
       evaluatedCount: results.length,
-      results: results
+      results: results.slice(0, 20)
     }, 'Batch claim health evaluation completed successfully.');
 
     Logger.log(JSON.stringify(response, null, 2));
@@ -333,9 +500,9 @@ function batchApplyClaimHealth() {
 }
 
 function gatherHealthInputs_(claimId) {
-  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+  const claims = findHealthEngineClaimsRows_();
   const claim = claims.find(function(row) {
-    return row.Claim_ID === claimId;
+    return getHealthEngineClaimIdFromRow_(row) === claimId;
   });
 
   if (!claim) {
@@ -355,12 +522,12 @@ function gatherHealthInputs_(claimId) {
     claimId: claimId,
     claim: claim,
 
-    lifecycleState: claim.Lifecycle_State || '',
-    ownershipArea: claim.Ownership_Area || '',
+    lifecycleState: getHealthEngineLifecycleStateFromRow_(claim),
+    ownershipArea: getHealthEngineValueFromRow_(claim, ['Ownership_Area', 'Ownership Area']),
 
     activeConditions: activeConditions,
 
-    operationalHealth: claim.Operational_Health || 'Healthy',
+    operationalHealth: getHealthEngineValueFromRow_(claim, ['Operational_Health', 'Health Status', 'Health_Status']) || 'Healthy',
 
     healthOverride: claim.Health_Override || '',
     healthOverrideReason: claim.Health_Override_Reason || '',
@@ -891,13 +1058,13 @@ function isDateOlderThanDays_(isoDate, thresholdDays) {
 }
 
 function getFirstClaimIdForHealthTest_() {
-  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+  const claims = findHealthEngineClaimsRows_();
 
-  if (!claims.length || !claims[0].Claim_ID) {
+  if (!claims.length || !getHealthEngineClaimIdFromRow_(claims[0])) {
     throw new Error('No claims available for health evaluation.');
   }
 
-  return claims[0].Claim_ID;
+  return getHealthEngineClaimIdFromRow_(claims[0]);
 }
 
 function testEvaluateClaimHealth() {

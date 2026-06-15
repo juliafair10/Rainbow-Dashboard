@@ -583,6 +583,62 @@
       padding: 10px 0;
     }
 
+    .homepage-schedule-panel {
+      margin-top: 18px;
+      border-top: 1px solid rgba(229, 231, 235, 0.9);
+      padding-top: 16px;
+    }
+
+    .homepage-schedule-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 10px 0;
+    }
+
+    .homepage-schedule-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .homepage-schedule-item {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .homepage-schedule-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .homepage-schedule-name {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .homepage-schedule-time {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .homepage-schedule-location {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .homepage-schedule-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 0;
+    }
+
     .homepage-alerts-panel {
       margin-top: 18px;
       border-top: 1px solid rgba(229, 231, 235, 0.9);
@@ -634,6 +690,62 @@
     }
 
     .homepage-alert-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 0;
+    }
+
+    .homepage-activity-panel {
+      margin-top: 18px;
+      border-top: 1px solid rgba(229, 231, 235, 0.9);
+      padding-top: 16px;
+    }
+
+    .homepage-activity-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0 0 10px 0;
+    }
+
+    .homepage-activity-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .homepage-activity-item {
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .homepage-activity-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .homepage-activity-name {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+
+    .homepage-activity-meta {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .homepage-activity-detail {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .homepage-activity-empty {
       color: var(--muted);
       font-size: 13px;
       padding: 10px 0;
@@ -1386,10 +1498,25 @@
         </div>
       </div>
 
+
+      <div class="homepage-schedule-panel">
+        <h3 class="homepage-schedule-title">Today’s Schedule</h3>
+        <div id="homepageTodaySchedule" class="homepage-schedule-list">
+          <div class="homepage-schedule-empty">Loading schedule...</div>
+        </div>
+      </div>
+
       <div class="homepage-alerts-panel">
         <h3 class="homepage-alerts-title">Operational Alerts</h3>
         <div id="homepageOperationalAlerts" class="homepage-alert-list">
           <div class="homepage-alert-empty">Loading alerts...</div>
+        </div>
+      </div>
+
+      <div class="homepage-activity-panel">
+        <h3 class="homepage-activity-title">Recent Activity</h3>
+        <div id="homepageRecentActivity" class="homepage-activity-list">
+          <div class="homepage-activity-empty">Loading recent activity...</div>
         </div>
       </div>
     </section>
@@ -1448,7 +1575,9 @@
       setHomepageKpiValue('homepage-kpi-waitingOnInsurance', kpis.waitingOnInsurance);
       setHomepageKpiValue('homepage-kpi-monitoringActive', kpis.monitoringActive);
       renderHomepageTodayPriorities(data.todayPriorities || []);
+      renderHomepageTodaySchedule(data.todaySchedule || []);
       renderHomepageOperationalAlerts(data.operationalAlerts || []);
+      renderHomepageRecentActivity(data.recentActivity || []);
 
       const status = data.systemStatus || {};
       const statusText = status.homepageService === 'Connected'
@@ -1518,6 +1647,45 @@
       }).join('');
     }
 
+
+
+    function renderHomepageTodaySchedule(scheduleItems) {
+      const container = document.getElementById('homepageTodaySchedule');
+      if (!container) {
+        return;
+      }
+
+      if (!scheduleItems || scheduleItems.length === 0) {
+        container.innerHTML = '<div class="homepage-schedule-empty">No Rainbow calendar events scheduled for today.</div>';
+        return;
+      }
+
+      container.innerHTML = scheduleItems.map(function(item) {
+        const timeText = item.isAllDayEvent
+          ? 'All day'
+          : [
+              item.startTime ? formatDisplayTime(item.startTime) : '',
+              item.endTime ? formatDisplayTime(item.endTime) : ''
+            ].filter(Boolean).join(' – ');
+
+        return `
+          <div class="homepage-schedule-item">
+            <div class="homepage-schedule-top">
+              <div class="homepage-schedule-name">
+                ${escapeHtml(item.title || 'Calendar Event')}
+              </div>
+              <div class="homepage-schedule-time">
+                ${escapeHtml(timeText)}
+              </div>
+            </div>
+            <div class="homepage-schedule-location">
+              ${item.location ? escapeHtml(item.location.trim()) : 'No location listed'}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
     function renderHomepageOperationalAlerts(alerts) {
       const container = document.getElementById('homepageOperationalAlerts');
       if (!container) {
@@ -1551,6 +1719,45 @@
             <div class="homepage-alert-reason">
               ${escapeHtml(alert.claimDisplayName || '')}
               ${reason ? ' — ' + escapeHtml(reason) : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderHomepageRecentActivity(activityItems) {
+      const container = document.getElementById('homepageRecentActivity');
+      if (!container) {
+        return;
+      }
+
+      if (!activityItems || activityItems.length === 0) {
+        container.innerHTML = '<div class="homepage-activity-empty">No recent claim activity available yet.</div>';
+        return;
+      }
+
+      container.innerHTML = activityItems.map(function(activity) {
+        const meta = [
+          activity.eventDate ? formatDisplayDateTime(activity.eventDate) : '',
+          activity.relatedWorkflow || '',
+          activity.sourceSystem || ''
+        ].filter(Boolean).join(' • ');
+
+        const detail = activity.detail || activity.eventType || '';
+
+        return `
+          <div class="homepage-activity-item">
+            <div class="homepage-activity-top">
+              <div class="homepage-activity-name">
+                ${escapeHtml(activity.summary || activity.eventType || 'Timeline activity')}
+              </div>
+              <div class="homepage-activity-meta">
+                ${escapeHtml(meta)}
+              </div>
+            </div>
+            <div class="homepage-activity-detail">
+              ${escapeHtml(activity.claimDisplayName || '')}
+              ${detail ? ' — ' + escapeHtml(detail) : ''}
             </div>
           </div>
         `;
@@ -1619,6 +1826,24 @@
           showNotice('error', err.message || err || 'Refresh failed.');
         })
         .runAutomation('phase-4f-queue-health');
+    }
+
+
+    function formatDisplayTime(value) {
+      if (!value) {
+        return '';
+      }
+
+      const date = new Date(value);
+
+      if (isNaN(date.getTime())) {
+        return value;
+      }
+
+      return date.toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit'
+      });
     }
 
     function refreshDashboard() {
@@ -3056,5 +3281,16 @@
       return 'status status-not-run';
     }
   </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('HomepageStyles'); ?>
+</head>
+<body>
+  <?!= include('HomepageView'); ?>
+  <?!= include('HomepageScripts'); ?>
 </body>
 </html>

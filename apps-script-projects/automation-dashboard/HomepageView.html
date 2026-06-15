@@ -1,0 +1,133 @@
+<div class="rainbow-homepage-shell">
+  <aside class="rainbow-sidebar">
+    <div class="rainbow-brand">
+      <div class="rainbow-brand-mark">R</div>
+      <div>
+        <div class="rainbow-brand-title">Rainbow</div>
+        <div class="rainbow-brand-subtitle">Operations</div>
+      </div>
+    </div>
+
+    <nav class="rainbow-nav">
+      <div class="rainbow-nav-section">Workspaces</div>
+      <button class="rainbow-nav-item is-active" type="button">Home</button>
+      <button class="rainbow-nav-item" type="button">Claims</button>
+      <button class="rainbow-nav-item" type="button">Intake</button>
+      <button class="rainbow-nav-item" type="button">Revisions</button>
+      <button class="rainbow-nav-item" type="button">EOJ</button>
+
+      <div class="rainbow-nav-section">Operations</div>
+      <button class="rainbow-nav-item" type="button">Reports</button>
+      <button class="rainbow-nav-item" type="button">Accounting</button>
+
+      <div class="rainbow-nav-section">System</div>
+      <button class="rainbow-nav-item" type="button">Automation Health</button>
+    </nav>
+  </aside>
+
+  <main class="rainbow-homepage-main">
+    <header class="rainbow-homepage-header">
+      <div>
+        <div class="rainbow-eyebrow">Daily operational cockpit</div>
+        <h1>Today at Rainbow</h1>
+      </div>
+
+      <div class="rainbow-search-wrap">
+        <input id="homepageSearchInput" class="rainbow-search" type="search" placeholder="Search claims, customers, claim numbers..." />
+      </div>
+    </header>
+
+    <section class="rainbow-kpi-grid" id="homepageKpis">
+      <div class="rainbow-card rainbow-kpi-card">
+        <div class="rainbow-card-label">Active Claims</div>
+        <div class="rainbow-kpi-value" data-kpi="activeClaims">—</div>
+      </div>
+      <div class="rainbow-card rainbow-kpi-card">
+        <div class="rainbow-card-label">Recent Activity Claims</div>
+        <div class="rainbow-kpi-value" data-kpi="recentActivityClaims">—</div>
+      </div>
+      <div class="rainbow-card rainbow-kpi-card">
+        <div class="rainbow-card-label">Timeline Events</div>
+        <div class="rainbow-kpi-value" data-kpi="timelineEvents">—</div>
+      </div>
+      <div class="rainbow-card rainbow-kpi-card">
+        <div class="rainbow-card-label">Open Compliance Actions</div>
+        <div class="rainbow-kpi-value" data-kpi="openComplianceActions">—</div>
+      </div>
+    </section>
+
+    <section class="rainbow-homepage-content-grid">
+      <div class="rainbow-homepage-primary">
+        <section class="rainbow-card rainbow-section-card">
+          <div class="rainbow-section-header">
+            <div>
+              <div class="rainbow-card-label">Today’s Priorities</div>
+              <h2>Operational focus</h2>
+            </div>
+            <span class="rainbow-muted" id="todayPrioritiesCount">Loading...</span>
+          </div>
+          <div id="todayPrioritiesList" class="rainbow-list"></div>
+        </section>
+
+        <div class="rainbow-two-column-grid">
+          <section class="rainbow-card rainbow-section-card">
+            <div class="rainbow-section-header">
+              <div>
+                <div class="rainbow-card-label">Becoming Stale</div>
+                <h2>Watchlist</h2>
+              </div>
+            </div>
+            <div id="becomingStaleList" class="rainbow-list"></div>
+          </section>
+
+          <section class="rainbow-card rainbow-section-card">
+            <div class="rainbow-section-header">
+              <div>
+                <div class="rainbow-card-label">Operational Alerts</div>
+                <h2>Open alerts</h2>
+              </div>
+            </div>
+            <div id="operationalAlertsList" class="rainbow-list"></div>
+          </section>
+        </div>
+
+        <section class="rainbow-card rainbow-section-card">
+          <div class="rainbow-section-header">
+            <div>
+              <div class="rainbow-card-label">Recent Activity</div>
+              <h2>Latest meaningful movement</h2>
+            </div>
+          </div>
+          <div id="recentActivityList" class="rainbow-list rainbow-activity-list"></div>
+        </section>
+      </div>
+
+      <aside class="rainbow-homepage-rail">
+        <section class="rainbow-card rainbow-section-card">
+          <div class="rainbow-section-header">
+            <div>
+              <div class="rainbow-card-label">Today’s Schedule</div>
+              <h2>Calendar</h2>
+            </div>
+          </div>
+          <div id="todayScheduleList" class="rainbow-list"></div>
+        </section>
+
+        <section class="rainbow-card rainbow-section-card">
+          <div class="rainbow-section-header">
+            <div>
+              <div class="rainbow-card-label">Recent Claim Summaries</div>
+              <h2>Claim snapshots</h2>
+            </div>
+          </div>
+          <div id="recentClaimSummariesList" class="rainbow-list"></div>
+        </section>
+
+        <section class="rainbow-card rainbow-status-card">
+          <div class="rainbow-card-label">Operational Status</div>
+          <div id="systemStatusStrip" class="rainbow-status-strip">Loading homepage data v7...</div>
+        </section>
+      </aside>
+    </section>
+  </main>
+</div>

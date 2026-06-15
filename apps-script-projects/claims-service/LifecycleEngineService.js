@@ -1,5 +1,3 @@
-
-
 /**
  * LifecycleEngineService
  * Rainbow Phase 6 - Lifecycle Engine
@@ -188,13 +186,30 @@ function getLifecycleActivityText_(activities) {
 function getClaimById_(claimId) {
   const claimLookup = lookupClaim({ Claim_ID: claimId });
 
-  if (!claimLookup.success) {
-    return claimLookup;
+  if (claimLookup && claimLookup.success) {
+    return successResponse({
+      claim: claimLookup.data.claim
+    }, 'Claim found.');
+  }
+
+  const claims = typeof findConditionEngineClaimsRows_ === 'function'
+    ? findConditionEngineClaimsRows_()
+    : [];
+
+  const fallbackClaim = (claims || []).find(function(claim) {
+    return getConditionEngineClaimIdFromRow_(claim) === claimId;
+  });
+
+  if (!fallbackClaim) {
+    return validationErrorResponse([
+      'Claim not found by Claim_ID: ' + claimId,
+      'Primary lookup message: ' + (claimLookup && claimLookup.message ? claimLookup.message : '')
+    ]);
   }
 
   return successResponse({
-    claim: claimLookup.data.claim
-  }, 'Claim found.');
+    claim: fallbackClaim
+  }, 'Claim found by lifecycle fallback row lookup.');
 }
 
 function testEvaluateLifecycle() {
@@ -229,6 +244,7 @@ function testEvaluateLifecycleTransition() {
   return result;
 }
 
+
 function testApplyLifecycleTransition() {
   const claimLookup = lookupClaim({
     Display_Name: 'CLAIRE JACKSON',
@@ -243,4 +259,53 @@ function testApplyLifecycleTransition() {
   const result = applyLifecycleTransition(claimLookup.data.claim.Claim_ID);
   Logger.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+function testLifecycleEngineBatchReadiness() {
+  const claims = typeof findConditionEngineClaimsRows_ === 'function'
+    ? findConditionEngineClaimsRows_()
+    : [];
+
+  if (!claims || !claims.length) {
+    return validationErrorResponse(['Unable to load claims for lifecycle batch readiness test.']);
+  }
+  const activeClaims = claims.filter(function(claim) {
+    const state = String(getConditionEngineLifecycleStateFromRow_(claim)).trim();
+    return state !== 'Operationally Complete' && state !== 'Not Sold';
+  });
+
+  const stateCounts = {};
+  const samples = activeClaims.slice(0, 10).map(function(claim) {
+    const claimId = getConditionEngineClaimIdFromRow_(claim);
+    const jobNumber = getConditionEngineJobNumberFromRow_(claim);
+    const result = evaluateLifecycleState(claimId);
+    const lifecycleState = result.success ? result.data.lifecycleState : 'Error';
+
+    stateCounts[lifecycleState] = (stateCounts[lifecycleState] || 0) + 1;
+
+    return {
+      claimId: claimId,
+      jobNumber: jobNumber,
+      previousState: result.success ? result.data.previousState : '',
+      lifecycleState: lifecycleState,
+      transitionTriggered: result.success ? result.data.transitionTriggered : false,
+      reason: result.success ? result.data.reason : '',
+      signals: result.success ? result.data.signals : null,
+      success: result.success,
+      message: result.message || '',
+      errors: result.errors || [],
+      rawStatus: result.status || ''
+    };
+  });
+
+  const response = successResponse({
+    totalClaimRows: claims.length,
+    activeClaimRows: activeClaims.length,
+    sampledClaimRows: samples.length,
+    sampledStateCounts: stateCounts,
+    sampleEvaluations: samples
+  }, 'Lifecycle Engine batch readiness checked.');
+
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
 }

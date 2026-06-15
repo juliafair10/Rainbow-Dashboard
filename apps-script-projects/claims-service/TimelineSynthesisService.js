@@ -14,13 +14,161 @@ function synthesizeClaimActivities(claimId) {
   }
 
   const activityGroups = groupsResult.data.activityGroups || [];
-  const synthesizedActivities = correlateTimelineGroupsByRun_(activityGroups);
+  let synthesizedActivities = correlateTimelineGroupsByRun_(activityGroups);
+
+  if (shouldUseRawTimelineFallback_(synthesizedActivities)) {
+    synthesizedActivities = synthesizeActivitiesFromRawTimeline_(claimId);
+  }
 
   return successResponse({
     claimId: claimId,
     activityCount: synthesizedActivities.length,
     activities: synthesizedActivities
   }, 'Claim activities synthesized successfully.');
+}
+
+function synthesizeActivitiesFromRawTimeline_(claimId) {
+  const timelineResult = getTimelineForClaim(claimId);
+
+  if (!timelineResult.success) {
+    return [];
+  }
+
+  const events = timelineResult.data.timeline || [];
+
+  return events.map(function(event) {
+    const activityType = deriveRawTimelineActivityType_(event);
+    const label = deriveRawTimelineActivityLabel_(activityType, event);
+
+    return {
+      activityId: Utilities.getUuid(),
+      activityType: activityType,
+      activityLabel: label,
+      priority: deriveRawTimelinePriority_(activityType, event),
+      isMeaningful: isRawTimelineActivityMeaningful_(activityType, event),
+      startDate: normalizeRawTimelineDate_(event.Event_Date || event.Created_At),
+      endDate: normalizeRawTimelineDate_(event.Event_Date || event.Created_At),
+      claimId: event.Claim_ID || claimId,
+      sourceGroups: 0,
+      sourceEvents: 1,
+      summary: label,
+      groups: [],
+      events: [event]
+    };
+  });
+}
+
+function deriveRawTimelineActivityType_(event) {
+  const text = getRawTimelineText_(event);
+
+  if (text.indexOf('MONITOR') !== -1) {
+    return 'Monitoring';
+  }
+
+  if (
+    text.indexOf('MITIGATION') !== -1 ||
+    text.indexOf('DEMO') !== -1 ||
+    text.indexOf('DRYWALL') !== -1 ||
+    text.indexOf('FLOOD CUT') !== -1 ||
+    text.indexOf('EQUIPMENT') !== -1 ||
+    text.indexOf('INSPECTED LOSS') !== -1 ||
+    text.indexOf('FIELD') !== -1
+  ) {
+    return 'Field Work';
+  }
+
+  if (
+    text.indexOf('REVISION') !== -1 ||
+    text.indexOf('REVISIONS REQUESTED') !== -1 ||
+    text.indexOf('PLEASE REVIEW FOR REVISIONS') !== -1 ||
+    text.indexOf('REQUESTED BELOW') !== -1
+  ) {
+    return 'Revision';
+  }
+
+  if (
+    text.indexOf('REVIEW ACCEPTED') !== -1 ||
+    text.indexOf('ESTIMATE') !== -1 ||
+    text.indexOf('SUPPLEMENT') !== -1 ||
+    text.indexOf('CARRIER') !== -1 ||
+    text.indexOf('ADJUSTER') !== -1 ||
+    text.indexOf('EMS:') !== -1
+  ) {
+    return 'Insurance Review';
+  }
+
+  if (
+    text.indexOf('PAYMENT') !== -1 ||
+    text.indexOf('PAID') !== -1 ||
+    text.indexOf('CHECK') !== -1 ||
+    text.indexOf('REMITTANCE') !== -1
+  ) {
+    return 'Payment';
+  }
+
+  if (
+    text.indexOf('INTAKE') !== -1 ||
+    text.indexOf('ASSIGNMENT') !== -1 ||
+    text.indexOf('CUSTOMER CONTACT') !== -1 ||
+    text.indexOf('SCHEDULE') !== -1
+  ) {
+    return 'Intake';
+  }
+
+  return 'General';
+}
+
+function deriveRawTimelineActivityLabel_(activityType, event) {
+  if (activityType === 'Monitoring') return 'Monitoring Activity';
+  if (activityType === 'Field Work') return 'Field Work Activity';
+  if (activityType === 'Revision') return 'Revision Activity';
+  if (activityType === 'Insurance Review') return 'Insurance Review Activity';
+  if (activityType === 'Payment') return 'Payment Activity';
+  if (activityType === 'Intake') return 'Intake Activity';
+
+  return event.Event_Type || 'Timeline Activity';
+}
+
+function deriveRawTimelinePriority_(activityType, event) {
+  if (activityType === 'Revision') return 'high';
+  if (activityType === 'Payment') return 'high';
+  if (activityType === 'Field Work') return 'normal';
+  if (activityType === 'Insurance Review') return 'normal';
+  return 'low';
+}
+
+function isRawTimelineActivityMeaningful_(activityType, event) {
+  if (activityType !== 'General') {
+    return true;
+  }
+
+  const text = getRawTimelineText_(event);
+  return text.length > 120;
+}
+
+function normalizeRawTimelineDate_(dateValue) {
+  if (!dateValue) {
+    return null;
+  }
+
+  const parsed = new Date(dateValue);
+  if (isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+}
+
+function getRawTimelineText_(event) {
+  return [
+    event.Event_Type || '',
+    event.Event_Source || '',
+    event.Source_System || '',
+    event.Summary || '',
+    event.Detail || '',
+    event.Related_Workflow || '',
+    event.Visibility || ''
+  ].join(' | ').toUpperCase();
 }
 
 function correlateTimelineGroupsByRun_(activityGroups) {
@@ -393,4 +541,33 @@ function testSynthesizeMonitoringBucket() {
 
   Logger.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+
+function testSynthesizeKnownClaimActivities() {
+  const claimId = 'CLM-26A-0034-WTR';
+  const result = synthesizeClaimActivities(claimId);
+
+  const response = successResponse({
+    claimId: claimId,
+    activityCount: result.success ? result.data.activityCount : 0,
+    sampleActivity: result.success && result.data.activities.length ? result.data.activities[0] : null,
+    result: result
+  }, 'Known claim activity synthesis tested.');
+
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function shouldUseRawTimelineFallback_(synthesizedActivities) {
+  if (!synthesizedActivities || synthesizedActivities.length === 0) {
+    return true;
+  }
+
+  return synthesizedActivities.every(function(activity) {
+    const activityType = String(activity.activityType || '').trim();
+    const isMeaningful = activity.isMeaningful === true;
+
+    return activityType === 'General' && !isMeaningful;
+  });
 }

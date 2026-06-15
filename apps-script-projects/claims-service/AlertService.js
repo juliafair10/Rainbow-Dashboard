@@ -106,17 +106,6 @@ function getActiveAlerts(claimId) {
   }, 'Active alerts retrieved.');
 }
 
-function testAddAlert() {
-  return addAlert('CLM-20260605-821496', 'Missing EOJ', {
-    Severity: 'High',
-    Reason: 'AlertService test alert.',
-    Recommended_Action: 'Review missing EOJ.',
-    Owner_Area: 'Field Operations',
-    Source_System: 'claims-service test',
-    Source_Record_ID: 'TEST-ALERT-001',
-    Notes: 'Test alert created during Phase 4 Claim Foundation build.'
-  });
-}
 
 function testAlertClaimLookup() {
   return lookupClaim({
@@ -129,35 +118,73 @@ function testGetActiveAlerts() {
   return getActiveAlerts('CLM-20260605-821496');
 }
 
-function testHardWriteAlertRow() {
-  const now = nowIso();
-  const alert = {
-    Alert_ID: generateId(CLAIM_ID_PREFIXES.alert),
-    Claim_ID: 'CLM-20260605-821496',
-    Alert_Type: 'Missing EOJ',
-    Alert_Status: 'Active',
-    Severity: 'High',
-    Source_System: 'claims-service hard write test',
-    Source_Record_ID: 'TEST-HARD-ALERT-001',
-    Reason: 'Hard write alert test.',
-    Recommended_Action: 'Verify Claim_Alerts direct write.',
-    Owner_Area: 'Field Operations',
-    Created_At: now,
-    Resolved_At: '',
-    Notes: 'This bypasses claim lookup and verifies direct Claim_Alerts writing.'
-  };
 
-  const result = appendRow(CLAIM_SHEET_NAMES.alerts, alert);
+function cleanupClaimAlertTestRows() {
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.alerts);
 
-  writeServiceLog('testHardWriteAlertRow', 'Success', 'Hard alert write test completed.', {
-    claimId: alert.Claim_ID,
-    sourceSystem: alert.Source_System,
-    sourceRecordId: alert.Source_Record_ID,
-    alertId: alert.Alert_ID,
-    appendResult: result
-  });
+  if (!sheet) {
+    return errorResponse('Claim_Alerts sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.alerts
+    });
+  }
 
-  return result;
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return successResponse({
+      removedCount: 0,
+      removedRows: []
+    }, 'No alert rows found to clean.');
+  }
+
+  const headers = values[0];
+  const sourceSystemIndex = headers.indexOf('Source_System');
+  const sourceRecordIdIndex = headers.indexOf('Source_Record_ID');
+  const reasonIndex = headers.indexOf('Reason');
+  const recommendedActionIndex = headers.indexOf('Recommended_Action');
+
+  if (sourceSystemIndex === -1 || sourceRecordIdIndex === -1 || reasonIndex === -1 || recommendedActionIndex === -1) {
+    return errorResponse('Required alert cleanup columns not found.', {
+      headers: headers
+    });
+  }
+
+  const removedRows = [];
+
+  for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex--) {
+    const row = values[rowIndex];
+    const sourceSystem = row[sourceSystemIndex];
+    const sourceRecordId = row[sourceRecordIdIndex];
+    const reason = row[reasonIndex];
+    const recommendedAction = row[recommendedActionIndex];
+
+    const isClaimAlertTest = sourceSystem === 'claims-service hard write test'
+      || sourceSystem === 'claims-service test'
+      || sourceRecordId === 'TEST-HARD-ALERT-001'
+      || sourceRecordId === 'TEST-ALERT-001'
+      || reason === 'Hard write alert test.'
+      || reason === 'AlertService test alert.'
+      || recommendedAction === 'Verify Claim_Alerts direct write.'
+      || recommendedAction === 'Review missing EOJ.';
+
+    if (isClaimAlertTest) {
+      const sheetRowNumber = rowIndex + 1;
+      removedRows.push(sheetRowNumber);
+      sheet.deleteRow(sheetRowNumber);
+    }
+  }
+
+  return successResponse({
+    removedCount: removedRows.length,
+    removedRows: removedRows.reverse()
+  }, 'Claim alert test rows cleaned successfully.');
+}
+
+function testCleanupClaimAlertTestRows() {
+  const response = cleanupClaimAlertTestRows();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
 }
 
 function testAlertHeaders() {

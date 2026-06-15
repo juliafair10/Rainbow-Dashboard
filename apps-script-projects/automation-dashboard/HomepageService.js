@@ -1,4 +1,4 @@
-function getHomepageSummary() {
+function getHomepageServiceSummaryLegacy_() {
   try {
     const claimSummary = getHomepageClaimSummaryData();
     const generatedAt = new Date().toISOString();
@@ -61,7 +61,7 @@ function getHomepageSummary() {
 }
 
 function testGetHomepageSummary() {
-  const result = getHomepageSummary();
+  const result = getHomepageServiceSummaryLegacy_();
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }

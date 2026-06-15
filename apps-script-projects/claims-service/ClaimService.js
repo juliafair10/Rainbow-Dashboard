@@ -461,6 +461,7 @@ function testLookupClaim() {
   });
 }
 
+
 function repairClaireJacksonTestClaim() {
   return updateClaim('CLM-20260605-821496', {
     Claim_Number: '26N-0127-MLD',
@@ -470,4 +471,110 @@ function repairClaireJacksonTestClaim() {
     Source_System: 'claims-service test',
     Notes: 'Test claim repaired after sparse update fix.'
   });
+}
+
+function cleanupInsuranceIntakeTestClaimRows() {
+  const testClaimId = 'CLM-20260610-751259';
+  const testClaimNumber = 'INTAKE-TEST-001';
+  const cleanupTargets = [
+    { sheetName: CLAIM_SHEET_NAMES.timeline, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.conditions, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.alerts, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.ownershipHistory, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.financialTracks, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.externalLinks, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.healthHistory, matchColumns: ['Claim_ID'] },
+    { sheetName: CLAIM_SHEET_NAMES.claims, matchColumns: ['Claim_ID', 'Claim_Number'] }
+  ];
+
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const results = [];
+
+  cleanupTargets.forEach(function(target) {
+    const sheet = ss.getSheetByName(target.sheetName);
+
+    if (!sheet) {
+      results.push({
+        sheetName: target.sheetName,
+        skipped: true,
+        reason: 'Sheet not found.',
+        removedCount: 0,
+        removedRows: []
+      });
+      return;
+    }
+
+    const values = sheet.getDataRange().getValues();
+
+    if (values.length < 2) {
+      results.push({
+        sheetName: target.sheetName,
+        skipped: false,
+        removedCount: 0,
+        removedRows: []
+      });
+      return;
+    }
+
+    const headers = values[0];
+    const columnIndexes = target.matchColumns.map(function(columnName) {
+      return {
+        columnName: columnName,
+        index: headers.indexOf(columnName)
+      };
+    }).filter(function(column) {
+      return column.index !== -1;
+    });
+
+    if (columnIndexes.length === 0) {
+      results.push({
+        sheetName: target.sheetName,
+        skipped: true,
+        reason: 'No matching cleanup columns found.',
+        removedCount: 0,
+        removedRows: []
+      });
+      return;
+    }
+
+    const removedRows = [];
+
+    for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex--) {
+      const row = values[rowIndex];
+      const shouldDelete = columnIndexes.some(function(column) {
+        const value = row[column.index];
+        return value === testClaimId || value === testClaimNumber;
+      });
+
+      if (shouldDelete) {
+        const sheetRowNumber = rowIndex + 1;
+        removedRows.push(sheetRowNumber);
+        sheet.deleteRow(sheetRowNumber);
+      }
+    }
+
+    results.push({
+      sheetName: target.sheetName,
+      skipped: false,
+      removedCount: removedRows.length,
+      removedRows: removedRows.reverse()
+    });
+  });
+
+  const totalRemoved = results.reduce(function(total, result) {
+    return total + (result.removedCount || 0);
+  }, 0);
+
+  return successResponse({
+    testClaimId: testClaimId,
+    testClaimNumber: testClaimNumber,
+    totalRemoved: totalRemoved,
+    results: results
+  }, 'Insurance intake test claim rows cleaned successfully.');
+}
+
+function testCleanupInsuranceIntakeTestClaimRows() {
+  const response = cleanupInsuranceIntakeTestClaimRows();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
 }

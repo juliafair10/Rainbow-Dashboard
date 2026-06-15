@@ -69,9 +69,13 @@ function getTimelineForClaim(claimId) {
     return validationErrorResponse(['Claim_ID is required to retrieve timeline.']);
   }
 
-  const rows = findRows(CLAIM_SHEET_NAMES.timeline, {
+  let rows = findRows(CLAIM_SHEET_NAMES.timeline, {
     Claim_ID: claimId
   });
+
+  if (!rows || rows.length === 0) {
+    rows = getTimelineRowsForClaimFallback_(claimId);
+  }
 
   rows.sort(function(a, b) {
     const aDate = new Date(a.Event_Date || a.Created_At || 0).getTime();
@@ -84,6 +88,121 @@ function getTimelineForClaim(claimId) {
     timeline: rows,
     count: rows.length
   }, 'Timeline retrieved successfully.');
+}
+
+// Helper for matching claim keys for fallback timeline search
+
+function getTimelineMatchingKeysForClaim_(claimId) {
+  const keys = {};
+  const rawClaimId = String(claimId || '').trim();
+
+  if (rawClaimId) {
+    keys[rawClaimId] = true;
+  }
+
+  const claims = typeof findConditionEngineClaimsRows_ === 'function'
+    ? findConditionEngineClaimsRows_()
+    : [];
+
+  const claim = (claims || []).find(function(row) {
+    return getConditionEngineClaimIdFromRow_(row) === rawClaimId;
+  });
+
+  if (!claim) {
+    return keys;
+  }
+
+  const jobNumber = String(getConditionEngineJobNumberFromRow_(claim) || '').trim();
+  const claimNumber = String(claim.Claim_Number || claim['Claim Number'] || '').trim();
+
+  if (jobNumber) {
+    keys[jobNumber] = true;
+    keys['CLM-' + jobNumber] = true;
+  }
+
+  if (claimNumber) {
+    keys[claimNumber] = true;
+  }
+
+  return keys;
+}
+
+function getTimelineRowsForClaimFallback_(claimId) {
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.timeline);
+
+  if (!sheet) {
+    return [];
+  }
+
+  const values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    return [];
+  }
+
+  const headerRowIndex = findTimelineHeaderRowIndex_(values);
+  const headers = values[headerRowIndex];
+  const rows = [];
+  const matchingKeys = getTimelineMatchingKeysForClaim_(claimId);
+
+  for (let rowIndex = headerRowIndex + 1; rowIndex < values.length; rowIndex++) {
+    const row = values[rowIndex];
+    const record = {};
+
+    headers.forEach(function(header, columnIndex) {
+      if (header) {
+        record[String(header).trim()] = row[columnIndex];
+      }
+    });
+    const recordClaimKey = String(
+      record.Claim_ID ||
+      record['Claim ID'] ||
+      record.Job_Number ||
+      record['Job Number'] ||
+      record.Claim_Number ||
+      record['Claim Number'] ||
+      ''
+    ).trim();
+
+    if (matchingKeys[recordClaimKey]) {
+      rows.push(normalizeTimelineFallbackRecord_(record));
+    }
+  }
+
+  return rows;
+}
+
+function findTimelineHeaderRowIndex_(values) {
+  for (let rowIndex = 0; rowIndex < Math.min(values.length, 10); rowIndex++) {
+    const row = values[rowIndex].map(function(value) {
+      return String(value || '').trim();
+    });
+
+    if (row.indexOf('Claim_ID') !== -1 || row.indexOf('Claim ID') !== -1) {
+      return rowIndex;
+    }
+  }
+
+  return 0;
+}
+
+function normalizeTimelineFallbackRecord_(record) {
+  return {
+    Timeline_Event_ID: record.Timeline_Event_ID || record['Timeline Event ID'] || record.Event_ID || record['Event ID'] || '',
+    Claim_ID: record.Claim_ID || record['Claim ID'] || '',
+    Event_Date: record.Event_Date || record['Event Date'] || record.Activity_Date || record['Activity Date'] || record.Created_At || record['Created At'] || '',
+    Created_At: record.Created_At || record['Created At'] || '',
+    Event_Type: record.Event_Type || record['Event Type'] || record.Activity_Type || record['Activity Type'] || record.Type || '',
+    Event_Source: record.Event_Source || record['Event Source'] || record.Source_System || record['Source System'] || '',
+    Source_System: record.Source_System || record['Source System'] || record.Event_Source || record['Event Source'] || '',
+    Source_Record_ID: record.Source_Record_ID || record['Source Record ID'] || '',
+    Summary: record.Summary || record.Activity_Label || record['Activity Label'] || record.Description || '',
+    Detail: record.Detail || record.Details || record.Note || record.Notes || '',
+    Actor: record.Actor || record.Owner || '',
+    Related_Workflow: record.Related_Workflow || record['Related Workflow'] || record.Workflow || '',
+    Event_Category: record.Event_Category || record['Event Category'] || record.Category || '',
+    Is_Meaningful_Activity: record.Is_Meaningful_Activity || record['Is Meaningful Activity'] || record.Meaningful || false
+  };
 }
 
 function isMeaningfulActivity(event) {
@@ -249,6 +368,105 @@ function cleanupNonCanonicalEojPhotoTimelineEvents() {
 
 function testCleanupNonCanonicalEojPhotoTimelineEvents() {
   const response = cleanupNonCanonicalEojPhotoTimelineEvents();
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testTimelineFallbackForFirstClaim() {
+  const claims = typeof findConditionEngineClaimsRows_ === 'function'
+    ? findConditionEngineClaimsRows_()
+    : [];
+
+  const firstClaim = claims && claims.length ? claims[0] : null;
+  const claimId = firstClaim ? getConditionEngineClaimIdFromRow_(firstClaim) : '';
+
+  const result = getTimelineForClaim(claimId);
+
+  const response = successResponse({
+    claimId: claimId,
+    timelineCount: result.success ? result.data.count : 0,
+    sampleTimelineEvent: result.success && result.data.timeline.length ? result.data.timeline[0] : null,
+    result: result
+  }, 'Timeline fallback test completed.');
+
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testTimelineFallbackForKnownClaim() {
+  const claimId = 'CLM-26A-0034-WTR';
+  const result = getTimelineForClaim(claimId);
+
+  const response = successResponse({
+    claimId: claimId,
+    timelineCount: result.success ? result.data.count : 0,
+    sampleTimelineEvent: result.success && result.data.timeline.length ? result.data.timeline[0] : null,
+    result: result
+  }, 'Timeline fallback known-claim test completed.');
+
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testTimelineSheetStructure() {
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.timeline);
+
+  if (!sheet) {
+    const response = errorResponse('Timeline sheet not found.', {
+      spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID,
+      timelineSheetName: CLAIM_SHEET_NAMES.timeline
+    });
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headerRowIndex = findTimelineHeaderRowIndex_(values);
+  const headers = values.length ? values[headerRowIndex] : [];
+  const knownClaimId = 'CLM-26A-0034-WTR';
+  const matchingKeys = getTimelineMatchingKeysForClaim_(knownClaimId);
+
+  const firstFiveRecords = [];
+  for (let rowIndex = headerRowIndex + 1; rowIndex < Math.min(values.length, headerRowIndex + 6); rowIndex++) {
+    const row = values[rowIndex];
+    const record = {};
+    headers.forEach(function(header, columnIndex) {
+      if (header) {
+        record[String(header).trim()] = row[columnIndex];
+      }
+    });
+    firstFiveRecords.push(record);
+  }
+
+  const claimLikeMatches = [];
+  for (let rowIndex = headerRowIndex + 1; rowIndex < values.length && claimLikeMatches.length < 10; rowIndex++) {
+    const row = values[rowIndex];
+    const record = {};
+    headers.forEach(function(header, columnIndex) {
+      if (header) {
+        record[String(header).trim()] = row[columnIndex];
+      }
+    });
+
+    const recordText = JSON.stringify(record);
+    if (recordText.indexOf('26A-0034-WTR') !== -1 || recordText.indexOf('822508719') !== -1 || recordText.indexOf('RAFI') !== -1) {
+      claimLikeMatches.push(record);
+    }
+  }
+
+  const response = successResponse({
+    spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID,
+    sheetName: CLAIM_SHEET_NAMES.timeline,
+    lastRow: sheet.getLastRow(),
+    lastColumn: sheet.getLastColumn(),
+    detectedHeaderRow: headerRowIndex + 1,
+    detectedHeaders: headers,
+    matchingKeysForKnownClaim: matchingKeys,
+    firstFiveRecords: firstFiveRecords,
+    claimLikeMatches: claimLikeMatches
+  }, 'Timeline sheet structure inspected.');
+
   Logger.log(JSON.stringify(response, null, 2));
   return response;
 }

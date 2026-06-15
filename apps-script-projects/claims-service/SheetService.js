@@ -3,7 +3,7 @@
  */
 
 function getClaimFoundationSpreadsheet_() {
-  return SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  return SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
 }
 
 function getSheet(sheetName) {
@@ -270,13 +270,13 @@ function testClaimFoundationSheetConnection() {
 
   writeServiceLog('testClaimFoundationSheetConnection', 'Success', 'Sheet connection test completed.', {
     sourceSystem: CLAIM_SERVICE.name,
-    spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID
+    spreadsheetId: CLAIM_SERVICE.spreadsheetId
   });
 
   return successResponse({
     spreadsheetName: ss.getName(),
-    spreadsheetId: CLAIM_FOUNDATION_SPREADSHEET_ID,
+    spreadsheetId: CLAIM_SERVICE.spreadsheetId,
     claimsHeaderCount: claimsHeaders.length,
     timelineHeaderCount: timelineHeaders.length
-  }, 'Claim Foundation spreadsheet connection verified.');
+  }, 'Claims spreadsheet connection verified.');
 }
