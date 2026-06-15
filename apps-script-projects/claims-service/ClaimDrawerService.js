@@ -13,6 +13,7 @@ function getClaimDrawer(claimId) {
   var claim = getClaimSummaryById_(claimId);
   var externalLinkPayload = ClaimExternalLinkService.getClaimExternalLinks(claimId);
   var financialTrackPayload = ClaimFinancialTrackService.getClaimFinancialTracks(claimId);
+  var summary = getClaimWorkspaceSummary_(claimId);
 
   if (!claim) {
     throw new Error('Claim not found: ' + claimId);
@@ -38,7 +39,12 @@ function getClaimDrawer(claimId) {
     activeConditions: claim.activeConditions || [],
     activeAlerts: claim.activeAlerts || [],
 
-    openNextActions: [],
+    openNextActions: summary.openComplianceActions > 0
+      ? [{
+          actionId: 'reviewOpenActions',
+          label: summary.openComplianceActions + ' Open Compliance Actions'
+        }]
+      : [],
 
     financialTracks: financialTrackPayload.tracks,
 
@@ -47,6 +53,14 @@ function getClaimDrawer(claimId) {
     missingLinks: externalLinkPayload.missingLinks,
 
     recentTimelineEvents: [],
+
+    activitySummary: {
+      lastActivityDate: summary.lastActivityDate,
+      lastActivityType: summary.lastActivityType,
+      lastActivitySummary: summary.lastActivitySummary,
+      timelineEventCount: summary.timelineEventCount,
+      openComplianceActions: summary.openComplianceActions
+    },
 
     upcomingCalendarEvents: [],
 
@@ -62,6 +76,64 @@ function getClaimDrawer(claimId) {
 
     recommendedDrawerActions: buildRecommendedDrawerActions_(claim)
   };
+}
+function getClaimWorkspaceSummary_(claimId) {
+  try {
+    var sheet = SpreadsheetApp
+      .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
+      .getSheetByName('Claim_Summaries');
+
+    if (!sheet) {
+      return {};
+    }
+
+    var values = sheet.getDataRange().getValues();
+    if (values.length < 2) {
+      return {};
+    }
+
+    var headers = values[0];
+
+    var records = values.slice(1)
+      .filter(function(row) {
+        return row.join('').trim() !== '';
+      })
+      .map(function(row) {
+        var record = {};
+        headers.forEach(function(header, index) {
+          record[header] = row[index];
+        });
+        return record;
+      });
+
+    var normalizedClaimId = String(claimId || '');
+    var normalizedJobNumber = normalizedClaimId.replace(/^CLM-/, '');
+
+    var match = records.find(function(record) {
+      var recordClaimId = String(record['Claim ID'] || '');
+      var recordJobNumber = String(record['Job Number'] || '');
+
+      return recordClaimId === normalizedClaimId ||
+             recordClaimId === normalizedJobNumber ||
+             recordJobNumber === normalizedClaimId ||
+             recordJobNumber === normalizedJobNumber;
+    });
+
+    if (!match) {
+      Logger.log('Claim_Summaries match not found for: ' + claimId);
+      return {};
+    }
+
+    return {
+      lastActivityDate: match['Last Activity Date'] || null,
+      lastActivityType: match['Last Activity Type'] || '',
+      lastActivitySummary: match['Last Activity Summary'] || '',
+      timelineEventCount: Number(match['Timeline Event Count'] || 0),
+      openComplianceActions: Number(match['Open Compliance Actions'] || 0)
+    };
+  } catch (error) {
+    return {};
+  }
 }
 
 function getClaimSummaryById_(claimId) {
@@ -115,7 +187,34 @@ function testClaimDrawer() {
   return drawer;
 }
 
+function debugClaimSummariesLookup() {
+  var sheet = SpreadsheetApp
+    .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
+    .getSheetByName('Claim_Summaries');
+
+  var values = sheet.getDataRange().getValues();
+
+  Logger.log('Total rows: ' + values.length);
+  Logger.log('Row 1: ' + JSON.stringify(values[0]));
+
+  if (values.length > 1) {
+    Logger.log('Row 2: ' + JSON.stringify(values[1]));
+  }
+
+  if (values.length > 2) {
+    Logger.log('Row 3: ' + JSON.stringify(values[2]));
+  }
+
+  return {
+    totalRows: values.length,
+    row1: values[0],
+    row2: values.length > 1 ? values[1] : null,
+    row3: values.length > 2 ? values[2] : null
+  };
+}
+
 var ClaimDrawerService = {
   getClaimDrawer: getClaimDrawer,
-  testClaimDrawer: testClaimDrawer
+  testClaimDrawer: testClaimDrawer,
+  debugClaimSummariesLookup: debugClaimSummariesLookup
 };

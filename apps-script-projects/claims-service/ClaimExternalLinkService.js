@@ -24,7 +24,7 @@ function getExternalLinksForClaim_(claimId) {
   try {
     var sheet = SpreadsheetApp
       .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
-      .getSheetByName('External Links');
+      .getSheetByName('External_Links');
 
     if (!sheet) {
       return [];
@@ -36,9 +36,9 @@ function getExternalLinksForClaim_(claimId) {
       return [];
     }
 
-    var headers = values[0];
+    var headers = values[1];
 
-    return values.slice(1)
+    return values.slice(2)
       .map(function(row) {
         var record = {};
 
@@ -49,16 +49,72 @@ function getExternalLinksForClaim_(claimId) {
         return record;
       })
       .filter(function(record) {
-        return String(record['Claim ID'] || '') === String(claimId);
+        return String(record['Claim ID'] || '') === String(claimId)
+          || String(record['Job Number'] || '') === String(claimId)
+          || String(record['Job Number'] || '') === String(claimId).replace('CLM-', '');
       })
       .map(function(record) {
-        return {
-          linkType: record['Link Type'] || '',
-          label: record['Label'] || record['Link Type'] || '',
-          url: record['URL'] || '',
-          status: record['Status'] || 'Active'
-        };
-      });
+        var links = [];
+
+        if (record['Drive Folder']) {
+          links.push({
+            linkType: 'Drive',
+            label: 'Drive Folder',
+            url: record['Drive Folder'],
+            status: 'Active'
+          });
+        }
+
+        if (record['Fusion URL']) {
+          links.push({
+            linkType: 'Fusion',
+            label: 'Fusion',
+            url: record['Fusion URL'],
+            status: 'Active'
+          });
+        }
+
+        if (record['XactAnalysis']) {
+          links.push({
+            linkType: 'XactAnalysis',
+            label: 'XactAnalysis',
+            url: record['XactAnalysis'],
+            status: 'Active'
+          });
+        }
+
+        if (record['Symbility']) {
+          links.push({
+            linkType: 'Symbility',
+            label: 'Symbility',
+            url: record['Symbility'],
+            status: 'Active'
+          });
+        }
+
+        if (record['ClaimX']) {
+          links.push({
+            linkType: 'ClaimX',
+            label: 'ClaimX',
+            url: record['ClaimX'],
+            status: 'Active'
+          });
+        }
+
+        if (record['Other Links']) {
+          links.push({
+            linkType: 'Other',
+            label: 'Other Links',
+            url: record['Other Links'],
+            status: 'Active'
+          });
+        }
+
+        return links;
+      })
+      .reduce(function(all, links) {
+        return all.concat(links);
+      }, []);
   } catch (error) {
     Logger.log('External links unavailable: ' + error);
     return [];
