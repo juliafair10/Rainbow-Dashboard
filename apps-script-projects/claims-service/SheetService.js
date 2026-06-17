@@ -17,6 +17,20 @@ function getSheet(sheetName) {
   return sheet;
 }
 
+function normalizeHeaderName_(header) {
+  return String(header || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .replace(/_+/g, '_');
+}
+
+function normalizeHeaders_(headers) {
+  return (headers || []).map(function(header) {
+    return normalizeHeaderName_(header);
+  });
+}
+
 function getHeaders(sheetName) {
   const sheet = getSheet(sheetName);
   const lastColumn = sheet.getLastColumn();
@@ -25,7 +39,7 @@ function getHeaders(sheetName) {
     return [];
   }
 
-  return sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  return normalizeHeaders_(sheet.getRange(1, 1, 1, lastColumn).getValues()[0]);
 }
 
 function getRows(sheetName) {

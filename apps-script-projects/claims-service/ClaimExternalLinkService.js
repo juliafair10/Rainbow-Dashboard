@@ -32,13 +32,13 @@ function getExternalLinksForClaim_(claimId) {
 
     var values = sheet.getDataRange().getValues();
 
-    if (values.length < 2) {
+    if (values.length < 1) {
       return [];
     }
 
-    var headers = values[1];
+    var headers = values[0];
 
-    return values.slice(2)
+    return values.slice(1)
       .map(function(row) {
         var record = {};
 

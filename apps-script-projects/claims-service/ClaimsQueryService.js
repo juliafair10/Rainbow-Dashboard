@@ -4,12 +4,12 @@ function getAllClaimSummaries(options) {
   var sheet = getClaimsDatabaseSheet_();
   var values = sheet.getDataRange().getValues();
 
-  if (values.length < 3) {
+  if (values.length < 2) {
     return [];
   }
 
-  var headers = values[1];
-  var rows = values.slice(2);
+  var headers = values[0];
+  var rows = values.slice(1);
 
   return rows
     .map(function(row) {
@@ -119,7 +119,7 @@ function splitList_(value) {
 }
 function testClaimsQueryHeaders() {
   var sheet = getClaimsDatabaseSheet_();
-  var headers = sheet.getRange(2, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
   Logger.log(JSON.stringify({
     spreadsheetName: sheet.getParent().getName(),

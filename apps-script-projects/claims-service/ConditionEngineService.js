@@ -825,6 +825,47 @@ function reconcileAllClaimConditions() {
   return response;
 }
 
+function batchReconcileClaimConditions() {
+  const result = reconcileAllClaimConditions();
+  const data = result && result.data ? result.data : {};
+  const sampleResults = data.results || [];
+
+  let addedCount = 0;
+  let skippedDuplicateCount = 0;
+
+  sampleResults.forEach(function(item) {
+    const itemData = item && item.data ? item.data : {};
+    const added = itemData.added || [];
+    const recommended = itemData.recommendedConditions || [];
+    const active = itemData.activeConditionNames || [];
+
+    addedCount += added.length;
+
+    recommended.forEach(function(conditionName) {
+      if (active.indexOf(conditionName) !== -1) {
+        skippedDuplicateCount++;
+      }
+    });
+  });
+
+  const summary = {
+    status: result && result.success ? 'Success' : 'Error',
+    success: !!(result && result.success),
+    processedClaims: data.processedClaims || 0,
+    successCount: data.successCount || 0,
+    failureCount: data.failureCount || 0,
+    addedCount: addedCount,
+    skippedDuplicateCount: skippedDuplicateCount,
+    sampleResults: sampleResults,
+    message: result && result.message ? result.message : 'Condition batch reconciliation completed.'
+  };
+
+  writeServiceLog('batchReconcileClaimConditions', summary.success ? 'Success' : 'Error', summary.message, summary);
+  Logger.log('CONDITION_BATCH_RECONCILE_SUMMARY ' + JSON.stringify(summary));
+
+  return successResponse(summary, 'Batch condition reconciliation completed.');
+}
+
 function testConditionEngineBatchReadiness() {
   const claims = findConditionEngineClaimsRows_();
   const activeClaims = claims.filter(function(claim) {

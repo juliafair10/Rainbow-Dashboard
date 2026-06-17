@@ -1,5 +1,3 @@
-
-
 /**
  * Phase 9
  * Sync evaluated health data from Claim Foundation
@@ -112,15 +110,15 @@ function testClaimHealthSyncPreview() {
 function getClaimsDatabaseRows_(claimsSheet) {
   var data = claimsSheet.getDataRange().getValues();
 
-  if (data.length < 3) {
+  if (data.length < 2) {
     return {
       columns: {},
       records: []
     };
   }
 
-  var headers = data[1];
-  var rows = data.slice(2);
+  var headers = data[0];
+  var rows = data.slice(1);
 
   var columns = {
     claimId: headers.indexOf('Claim ID'),
@@ -136,7 +134,7 @@ function getClaimsDatabaseRows_(claimsSheet) {
 
   var records = rows.map(function(row, index) {
     return {
-      rowNumber: index + 3,
+      rowNumber: index + 2,
       claimId: row[columns.claimId],
       jobNumber: row[columns.jobNumber],
       claimNumber: row[columns.claimNumber],
