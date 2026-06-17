@@ -13,11 +13,33 @@ const CLAIM_SERVICE = {
   spreadsheetId: CLAIMS_DATABASE_SPREADSHEET_ID
 };
 
+const REPORT_EMAIL_IMPORT_CONFIG = {
+  dailyOpenJobs: {
+    reportKey: 'dailyOpenJobs',
+    displayName: 'Daily Open Jobs',
+    gmailQuery: 'from:no-reply@nextgearsolutions.com subject:"Daily Open Jobs" has:attachment newer_than:14d',
+    parentFolderId: '1K1dZYR1djhBdmJ8ptathdPEcoSW33VyA',
+    processedLabel: 'Rainbow/Data Imports/Daily Open Jobs/Processed',
+    errorLabel: 'Rainbow/Data Imports/Daily Open Jobs/Error',
+    filenamePrefix: 'Daily_Open_Jobs'
+  },
+  complianceTasks: {
+    reportKey: 'complianceTasks',
+    displayName: 'Compliance Tasks',
+    gmailQuery: 'from:no-reply@nextgearsolutions.com subject:"Compliance Tasks" has:attachment newer_than:14d',
+    parentFolderId: '1Ogn2856pN0VnFVlbON2-GIFzDGhhHNFV',
+    processedLabel: 'Rainbow/Data Imports/Compliance Tasks/Processed',
+    errorLabel: 'Rainbow/Data Imports/Compliance Tasks/Error',
+    filenamePrefix: 'Compliance_Tasks'
+  }
+};
+
 const CLAIM_SHEET_NAMES = {
   claims: 'Claims',
   timeline: 'Timeline_Events',
   conditions: 'Claim_Conditions',
   alerts: 'Claim_Alerts',
+  alertRules: 'Alert_Rules',
   ownershipHistory: 'Claim_Ownership_History',
   financialTracks: 'Financial_Tracks',
   externalLinks: 'External_Links',
@@ -55,7 +77,14 @@ const CLAIM_FOUNDATION_SHEETS = {
   Claim_Alerts: [
     'Alert_ID', 'Claim_ID', 'Alert_Type', 'Alert_Status', 'Severity',
     'Source_System', 'Source_Record_ID', 'Reason', 'Recommended_Action',
-    'Owner_Area', 'Created_At', 'Resolved_At', 'Notes'
+    'Owner_Area', 'Created_At', 'Resolved_At', 'Notes',
+    'Status', 'Dismissed_At', 'Dismissed_By', 'Dismissed_Reason',
+    'Resolution_Reason', 'Suppressed_By_Rule', 'Suppression_Reason'
+  ],
+
+  Alert_Rules: [
+    'Rule_ID', 'Rule_Status', 'Alert_Type', 'Applies_To_Field',
+    'Applies_To_Value', 'Action', 'Reason', 'Created_At', 'Updated_At'
   ],
 
   Claim_Ownership_History: [
