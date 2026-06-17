@@ -717,6 +717,7 @@ function getHomepageConditionPriority_(conditionType) {
   return priorities[conditionType] || null;
 }
 
+
 function getHomepageAlertPriorityRank_(alertType, severity) {
   const severityRank = getHomepagePriorityRank_(severity);
 
@@ -731,6 +732,25 @@ function getHomepageAlertPriorityRank_(alertType, severity) {
   if (normalizedAlert.indexOf('missing') !== -1) return 30;
 
   return 35;
+}
+
+function isHomepageTodayPriorityAlert_(alert) {
+  const alertType = String(alert && alert.Alert_Type ? alert.Alert_Type : '').toLowerCase();
+
+  const structuralMissingLinkAlerts = [
+    'missing xact/symbility link',
+    'missing claimx link/video',
+    'missing fusion link',
+    'missing operational links record'
+  ];
+
+  for (let i = 0; i < structuralMissingLinkAlerts.length; i++) {
+    if (alertType === structuralMissingLinkAlerts[i]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActions) {
@@ -807,6 +827,10 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
   });
 
   (alerts || []).forEach(function(alert) {
+    if (!isHomepageTodayPriorityAlert_(alert)) {
+      return;
+    }
+
     const key = alert.Claim_ID + '|alert|' + (alert.Alert_Type || '');
 
     if (seenKeys[key]) {
