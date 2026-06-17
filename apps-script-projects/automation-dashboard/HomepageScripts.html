@@ -75,9 +75,27 @@
   }
 
   function renderOperationalAlerts(items) {
-    renderSimpleList('operationalAlertsList', items, function(item) {
+    const normalizedItems = Array.isArray(items)
+      ? items
+      : (items && typeof items === 'object' ? Object.values(items) : []);
+
+    const visibleItems = normalizedItems.slice(0, 5);
+    const hiddenCount = Math.max(normalizedItems.length - visibleItems.length, 0);
+
+    renderSimpleList('operationalAlertsList', visibleItems, function(item) {
       return item.alertType || item.claimDisplayName || 'Alert';
+    }, function(item) {
+      const claimText = item.claimDisplayName || item.customerName || item.claimId || '';
+      const severityText = item.severity ? 'Severity: ' + item.severity : '';
+      return [claimText, severityText].filter(Boolean).join(' • ');
     });
+
+    if (hiddenCount > 0) {
+      const container = document.getElementById('operationalAlertsList');
+      if (container) {
+        container.innerHTML += '<div class="rainbow-list-more">+' + hiddenCount + ' more alerts</div>';
+      }
+    }
   }
 
   function renderRecentActivity(items) {
@@ -146,12 +164,16 @@
 
     if (!container) return;
 
-    if (!items.length) {
+    const normalizedItems = Array.isArray(items)
+      ? items
+      : (items && typeof items === 'object' ? Object.values(items) : []);
+
+    if (normalizedItems.length === 0) {
       container.innerHTML = '<div class="rainbow-empty-state">No items available.</div>';
       return;
     }
 
-    container.innerHTML = items.map(function(item) {
+    container.innerHTML = normalizedItems.map(function(item) {
       return [
         '<div class="rainbow-list-item">',
         '<div class="rainbow-list-title">' + escapeHtml(titleFn(item)) + '</div>',

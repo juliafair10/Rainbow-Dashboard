@@ -244,9 +244,10 @@ function normalizeHomepageClaim_(row) {
     Lifecycle_State: getHomepageValue_(row, ['Lifecycle_State', 'Lifecycle State']),
     Ownership_Area: getHomepageValue_(row, ['Ownership_Area', 'Ownership Area']),
     Primary_Owner: getHomepageValue_(row, ['Primary_Owner', 'Primary Owner']),
-    Operational_Health: getHomepageValue_(row, ['Operational_Health', 'Health_Level', 'Health Level', 'Health Status']),
-    Health_Level: getHomepageValue_(row, ['Health_Level', 'Health Level', 'Operational_Health', 'Health Status']),
-    Health_Reason: getHomepageValue_(row, ['Health_Reason', 'Health Reason']),
+    Health_Status: getHomepageValue_(row, ['Health Status', 'Health_Status']),
+    Operational_Health: getHomepageValue_(row, ['Health Status', 'Health_Status', 'Operational_Health', 'Health_Level', 'Health Level']),
+    Health_Level: getHomepageValue_(row, ['Health Status', 'Health_Status', 'Health_Level', 'Health Level', 'Operational_Health']),
+    Health_Reason: getHomepageValue_(row, ['Health Reason', 'Health_Reason']),
     Conditions: getHomepageValue_(row, ['Conditions']),
     Alerts: getHomepageValue_(row, ['Alerts']),
     Last_Meaningful_Activity_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Last_Meaningful_Activity_Date', 'Last Meaningful Activity Date', 'Last Activity Date'])),
@@ -452,16 +453,49 @@ function isHomepageOpenStatus_(status) {
   return normalized !== 'closed' && normalized !== 'resolved' && normalized !== 'complete' && normalized !== 'completed';
 }
 
+function normalizeHomepageHealthLevel_(healthLevel) {
+  const normalized = String(healthLevel || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  if (normalized === 'healthy') return 'Healthy';
+  if (normalized === 'attention soon') return 'Attention Soon';
+  if (normalized === 'at risk') return 'At Risk';
+  if (normalized === 'escalated') return 'Escalated';
+  if (normalized === 'critical') return 'Critical';
+  if (normalized === 'not evaluated') return 'Not Evaluated';
+
+  return String(healthLevel || '').replace(/\s+/g, ' ').trim();
+}
+
+function getHomepageClaimHealthLevel_(claim, fallback) {
+  if (!claim) {
+    return fallback || 'Healthy';
+  }
+
+  return normalizeHomepageHealthLevel_(
+    claim.Health_Status ||
+    claim['Health Status'] ||
+    claim.Health_Level ||
+    claim['Health Level'] ||
+    claim.Operational_Health ||
+    fallback ||
+    'Healthy'
+  ) || (fallback || 'Healthy');
+}
+
 function countHomepageClaimsByHealth_(claims, healthLevels) {
   const levelMap = (healthLevels || []).reduce(function(map, level) {
-    map[level] = true;
+    map[normalizeHomepageHealthLevel_(level)] = true;
     return map;
   }, {});
 
   const countedClaimIds = {};
 
   claims.forEach(function(claim) {
-    if (claim.Claim_ID && levelMap[claim.Health_Level || claim.Operational_Health || 'Healthy']) {
+    const healthLevel = getHomepageClaimHealthLevel_(claim, 'Healthy');
+    if (claim.Claim_ID && levelMap[healthLevel]) {
       countedClaimIds[claim.Claim_ID] = true;
     }
   });
@@ -471,7 +505,7 @@ function countHomepageClaimsByHealth_(claims, healthLevels) {
 
 function countHomepageHealthLevels_(claims) {
   return (claims || []).reduce(function(counts, claim) {
-    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Not Evaluated';
+    const healthLevel = getHomepageClaimHealthLevel_(claim, 'Not Evaluated');
     counts[healthLevel] = (counts[healthLevel] || 0) + 1;
     return counts;
   }, {});
@@ -635,11 +669,30 @@ function buildHomepageClaimMap_(claims) {
   return claimMap;
 }
 
+function getHomepageClaimForRecord_(record, claimMap) {
+  if (!record || !claimMap) {
+    return {};
+  }
+
+  const claimId = String(record.Claim_ID || '');
+  const jobNumber = String(record.Job_Number || '');
+  const claimNumber = String(record.Claim_Number || '');
+
+  return claimMap[claimId] ||
+    claimMap[claimId.replace(/^CLM-/, '')] ||
+    claimMap[jobNumber] ||
+    claimMap['CLM-' + jobNumber] ||
+    claimMap[claimNumber] ||
+    {};
+}
+
 function isHomepageActionHealth_(healthLevel) {
-  return healthLevel === 'Attention Soon' ||
-    healthLevel === 'At Risk' ||
-    healthLevel === 'Escalated' ||
-    healthLevel === 'Critical';
+  const normalized = normalizeHomepageHealthLevel_(healthLevel);
+
+  return normalized === 'Attention Soon' ||
+    normalized === 'At Risk' ||
+    normalized === 'Escalated' ||
+    normalized === 'Critical';
 }
 
 function getHomepageHealthPriorityRank_(healthLevel) {
@@ -759,7 +812,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
   const seenKeys = {};
 
   (claims || []).forEach(function(claim) {
-    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Healthy';
+    const healthLevel = getHomepageClaimHealthLevel_(claim, 'Healthy');
 
     if (!isHomepageActionHealth_(healthLevel)) {
       return;
@@ -804,7 +857,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     }
     seenKeys[key] = true;
 
-    const claim = claimMap[condition.Claim_ID] || {};
+    const claim = getHomepageClaimForRecord_(condition, claimMap);
 
     priorities.push({
       claimId: condition.Claim_ID || '',
@@ -814,7 +867,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       lifecycleState: claim.Lifecycle_State || '',
       ownershipArea: claim.Ownership_Area || '',
       primaryOwner: claim.Primary_Owner || '',
-      healthLevel: claim.Health_Level || claim.Operational_Health || 'Healthy',
+      healthLevel: getHomepageClaimHealthLevel_(claim, 'Healthy'),
       title: conditionPriority.title,
       reason: condition.Reason || '',
       type: 'Condition',
@@ -838,7 +891,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     }
     seenKeys[key] = true;
 
-    const claim = claimMap[alert.Claim_ID] || {};
+    const claim = getHomepageClaimForRecord_(alert, claimMap);
 
     priorities.push({
       claimId: alert.Claim_ID || '',
@@ -848,7 +901,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       lifecycleState: claim.Lifecycle_State || '',
       ownershipArea: claim.Ownership_Area || '',
       primaryOwner: claim.Primary_Owner || '',
-      healthLevel: claim.Health_Level || claim.Operational_Health || 'Healthy',
+      healthLevel: getHomepageClaimHealthLevel_(claim, 'Healthy'),
       title: alert.Alert_Type || 'Alert',
       reason: alert.Reason || '',
       type: 'Alert',
@@ -873,7 +926,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
     }
     seenKeys[key] = true;
 
-    const claim = claimMap[action.Claim_ID] || claimMap[action.Job_Number] || claimMap[action.Claim_Number] || {};
+    const claim = getHomepageClaimForRecord_(action, claimMap);
 
     priorities.push({
       claimId: action.Claim_ID || '',
@@ -883,7 +936,7 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       lifecycleState: claim.Lifecycle_State || '',
       ownershipArea: claim.Ownership_Area || '',
       primaryOwner: claim.Primary_Owner || '',
-      healthLevel: claim.Health_Level || claim.Operational_Health || 'Not Evaluated',
+      healthLevel: getHomepageClaimHealthLevel_(claim, 'Not Evaluated'),
       title: action.Action_Title || 'Open Compliance Action Due',
       reason: action.Required_Action || action.Reason || '',
       type: 'Compliance Action',
@@ -946,7 +999,7 @@ function getHomepageBecomingStale_(claims, conditions, alerts, summaries) {
   const staleCandidates = [];
 
   (claims || []).forEach(function(claim) {
-    const healthLevel = claim.Health_Level || claim.Operational_Health || 'Healthy';
+    const healthLevel = getHomepageClaimHealthLevel_(claim, 'Healthy');
     const summary = summaryMap[claim.Claim_ID] || summaryMap[claim.Job_Number] || {};
     const lastActivityValue = claim.Last_Meaningful_Activity_Date || summary.Last_Activity_Date || claim.Updated_At || '';
     const lastActivityTime = lastActivityValue ? new Date(lastActivityValue).getTime() : NaN;
@@ -1156,6 +1209,51 @@ function testHomepageClaimFiltering() {
     included: included.length,
     excluded: excluded.length
   };
+}
+
+function testHomepageHealthFieldMappingForKnownClaims() {
+  const targetClaimIds = {
+    'CLM-26N-0103-WTR': true,
+    'CLM-26A-0043-WTR': true
+  };
+
+  const rawClaims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims);
+  const results = rawClaims.filter(function(row) {
+    const claimId = getHomepageValue_(row, ['Claim_ID', 'Claim ID']);
+    return targetClaimIds[claimId];
+  }).map(function(row) {
+    const normalized = normalizeHomepageClaim_(row);
+    const healthLikeRawFields = {};
+
+    Object.keys(row).forEach(function(key) {
+      if (String(key || '').toLowerCase().indexOf('health') !== -1) {
+        healthLikeRawFields[key] = row[key];
+      }
+    });
+
+    return {
+      claimId: normalized.Claim_ID,
+      rawFields: {
+        'Health Status': getHomepageValue_(row, ['Health Status']),
+        Health_Status: getHomepageValue_(row, ['Health_Status']),
+        Operational_Health: getHomepageValue_(row, ['Operational_Health']),
+        Health_Level: getHomepageValue_(row, ['Health_Level']),
+        'Health Level': getHomepageValue_(row, ['Health Level'])
+      },
+      normalizedFields: {
+        Health_Level: normalized.Health_Level,
+        Operational_Health: normalized.Operational_Health,
+        Health_Reason: normalized.Health_Reason
+      },
+      healthLikeRawFields: healthLikeRawFields,
+      kpiHealthValue: getHomepageClaimHealthLevel_(normalized, 'Healthy'),
+      activeClaim: isHomepageActiveClaim_(normalized)
+    };
+  });
+
+  Logger.log('HOMEPAGE_HEALTH_FIELD_MAPPING ' + JSON.stringify(results, null, 2));
+
+  return results;
 }
 
 function testHomepageSourceInventory() {
