@@ -3,6 +3,51 @@
  * Rainbow Phase 4 - Claim Foundation
  */
 
+const ALERT_GOVERNANCE_ALERT_COLUMNS = [
+  'Alert_ID',
+  'Claim_ID',
+  'Alert_Type',
+  'Alert_Status',
+  'Status',
+  'Severity',
+  'Source_System',
+  'Source_Record_ID',
+  'Reason',
+  'Recommended_Action',
+  'Owner_Area',
+  'Created_At',
+  'Resolved_At',
+  'Resolution_Reason',
+  'Dismissed_At',
+  'Dismissed_By',
+  'Dismissed_Reason',
+  'Suppressed_By_Rule',
+  'Suppression_Reason',
+  'Notes'
+];
+
+const ALERT_RULES_SHEET_NAME = 'Alert_Rules';
+const ALERT_RULE_COLUMNS = [
+  'Rule_ID',
+  'Rule_Status',
+  'Alert_Type',
+  'Applies_To_Field',
+  'Applies_To_Value',
+  'Action',
+  'Reason',
+  'Created_At',
+  'Updated_At'
+];
+
+const CLOSED_ALERT_STATUSES = {
+  dismissed: true,
+  resolved: true,
+  suppressed: true,
+  closed: true,
+  complete: true,
+  completed: true
+};
+
 function addAlert(claimId, alertType, details) {
   if (!claimId) {
     return validationErrorResponse(['Claim_ID is required.']);
@@ -19,6 +64,7 @@ function addAlert(claimId, alertType, details) {
     Claim_ID: claimId,
     Alert_Type: alertType,
     Alert_Status: 'Active',
+    Status: 'Active',
     Severity: (details && details.Severity) || 'Medium',
     Source_System: (details && details.Source_System) || CLAIM_SERVICE.name,
     Source_Record_ID: (details && details.Source_Record_ID) || '',
@@ -27,6 +73,12 @@ function addAlert(claimId, alertType, details) {
     Owner_Area: (details && details.Owner_Area) || '',
     Created_At: now,
     Resolved_At: '',
+    Resolution_Reason: '',
+    Dismissed_At: '',
+    Dismissed_By: '',
+    Dismissed_Reason: '',
+    Suppressed_By_Rule: '',
+    Suppression_Reason: '',
     Notes: (details && details.Notes) || ''
   };
 
@@ -61,7 +113,7 @@ function addAlert(claimId, alertType, details) {
   }, 'Alert added successfully.');
 }
 
-function resolveAlert(alertId) {
+function resolveAlert(alertId, reason) {
   if (!alertId) {
     return validationErrorResponse(['Alert_ID is required.']);
   }
@@ -74,7 +126,9 @@ function resolveAlert(alertId) {
     alertId,
     {
       Alert_Status: 'Resolved',
-      Resolved_At: now
+      Status: 'Resolved',
+      Resolved_At: now,
+      Resolution_Reason: reason || 'Alert resolved.'
     }
   );
 
@@ -84,6 +138,107 @@ function resolveAlert(alertId) {
   });
 
   return result;
+}
+
+function dismissAlert(alertId, reason, dismissedBy) {
+  if (!alertId) {
+    return validationErrorResponse(['Alert_ID is required.']);
+  }
+
+  ensureAlertGovernanceSchema();
+
+  const now = nowIso();
+  const result = updateRowByKey(
+    CLAIM_SHEET_NAMES.alerts,
+    'Alert_ID',
+    alertId,
+    {
+      Alert_Status: 'Dismissed',
+      Status: 'Dismissed',
+      Dismissed_At: now,
+      Dismissed_By: dismissedBy || CLAIM_SERVICE.name,
+      Dismissed_Reason: reason || 'Alert dismissed.',
+      Resolved_At: '',
+      Updated_At: now
+    }
+  );
+
+  writeServiceLog('dismissAlert', result.success ? 'Success' : 'Not Found', result.message, {
+    sourceSystem: CLAIM_SERVICE.name,
+    sourceRecordId: alertId,
+    reason: reason || ''
+  });
+
+  return result;
+}
+
+function dismissAlertsByClaimAndType(claimId, alertType, reason, dismissedBy) {
+  if (!claimId || !alertType) {
+    return validationErrorResponse(['Claim_ID and alertType are required.']);
+  }
+
+  ensureAlertGovernanceSchema();
+
+  const sheet = getSheet(CLAIM_SHEET_NAMES.alerts);
+  const headers = getHeaders(CLAIM_SHEET_NAMES.alerts);
+  const lastRow = sheet.getLastRow();
+  const now = nowIso();
+  const result = {
+    claimId: claimId,
+    alertType: alertType,
+    dismissedCount: 0,
+    dismissedAlertIds: []
+  };
+
+  if (lastRow < 2) {
+    return successResponse(result, 'No alerts available to dismiss.');
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  const indexes = {
+    alertId: headers.indexOf('Alert_ID'),
+    claimId: headers.indexOf('Claim_ID'),
+    alertType: headers.indexOf('Alert_Type'),
+    alertStatus: headers.indexOf('Alert_Status'),
+    status: headers.indexOf('Status'),
+    dismissedAt: headers.indexOf('Dismissed_At'),
+    dismissedBy: headers.indexOf('Dismissed_By'),
+    dismissedReason: headers.indexOf('Dismissed_Reason'),
+    updatedAt: headers.indexOf('Updated_At')
+  };
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const rowClaimId = row[indexes.claimId];
+    const rowAlertType = row[indexes.alertType];
+    const rowStatus = indexes.status !== -1 && row[indexes.status] ? row[indexes.status] : row[indexes.alertStatus];
+
+    if (String(rowClaimId || '') !== String(claimId || '') ||
+        String(rowAlertType || '') !== String(alertType || '') ||
+        !isOpenAlertStatus_(rowStatus)) {
+      continue;
+    }
+
+    if (indexes.alertStatus !== -1) row[indexes.alertStatus] = 'Dismissed';
+    if (indexes.status !== -1) row[indexes.status] = 'Dismissed';
+    if (indexes.dismissedAt !== -1) row[indexes.dismissedAt] = now;
+    if (indexes.dismissedBy !== -1) row[indexes.dismissedBy] = dismissedBy || CLAIM_SERVICE.name;
+    if (indexes.dismissedReason !== -1) row[indexes.dismissedReason] = reason || 'Alert dismissed.';
+    if (indexes.updatedAt !== -1) row[indexes.updatedAt] = now;
+
+    sheet.getRange(i + 2, 1, 1, headers.length).setValues([row]);
+    result.dismissedCount++;
+    result.dismissedAlertIds.push(indexes.alertId !== -1 ? row[indexes.alertId] : '');
+  }
+
+  writeServiceLog('dismissAlertsByClaimAndType', 'Success', 'Alerts dismissed by claim and type.', {
+    claimId: claimId,
+    alertType: alertType,
+    reason: reason || '',
+    result: result
+  });
+
+  return successResponse(result, 'Alerts dismissed by claim and type.');
 }
 
 function getActiveAlerts(claimId) {
@@ -96,7 +251,7 @@ function getActiveAlerts(claimId) {
   });
 
   const active = rows.filter(function(row) {
-    return row.Alert_Status === 'Active';
+    return isOpenAlertStatus_(row.Alert_Status || row.Status);
   });
 
   return successResponse({
@@ -104,6 +259,171 @@ function getActiveAlerts(claimId) {
     alerts: active,
     count: active.length
   }, 'Active alerts retrieved.');
+}
+
+function isOpenAlertStatus_(status) {
+  const normalized = String(status || 'Active').trim().toLowerCase();
+  return !CLOSED_ALERT_STATUSES[normalized];
+}
+
+function ensureAlertGovernanceSchema() {
+  const results = {
+    alertColumns: ensureSheetColumns_(CLAIM_SHEET_NAMES.alerts, ALERT_GOVERNANCE_ALERT_COLUMNS),
+    alertRulesSheet: ensureAlertRulesSheet_()
+  };
+
+  writeServiceLog('ensureAlertGovernanceSchema', 'Success', 'Alert governance schema verified.', {
+    results: results
+  });
+
+  return successResponse(results, 'Alert governance schema verified.');
+}
+
+function ensureAlertRulesSheet_() {
+  const ss = getAlertPersistenceSpreadsheet_();
+  let sheet = ss.getSheetByName(ALERT_RULES_SHEET_NAME);
+  let created = false;
+
+  if (!sheet) {
+    sheet = ss.insertSheet(ALERT_RULES_SHEET_NAME);
+    created = true;
+  }
+
+  const existingHeaders = sheet.getLastColumn() > 0
+    ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function(header) {
+      return String(header || '').trim();
+    })
+    : [];
+
+  if (!existingHeaders.some(function(header) { return header !== ''; })) {
+    sheet.getRange(1, 1, 1, ALERT_RULE_COLUMNS.length).setValues([ALERT_RULE_COLUMNS]);
+  } else {
+    ALERT_RULE_COLUMNS.forEach(function(header) {
+      if (existingHeaders.indexOf(header) === -1) {
+        sheet.getRange(1, sheet.getLastColumn() + 1).setValue(header);
+      }
+    });
+  }
+
+  sheet.setFrozenRows(1);
+
+  return {
+    sheetName: ALERT_RULES_SHEET_NAME,
+    created: created,
+    headers: ALERT_RULE_COLUMNS
+  };
+}
+
+function getActiveAlertRules() {
+  ensureAlertRulesSheet_();
+
+  const rows = getAlertPersistenceRows_(ALERT_RULES_SHEET_NAME);
+  return rows.filter(function(rule) {
+    const status = getAlertPersistenceValue_(rule, ['Rule_Status', 'Rule Status', 'Status']);
+    return String(status || '').toLowerCase() === 'active';
+  });
+}
+
+function shouldSuppressAlert(alertCandidate, claim) {
+  const rule = getAlertSuppressionRule_(alertCandidate, claim);
+  return !!rule;
+}
+
+function getAlertSuppressionReason(alertCandidate, claim) {
+  const rule = getAlertSuppressionRule_(alertCandidate, claim);
+
+  if (!rule) {
+    return '';
+  }
+
+  return getAlertPersistenceValue_(rule, ['Reason']) || 'Suppressed by alert governance rule.';
+}
+
+function getAlertSuppressionRule_(alertCandidate, claim) {
+  const rules = getActiveAlertRules();
+  return getAlertSuppressionRuleFromList_(alertCandidate, claim, rules);
+}
+
+function getAlertSuppressionRuleFromList_(alertCandidate, claim, rules) {
+  const allowRule = getMatchingAlertGovernanceRuleFromList_(alertCandidate, claim, 'Allow', rules);
+  if (allowRule) {
+    return null;
+  }
+
+  return getMatchingAlertGovernanceRuleFromList_(alertCandidate, claim, 'Suppress', rules);
+}
+
+function getMatchingAlertGovernanceRuleFromList_(alertCandidate, claim, action, rules) {
+  const candidateType = String(alertCandidate && alertCandidate.Alert_Type || '').trim();
+  const normalizedAction = String(action || '').toLowerCase();
+
+  return (rules || []).find(function(rule) {
+    const ruleAction = String(getAlertPersistenceValue_(rule, ['Action']) || '').trim().toLowerCase();
+    const ruleAlertType = String(getAlertPersistenceValue_(rule, ['Alert_Type', 'Alert Type']) || '').trim();
+
+    if (ruleAction !== normalizedAction) {
+      return false;
+    }
+
+    if (ruleAlertType && ruleAlertType !== candidateType) {
+      return false;
+    }
+
+    return alertGovernanceRuleMatchesClaim_(rule, claim);
+  }) || null;
+}
+
+function alertGovernanceRuleMatchesClaim_(rule, claim) {
+  const appliesToField = String(getAlertPersistenceValue_(rule, ['Applies_To_Field', 'Applies To Field']) || '').trim();
+  const appliesToValue = String(getAlertPersistenceValue_(rule, ['Applies_To_Value', 'Applies To Value']) || '').trim();
+
+  if (appliesToField.toLowerCase() === 'all') {
+    return true;
+  }
+
+  const claimValue = getAlertGovernanceClaimFieldValue_(claim, appliesToField);
+  return normalizeAlertGovernanceMatchValue_(claimValue) === normalizeAlertGovernanceMatchValue_(appliesToValue);
+}
+
+function getAlertGovernanceClaimFieldValue_(claim, appliesToField) {
+  const normalizedField = normalizeAlertPersistenceValue_(appliesToField);
+
+  if (normalizedField === 'carrier') {
+    return getAlertPersistenceValue_(claim, ['Carrier']);
+  }
+
+  if (normalizedField === 'claimnumber') {
+    return getAlertPersistenceValue_(claim, ['Claim_Number', 'Claim Number']);
+  }
+
+  if (normalizedField === 'jobnumber') {
+    return getAlertPersistenceValue_(claim, ['Job_Number', 'Job Number', 'JobNumber']);
+  }
+
+  if (normalizedField === 'claimid') {
+    return getAlertPersistenceValue_(claim, ['Claim_ID', 'Claim ID', 'ClaimId']);
+  }
+
+  return getAlertPersistenceValue_(claim, [appliesToField]);
+}
+
+function normalizeAlertGovernanceMatchValue_(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildLibertyMutualClaimXSuppressionRule_() {
+  const now = nowIso();
+  return {
+    Rule_ID: 'RULE-LIBERTY-MUTUAL-CLAIMX-SUPPRESS',
+    Rule_Status: 'Active',
+    Alert_Type: 'Missing ClaimX Link/Video',
+    Applies_To_Field: 'Carrier',
+    Applies_To_Value: 'Liberty Mutual',
+    Action: 'Suppress',
+    Reason: 'Liberty Mutual jobs do not require ClaimX links.',
+    Created_At: now,
+    Updated_At: now
+  };
 }
 
 /**
@@ -145,6 +465,7 @@ function testAlertPersistenceWriteCompact() {
     dryRun: data.dryRun,
     activeClaimsEvaluated: data.activeClaimsEvaluated,
     alertsProposed: data.alertsProposed,
+    alertsSuppressed: data.alertsSuppressed,
     alertsWritten: data.alertsWritten,
     skippedExistingAlerts: data.skippedExistingAlerts,
     skippedClaims: data.skippedClaims,
@@ -168,6 +489,7 @@ function testAlertPersistencePreviewCompact() {
     dryRun: data.dryRun,
     activeClaimsEvaluated: data.activeClaimsEvaluated,
     alertsProposed: data.alertsProposed,
+    alertsSuppressed: data.alertsSuppressed,
     alertsWritten: data.alertsWritten,
     skippedExistingAlerts: data.skippedExistingAlerts,
     skippedClaims: data.skippedClaims,
@@ -193,6 +515,8 @@ function reconcileAllClaimAlerts(options) {
   options = options || {};
   const dryRun = options.dryRun !== false;
 
+  ensureAlertGovernanceSchema();
+  const activeRules = getActiveAlertRules();
   const claims = getAlertPersistenceRows_(getAlertPersistenceSheetName_('claims'));
   const activeClaims = claims.filter(function(claim) {
     return isAlertPersistenceActiveClaim_(claim);
@@ -203,6 +527,7 @@ function reconcileAllClaimAlerts(options) {
     dryRun: dryRun,
     activeClaimsEvaluated: activeClaims.length,
     alertsProposed: 0,
+    alertsSuppressed: 0,
     alertsWritten: 0,
     skippedExistingAlerts: 0,
     skippedClaims: 0,
@@ -221,11 +546,14 @@ function reconcileAllClaimAlerts(options) {
     try {
       const claimResult = reconcileClaimAlerts(claimId, {
         dryRun: dryRun,
-        quiet: options.quiet === true
+        quiet: options.quiet === true,
+        schemaReady: true,
+        activeRules: activeRules
       });
       const data = claimResult && claimResult.data ? claimResult.data : claimResult;
 
       results.alertsProposed += Number(data.alertsProposed || 0);
+      results.alertsSuppressed += Number(data.alertsSuppressed || 0);
       results.alertsWritten += Number(data.alertsWritten || 0);
       results.skippedExistingAlerts += Number(data.skippedExistingAlerts || 0);
 
@@ -245,6 +573,13 @@ function reconcileAllClaimAlerts(options) {
   if (options.quiet !== true) {
     Logger.log(JSON.stringify(results, null, 2));
   }
+
+  if (results.alertsSuppressed > 0) {
+    writeServiceLog('reconcileAllClaimAlerts.suppression', 'Success', 'Alert governance suppressed proposed alerts.', {
+      alertsSuppressed: results.alertsSuppressed
+    });
+  }
+
   return successResponse(results, 'Alert persistence reconciliation complete.');
 }
 
@@ -256,10 +591,33 @@ function reconcileClaimAlerts(claimId, options) {
     return validationErrorResponse(['Claim_ID is required.']);
   }
 
+  if (options.schemaReady !== true) {
+    ensureAlertGovernanceSchema();
+  }
+
+  const claim = getAlertPersistenceClaimById_(claimId) || {};
+  const activeRules = options.activeRules || getActiveAlertRules();
   const proposedAlerts = buildStructuredAlertsForClaim_(claimId);
+  const suppressionResults = [];
+  const unsuppressedAlerts = proposedAlerts.filter(function(proposed) {
+    const suppressRule = getAlertSuppressionRuleFromList_(proposed, claim, activeRules);
+
+    if (!suppressRule) {
+      return true;
+    }
+
+    suppressionResults.push({
+      claimId: claimId,
+      alertType: proposed.Alert_Type,
+      ruleId: getAlertPersistenceValue_(suppressRule, ['Rule_ID', 'Rule ID']),
+      reason: getAlertPersistenceValue_(suppressRule, ['Reason']) || 'Suppressed by alert governance rule.'
+    });
+
+    return false;
+  });
   const activeAlerts = getActiveAlertsForAlertPersistence_(claimId);
 
-  const newAlerts = proposedAlerts.filter(function(proposed) {
+  const newAlerts = unsuppressedAlerts.filter(function(proposed) {
     return !activeAlerts.some(function(existing) {
       return String(existing.Alert_Type || '') === String(proposed.Alert_Type || '');
     });
@@ -284,10 +642,12 @@ function reconcileClaimAlerts(claimId, options) {
     claimId: claimId,
     dryRun: dryRun,
     alertsProposed: proposedAlerts.length,
+    alertsSuppressed: suppressionResults.length,
     newAlerts: newAlerts.length,
-    skippedExistingAlerts: proposedAlerts.length - newAlerts.length,
+    skippedExistingAlerts: unsuppressedAlerts.length - newAlerts.length,
     alertsWritten: alertsWritten,
     proposedAlerts: proposedAlerts,
+    suppressionResults: suppressionResults,
     writeResults: writeResults
   };
 
@@ -408,11 +768,7 @@ function getExternalLinksForAlertPersistence_(claimId) {
 }
 
 function getJobNumberForAlertPersistenceClaim_(claimId) {
-  const claims = getAlertPersistenceRows_(getAlertPersistenceSheetName_('claims'));
-  const claim = claims.find(function(row) {
-    const rowClaimId = getAlertPersistenceValue_(row, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']);
-    return String(rowClaimId || '') === String(claimId || '');
-  });
+  const claim = getAlertPersistenceClaimById_(claimId);
 
   if (!claim) {
     return '';
@@ -424,6 +780,15 @@ function getJobNumberForAlertPersistenceClaim_(claimId) {
     'JobNumber',
     'jobNumber'
   ]);
+}
+
+function getAlertPersistenceClaimById_(claimId) {
+  const claims = getAlertPersistenceRows_(getAlertPersistenceSheetName_('claims'));
+
+  return claims.find(function(row) {
+    const rowClaimId = getAlertPersistenceValue_(row, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']);
+    return String(rowClaimId || '') === String(claimId || '');
+  }) || null;
 }
 
 function hasExternalLinkValue_(externalLinks, possibleColumns) {
@@ -815,7 +1180,7 @@ function getActiveAlertsForAlertPersistence_(claimId) {
     const status = getAlertPersistenceValue_(row, ['Alert_Status', 'Alert Status', 'Status', 'AlertStatus']);
 
     return String(rowClaimId || '') === String(claimId || '')
-      && String(status || '').toLowerCase() === 'active';
+      && isOpenAlertStatus_(status);
   });
 }
 
@@ -827,6 +1192,7 @@ function addAlertForPersistence_(claimId, proposedAlert) {
     Claim_ID: claimId,
     Alert_Type: proposedAlert.Alert_Type,
     Alert_Status: 'Active',
+    Status: 'Active',
     Severity: proposedAlert.Severity || 'Medium',
     Source_System: proposedAlert.Source_System || 'claims-service alert persistence',
     Source_Record_ID: proposedAlert.Source_Record_ID || '',
@@ -835,6 +1201,12 @@ function addAlertForPersistence_(claimId, proposedAlert) {
     Owner_Area: proposedAlert.Owner_Area || '',
     Created_At: now,
     Resolved_At: '',
+    Resolution_Reason: '',
+    Dismissed_At: '',
+    Dismissed_By: '',
+    Dismissed_Reason: '',
+    Suppressed_By_Rule: '',
+    Suppression_Reason: '',
     Notes: proposedAlert.Notes || ''
   };
 
@@ -852,4 +1224,213 @@ function addAlertForPersistence_(claimId, proposedAlert) {
     alert: alert,
     appendResult: appendResult
   }, 'Alert persisted successfully.');
+}
+
+function testAlertRulesSheetSetup() {
+  const response = ensureAlertGovernanceSchema();
+  Logger.log('ALERT_RULES_SHEET_SETUP ' + JSON.stringify(response, null, 2));
+  return response;
+}
+
+function testSuppressClaimXForLibertyMutualRule() {
+  ensureAlertGovernanceSchema();
+
+  const rule = ensureAlertGovernanceRule_(buildLibertyMutualClaimXSuppressionRule_());
+  const claim = {
+    Claim_ID: 'TEST-LIBERTY-MUTUAL-CLAIM',
+    Claim_Number: 'TEST-CLAIM-NUMBER',
+    Job_Number: 'TEST-JOB-NUMBER',
+    Carrier: 'Liberty Mutual'
+  };
+  const alertCandidate = {
+    Claim_ID: claim.Claim_ID,
+    Alert_Type: 'Missing ClaimX Link/Video'
+  };
+
+  const result = {
+    rule: rule,
+    shouldSuppress: shouldSuppressAlert(alertCandidate, claim),
+    suppressionReason: getAlertSuppressionReason(alertCandidate, claim)
+  };
+
+  Logger.log('ALERT_RULE_LIBERTY_MUTUAL_TEST ' + JSON.stringify(result, null, 2));
+  return successResponse(result, 'Liberty Mutual ClaimX suppression rule tested.');
+}
+
+function testDismissAlertLifecycle() {
+  ensureAlertGovernanceSchema();
+
+  const claimId = getFirstAlertGovernanceTestClaimId_();
+  if (!claimId) {
+    return validationErrorResponse(['No active claim was available for alert dismissal test.']);
+  }
+
+  const createResult = addAlertForPersistence_(claimId, {
+    Alert_Type: 'Governance Test Alert',
+    Severity: 'Low',
+    Source_System: 'claims-service alert governance test',
+    Source_Record_ID: 'TEST-ALERT-GOVERNANCE-DISMISS',
+    Reason: 'Temporary alert created to test dismissal lifecycle.',
+    Recommended_Action: 'Dismiss this test alert.',
+    Owner_Area: 'Office Operations',
+    Notes: 'Safe test alert created by testDismissAlertLifecycle.'
+  });
+
+  if (!createResult.success) {
+    return createResult;
+  }
+
+  const alertId = createResult.data.alert.Alert_ID;
+  const dismissResult = dismissAlert(alertId, 'Alert governance dismissal lifecycle test.', 'testDismissAlertLifecycle');
+  const activeAlerts = getActiveAlertsForAlertPersistence_(claimId).filter(function(alert) {
+    return getAlertPersistenceValue_(alert, ['Alert_ID', 'Alert ID']) === alertId;
+  });
+
+  const result = {
+    claimId: claimId,
+    alertId: alertId,
+    created: createResult.success,
+    dismissed: dismissResult.success,
+    stillOpenAfterDismissal: activeAlerts.length > 0,
+    dismissResult: dismissResult
+  };
+
+  Logger.log('ALERT_DISMISS_LIFECYCLE_TEST ' + JSON.stringify(result, null, 2));
+  return successResponse(result, 'Alert dismissal lifecycle tested.');
+}
+
+function testHomepageOpenAlertsAfterGovernance() {
+  ensureAlertGovernanceSchema();
+
+  const rows = getAlertPersistenceRows_(getAlertPersistenceSheetName_('alerts'));
+  const countsByStatus = {};
+  let openCount = 0;
+
+  rows.forEach(function(row) {
+    const status = getAlertPersistenceValue_(row, ['Alert_Status', 'Alert Status', 'Status', 'AlertStatus']) || 'Active';
+    countsByStatus[status] = (countsByStatus[status] || 0) + 1;
+
+    if (isOpenAlertStatus_(status)) {
+      openCount++;
+    }
+  });
+
+  const homepageSummary = typeof getHomepageClaimSummary === 'function'
+    ? getHomepageClaimSummary()
+    : null;
+
+  const result = {
+    totalAlertRows: rows.length,
+    openAlertRowsAfterGovernance: openCount,
+    countsByStatus: countsByStatus,
+    homepageOpenAlertCount: homepageSummary && homepageSummary.success && homepageSummary.data
+      ? homepageSummary.data.openAlertCount
+      : null
+  };
+
+  Logger.log('HOMEPAGE_OPEN_ALERTS_AFTER_GOVERNANCE ' + JSON.stringify(result, null, 2));
+  return successResponse(result, 'Homepage open alerts after governance checked.');
+}
+
+function auditActiveClaimCarrierData() {
+  const claims = getAlertPersistenceRows_(getAlertPersistenceSheetName_('claims'));
+  const activeClaims = claims.filter(function(claim) {
+    return isAlertPersistenceActiveClaim_(claim);
+  });
+
+  const result = {
+    totalActiveClaims: activeClaims.length,
+    withCarrierPopulated: 0,
+    blankCarrier: 0,
+    carrierCounts: {},
+    sampleClaimsWithBlankCarrier: [],
+    sampleClaimsWhereCarrierContainsLiberty: []
+  };
+
+  activeClaims.forEach(function(claim) {
+    const carrier = String(getAlertPersistenceValue_(claim, ['Carrier', 'Insurance_Carrier', 'Insurance Carrier']) || '').trim();
+    const claimSummary = {
+      claimId: getAlertPersistenceValue_(claim, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']),
+      jobNumber: getAlertPersistenceValue_(claim, ['Job_Number', 'Job Number', 'JobNumber', 'jobNumber']),
+      claimNumber: getAlertPersistenceValue_(claim, ['Claim_Number', 'Claim Number']),
+      customerName: getAlertPersistenceValue_(claim, ['Customer_Name', 'Customer Name', 'Display_Name', 'Display Name']),
+      lifecycleState: getAlertPersistenceValue_(claim, ['Lifecycle_State', 'Lifecycle State', 'Current_Lifecycle_State', 'Current Lifecycle State']),
+      carrier: carrier
+    };
+
+    if (carrier) {
+      result.withCarrierPopulated++;
+      result.carrierCounts[carrier] = (result.carrierCounts[carrier] || 0) + 1;
+
+      if (carrier.toLowerCase().indexOf('liberty') !== -1 &&
+          result.sampleClaimsWhereCarrierContainsLiberty.length < 10) {
+        result.sampleClaimsWhereCarrierContainsLiberty.push(claimSummary);
+      }
+      return;
+    }
+
+    result.blankCarrier++;
+    if (result.sampleClaimsWithBlankCarrier.length < 10) {
+      result.sampleClaimsWithBlankCarrier.push(claimSummary);
+    }
+  });
+
+  result.carrierCounts = sortAlertGovernanceCountMap_(result.carrierCounts);
+
+  Logger.log('ACTIVE_CLAIM_CARRIER_AUDIT ' + JSON.stringify(result, null, 2));
+  return successResponse(result, 'Active claim carrier data audited.');
+}
+
+function testAuditActiveClaimCarrierData() {
+  const response = auditActiveClaimCarrierData();
+  Logger.log('ACTIVE_CLAIM_CARRIER_AUDIT_TEST ' + JSON.stringify(response, null, 2));
+  return response;
+}
+
+function sortAlertGovernanceCountMap_(countMap) {
+  const sorted = {};
+
+  Object.keys(countMap || {}).sort(function(a, b) {
+    return countMap[b] - countMap[a] || a.localeCompare(b);
+  }).forEach(function(key) {
+    sorted[key] = countMap[key];
+  });
+
+  return sorted;
+}
+
+function ensureAlertGovernanceRule_(rule) {
+  ensureAlertRulesSheet_();
+
+  const rows = getAlertPersistenceRows_(ALERT_RULES_SHEET_NAME);
+  const existing = rows.find(function(row) {
+    return getAlertPersistenceValue_(row, ['Rule_ID', 'Rule ID']) === rule.Rule_ID;
+  });
+
+  if (existing) {
+    return {
+      created: false,
+      rule: existing
+    };
+  }
+
+  const appendResult = appendRow(ALERT_RULES_SHEET_NAME, rule);
+
+  return {
+    created: true,
+    rule: rule,
+    appendResult: appendResult
+  };
+}
+
+function getFirstAlertGovernanceTestClaimId_() {
+  const claims = getAlertPersistenceRows_(getAlertPersistenceSheetName_('claims'));
+  const activeClaim = claims.find(function(claim) {
+    return isAlertPersistenceActiveClaim_(claim) &&
+      getAlertPersistenceValue_(claim, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']);
+  });
+
+  return activeClaim
+    ? getAlertPersistenceValue_(activeClaim, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId'])
+    : '';
 }

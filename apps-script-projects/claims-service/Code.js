@@ -1,4 +1,3 @@
-
 /**
  * claims-service
  * Rainbow Phase 4 — Claim Foundation
@@ -135,6 +134,21 @@ function routeClaimServiceRequest_(e, method) {
       case 'resolveAlert':
         return jsonResponse_(resolveAlert(payload.alertId, payload.reason || ''));
 
+      case 'dismissAlert':
+        return jsonResponse_(dismissAlert(
+          payload.alertId,
+          payload.reason || '',
+          payload.dismissedBy || ''
+        ));
+
+      case 'dismissAlertsByClaimAndType':
+        return jsonResponse_(dismissAlertsByClaimAndType(
+          payload.claimId,
+          payload.alertType,
+          payload.reason || '',
+          payload.dismissedBy || ''
+        ));
+
       case 'createFinancialTrack':
         return jsonResponse_(createFinancialTrack(payload.claimId, payload.financialTrack || {}));
 
@@ -156,4 +170,16 @@ function routeClaimServiceRequest_(e, method) {
       stack: error && error.stack ? error.stack : ''
     }));
   }
+}
+
+function testListAllSheets() {
+  const spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+
+  const sheetNames = spreadsheet
+    .getSheets()
+    .map(sheet => sheet.getName());
+
+  Logger.log(JSON.stringify(sheetNames, null, 2));
+
+  return sheetNames;
 }

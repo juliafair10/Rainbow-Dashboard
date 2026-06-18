@@ -976,6 +976,390 @@ function testConditionEngineBatchReadinessCompact() {
   Logger.log('CONDITION_ENGINE_BATCH_READINESS_SUMMARY ' + JSON.stringify(summary));
   return successResponse(summary, 'Compact Condition Engine batch readiness checked.');
 }
+
+const CONDITION_AUDIT_SHEET_NAME = 'Condition_Audit';
+const CONDITION_AUDIT_HEADERS = [
+  'Audit_ID',
+  'Claim_ID',
+  'Job_Number',
+  'Customer_Name',
+  'Current_Health',
+  'Engine_Conditions',
+  'Likely_Conditions',
+  'Missing_Conditions',
+  'Evidence_Text',
+  'Audit_Result',
+  'Audited_At'
+];
+
+const CONDITION_AUDIT_RULES = [
+  {
+    conditionName: 'Coverage Pending',
+    phrases: ['COVERAGE PENDING', 'PENDING COVERAGE', 'WAITING ON COVERAGE', 'COVERAGE REVIEW'],
+    negativePhrases: ['COVERAGE APPROVED', 'COVERAGE ACCEPTED', 'DENIAL RECEIVED']
+  },
+  {
+    conditionName: 'Estimate Under Review',
+    phrases: ['ESTIMATE UNDER REVIEW', 'ESTIMATE REVIEW', 'REVIEWING ESTIMATE', 'ESTIMATE SUBMITTED'],
+    negativePhrases: ['ESTIMATE APPROVED', 'APPROVED ESTIMATE', 'REVIEW ACCEPTED']
+  },
+  {
+    conditionName: 'Carrier Revision Requested',
+    phrases: ['CARRIER REVISION REQUESTED', 'CARRIER REQUESTED REVISION', 'PLEASE REVIEW FOR REVISIONS', 'REVISIONS REQUESTED BELOW'],
+    negativePhrases: ['REVISION SUBMITTED', 'REVISION COMPLETE', 'REVIEW ACCEPTED']
+  },
+  {
+    conditionName: 'Revision Active',
+    phrases: ['REVISION ACTIVE', 'REVISION SUBMITTED', 'REVISION REQUESTED', 'REVISIONS REQUESTED'],
+    negativePhrases: ['REVISION ACCEPTED', 'REVISION COMPLETE', 'REVIEW ACCEPTED']
+  },
+  {
+    conditionName: 'Supplement Under Review',
+    phrases: ['SUPPLEMENT UNDER REVIEW', 'SUPPLEMENT SUBMITTED', 'SUPPLEMENT REVIEW'],
+    negativePhrases: ['SUPPLEMENT APPROVED', 'SUPPLEMENT ACCEPTED', 'REVIEW ACCEPTED']
+  },
+  {
+    conditionName: 'Waiting on Payment',
+    phrases: ['WAITING ON PAYMENT', 'PAYMENT PENDING', 'PENDING PAYMENT', 'CHECK PENDING'],
+    negativePhrases: ['PAYMENT RECEIVED', 'CHECK RECEIVED']
+  },
+  {
+    conditionName: 'Monitoring Active',
+    phrases: ['MONITORING ACTIVE', 'MONITORING VISIT', 'MONITORING SCHEDULED', 'EQUIPMENT MONITORING'],
+    negativePhrases: ['MONITORING COMPLETE', 'FINAL MONITOR', 'PICKED UP EQUIPMENT', 'EQUIPMENT PICKUP', 'DRYING COMPLETE']
+  },
+  {
+    conditionName: 'Waiting on Lab Results',
+    phrases: ['WAITING ON LAB', 'WAITING ON LAB RESULTS', 'PENDING LAB RESULTS', 'LAB RESULTS PENDING'],
+    negativePhrases: ['LAB RESULTS RECEIVED', 'RESULTS RECEIVED']
+  },
+  {
+    conditionName: 'Positive Asbestos Result',
+    phrases: ['POSITIVE ASBESTOS RESULT', 'ASBESTOS POSITIVE', 'TESTED POSITIVE FOR ASBESTOS'],
+    negativePhrases: ['FALSE POSITIVE', 'NEGATIVE ASBESTOS', 'NO ASBESTOS']
+  },
+  {
+    conditionName: 'Abatement Required',
+    phrases: ['ABATEMENT REQUIRED', 'SCHEDULE ABATEMENT', 'ABATEMENT NEEDED', 'COORDINATE ABATEMENT'],
+    negativePhrases: ['ABATEMENT COMPLETE', 'ABATEMENT COMPLETED']
+  },
+  {
+    conditionName: 'Waiting on Customer Decision',
+    phrases: ['WAITING ON CUSTOMER', 'CUSTOMER DECISION', 'WAITING FOR CUSTOMER DECISION', 'CUSTOMER TO DECIDE'],
+    negativePhrases: ['CUSTOMER APPROVED', 'CUSTOMER DECLINED', 'CUSTOMER SCHEDULED']
+  },
+  {
+    conditionName: 'Source of Loss Unresolved',
+    phrases: ['SOURCE OF LOSS UNRESOLVED', 'CAUSE OF LOSS UNRESOLVED', 'SOURCE OF LOSS UNKNOWN', 'CAUSE OF LOSS UNKNOWN'],
+    negativePhrases: ['SOURCE OF LOSS CONFIRMED', 'CAUSE OF LOSS CONFIRMED']
+  }
+];
+
+function runConditionAudit() {
+  try {
+    const auditedAt = nowIso();
+    const claims = findConditionEngineClaimsRows_();
+    const activeClaims = claims.filter(function(claim) {
+      return isConditionAuditActiveClaim_(claim);
+    });
+
+    const auditRows = [];
+    const summary = {
+      activeClaimsAudited: 0,
+      matches: 0,
+      possibleMissingConditions: 0,
+      noSignal: 0,
+      conditionCounts: {},
+      topMissingConditions: {}
+    };
+
+    activeClaims.forEach(function(claim) {
+      const row = buildConditionAuditRow_(claim, auditedAt);
+      auditRows.push(row);
+      updateConditionAuditSummary_(summary, row);
+    });
+
+    summary.activeClaimsAudited = auditRows.length;
+    summary.topMissingConditions = sortConditionAuditCountMap_(summary.topMissingConditions);
+
+    writeConditionAuditRows_(auditRows);
+
+    const response = successResponse({
+      summary: summary,
+      auditSheetName: CONDITION_AUDIT_SHEET_NAME,
+      rowsWritten: auditRows.length
+    }, 'Condition audit completed.');
+
+    Logger.log('CONDITION_AUDIT_SUMMARY ' + JSON.stringify(summary));
+    return response;
+  } catch (error) {
+    const response = errorResponse('Condition audit failed.', {
+      message: error && error.message ? error.message : String(error),
+      stack: error && error.stack ? error.stack : ''
+    });
+
+    Logger.log(JSON.stringify(response, null, 2));
+    return response;
+  }
+}
+
+function buildConditionAuditRow_(claim, auditedAt) {
+  const claimId = getConditionEngineClaimIdFromRow_(claim);
+  const jobNumber = getConditionEngineJobNumberFromRow_(claim);
+  const customerName = getConditionAuditCustomerName_(claim);
+  const currentHealth = getConditionAuditCurrentHealth_(claim);
+  const evaluationResult = evaluateClaimConditions(claimId);
+  const activitiesResult = synthesizeClaimActivities(claimId);
+  const engineConditions = evaluationResult.success ? evaluationResult.data.recommendedConditions || [] : [];
+  const activities = activitiesResult.success ? activitiesResult.data.activities || [] : [];
+  const textItems = getConditionAuditSearchableTextItems_(activities);
+  const likelyResult = findConditionAuditLikelyConditions_(textItems);
+  const likelyConditions = likelyResult.likelyConditions;
+  const missingConditions = likelyConditions.filter(function(conditionName) {
+    return engineConditions.indexOf(conditionName) === -1;
+  });
+  let auditResult = 'No Signal';
+
+  if (likelyConditions.length > 0 && missingConditions.length > 0) {
+    auditResult = 'Possible Missing Condition';
+  } else if (likelyConditions.length > 0) {
+    auditResult = 'Match';
+  }
+
+  return {
+    Audit_ID: generateId('CNA'),
+    Claim_ID: claimId,
+    Job_Number: jobNumber,
+    Customer_Name: customerName,
+    Current_Health: currentHealth,
+    Engine_Conditions: engineConditions.join(', '),
+    Likely_Conditions: likelyConditions.join(', '),
+    Missing_Conditions: missingConditions.join(', '),
+    Evidence_Text: formatConditionAuditEvidence_(likelyResult.evidenceByCondition, missingConditions.length ? missingConditions : likelyConditions),
+    Audit_Result: auditResult,
+    Audited_At: auditedAt
+  };
+}
+
+function isConditionAuditActiveClaim_(claim) {
+  if (!getConditionEngineClaimIdFromRow_(claim)) {
+    return false;
+  }
+
+  const isActive = String(getConditionEngineValueFromRow_(claim, ['Is_Active', 'Is Active'])).toLowerCase();
+  const isNotSold = String(getConditionEngineValueFromRow_(claim, ['Is_Not_Sold', 'Is Not Sold'])).toLowerCase();
+  const isComplete = String(getConditionEngineValueFromRow_(claim, ['Is_Operationally_Complete', 'Is Operationally Complete'])).toLowerCase();
+  const lifecycleState = String(getConditionEngineLifecycleStateFromRow_(claim)).trim();
+
+  if (isActive === 'false' || isNotSold === 'true' || isComplete === 'true') {
+    return false;
+  }
+
+  return lifecycleState !== 'Operationally Complete' && lifecycleState !== 'Not Sold';
+}
+
+function getConditionAuditCustomerName_(claim) {
+  return getConditionEngineValueFromRow_(claim, [
+    'Customer_Name',
+    'Customer Name',
+    'Display_Name',
+    'Display Name',
+    'Claim_Label',
+    'Claim Label'
+  ]);
+}
+
+function getConditionAuditCurrentHealth_(claim) {
+  return getConditionEngineValueFromRow_(claim, [
+    'Health Status',
+    'Health_Status',
+    'Operational_Health',
+    'Health_Level',
+    'Health Level'
+  ]) || 'Healthy';
+}
+
+function getConditionAuditSearchableTextItems_(activities) {
+  const items = [];
+
+  (activities || []).forEach(function(activity) {
+    addConditionAuditTextItem_(items, [
+      activity.activityType,
+      activity.activityLabel,
+      activity.summary
+    ]);
+
+    (activity.events || []).forEach(function(event) {
+      addConditionAuditTextItem_(items, [
+        event.Event_Type,
+        event.Summary,
+        event.Detail,
+        event.Related_Workflow,
+        event.Event_Category,
+        event.Source_System,
+        event.Event_Source
+      ]);
+    });
+  });
+
+  return items;
+}
+
+function addConditionAuditTextItem_(items, parts) {
+  const text = (parts || []).map(function(part) {
+    return String(part || '').trim();
+  }).filter(function(part) {
+    return part !== '';
+  }).join(' | ');
+
+  if (text) {
+    items.push(text);
+  }
+}
+
+function findConditionAuditLikelyConditions_(textItems) {
+  const likelyConditions = [];
+  const evidenceByCondition = {};
+
+  CONDITION_AUDIT_RULES.forEach(function(rule) {
+    const match = findConditionAuditRuleMatch_(textItems, rule);
+    if (!match) {
+      return;
+    }
+
+    likelyConditions.push(rule.conditionName);
+    evidenceByCondition[rule.conditionName] = match.evidence;
+  });
+
+  return {
+    likelyConditions: likelyConditions,
+    evidenceByCondition: evidenceByCondition
+  };
+}
+
+function findConditionAuditRuleMatch_(textItems, rule) {
+  for (let i = 0; i < (textItems || []).length; i++) {
+    const text = String(textItems[i] || '');
+    const upperText = text.toUpperCase();
+    const matchedPhrase = (rule.phrases || []).find(function(phrase) {
+      return upperText.indexOf(String(phrase || '').toUpperCase()) !== -1;
+    });
+
+    if (!matchedPhrase) {
+      continue;
+    }
+
+    const hasNegative = (rule.negativePhrases || []).some(function(phrase) {
+      return upperText.indexOf(String(phrase || '').toUpperCase()) !== -1;
+    });
+
+    if (hasNegative) {
+      continue;
+    }
+
+    return {
+      phrase: matchedPhrase,
+      evidence: buildConditionAuditExcerpt_(text, matchedPhrase)
+    };
+  }
+
+  return null;
+}
+
+function buildConditionAuditExcerpt_(text, phrase) {
+  const sourceText = String(text || '').replace(/\s+/g, ' ').trim();
+  const upperText = sourceText.toUpperCase();
+  const upperPhrase = String(phrase || '').toUpperCase();
+  const index = upperText.indexOf(upperPhrase);
+
+  if (index === -1) {
+    return sourceText.slice(0, 180);
+  }
+
+  const start = Math.max(0, index - 70);
+  const end = Math.min(sourceText.length, index + upperPhrase.length + 90);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < sourceText.length ? '...' : '';
+
+  return prefix + sourceText.slice(start, end) + suffix;
+}
+
+function formatConditionAuditEvidence_(evidenceByCondition, conditionNames) {
+  return (conditionNames || []).map(function(conditionName) {
+    const evidence = evidenceByCondition[conditionName] || '';
+    return evidence ? conditionName + ': ' + evidence : '';
+  }).filter(function(value) {
+    return value !== '';
+  }).join(' || ').slice(0, 900);
+}
+
+function updateConditionAuditSummary_(summary, row) {
+  if (row.Audit_Result === 'Match') {
+    summary.matches++;
+  } else if (row.Audit_Result === 'Possible Missing Condition') {
+    summary.possibleMissingConditions++;
+  } else {
+    summary.noSignal++;
+  }
+
+  splitConditionAuditList_(row.Likely_Conditions).forEach(function(conditionName) {
+    summary.conditionCounts[conditionName] = (summary.conditionCounts[conditionName] || 0) + 1;
+  });
+
+  splitConditionAuditList_(row.Missing_Conditions).forEach(function(conditionName) {
+    summary.topMissingConditions[conditionName] = (summary.topMissingConditions[conditionName] || 0) + 1;
+  });
+}
+
+function splitConditionAuditList_(value) {
+  return String(value || '').split(',').map(function(item) {
+    return item.trim();
+  }).filter(function(item) {
+    return item !== '';
+  });
+}
+
+function sortConditionAuditCountMap_(countMap) {
+  const sorted = {};
+
+  Object.keys(countMap || {}).sort(function(a, b) {
+    return countMap[b] - countMap[a] || a.localeCompare(b);
+  }).forEach(function(key) {
+    sorted[key] = countMap[key];
+  });
+
+  return sorted;
+}
+
+function writeConditionAuditRows_(auditRows) {
+  const ss = getClaimFoundationSpreadsheet_();
+  let sheet = ss.getSheetByName(CONDITION_AUDIT_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(CONDITION_AUDIT_SHEET_NAME);
+  }
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, CONDITION_AUDIT_HEADERS.length).setValues([CONDITION_AUDIT_HEADERS]);
+
+  if (auditRows.length > 0) {
+    const values = auditRows.map(function(row) {
+      return valuesFromObject_(CONDITION_AUDIT_HEADERS, row);
+    });
+
+    sheet.getRange(2, 1, values.length, CONDITION_AUDIT_HEADERS.length).setValues(values);
+  }
+
+  sheet.setFrozenRows(1);
+}
+
+function testRunConditionAudit() {
+  const response = runConditionAudit();
+  const summary = response && response.success && response.data ? response.data.summary : response;
+
+  Logger.log('CONDITION_AUDIT_TEST_SUMMARY ' + JSON.stringify(summary, null, 2));
+  return response;
+}
 function testConditionEngineHardenedSignalsForKnownClaim() {
   const claimId = 'CLM-26A-0034-WTR';
   const result = evaluateClaimConditions(claimId);
