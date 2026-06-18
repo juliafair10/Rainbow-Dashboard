@@ -81,7 +81,10 @@ function getHomepageClaimSummaryData() {
     becomingStale: getHomepageBecomingStale_(activeClaims, activeConditions, activeAlerts, activeClaimSummaries),
     recentActivity: getHomepageRecentActivity_(activeClaims, timeline),
     recentClaimSummaries: getHomepageRecentClaimSummaries_(activeClaimSummaries),
-    operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts)
+    operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts),
+    ownershipVisibility: getHomepageOwnershipVisibility_(activeClaims),
+    conditionsVisibility: getHomepageConditionsVisibility_(activeConditions),
+    complianceVisibility: getHomepageComplianceVisibility_(openComplianceActions)
   };
 }
 
@@ -1125,6 +1128,152 @@ function getHomepageOperationalAlerts_(claims, alerts) {
       targetWorkspace: 'claims'
     };
   });
+}
+
+function getHomepageOwnershipVisibility_(claims) {
+  const ownershipAreas = ['Intake', 'Field Operations', 'Revision Management', 'Office Operations'];
+
+  const summary = ownershipAreas.reduce(function(map, ownershipArea) {
+    map[ownershipArea] = {
+      ownershipArea: ownershipArea,
+      activeClaimCount: 0,
+      needsAttentionCount: 0,
+      criticalCount: 0,
+      escalatedCount: 0,
+      atRiskCount: 0
+    };
+    return map;
+  }, {});
+
+  (claims || []).forEach(function(claim) {
+    const ownershipArea = claim.Ownership_Area || 'Unassigned';
+
+    if (!summary[ownershipArea]) {
+      summary[ownershipArea] = {
+        ownershipArea: ownershipArea,
+        activeClaimCount: 0,
+        needsAttentionCount: 0,
+        criticalCount: 0,
+        escalatedCount: 0,
+        atRiskCount: 0
+      };
+    }
+
+    const healthLevel = getHomepageClaimHealthLevel_(claim, 'Healthy');
+    summary[ownershipArea].activeClaimCount++;
+
+    if (['Attention Soon', 'At Risk', 'Escalated', 'Critical'].indexOf(healthLevel) !== -1) {
+      summary[ownershipArea].needsAttentionCount++;
+    }
+
+    if (healthLevel === 'Critical') {
+      summary[ownershipArea].criticalCount++;
+    }
+
+    if (healthLevel === 'Escalated') {
+      summary[ownershipArea].escalatedCount++;
+    }
+
+    if (healthLevel === 'At Risk') {
+      summary[ownershipArea].atRiskCount++;
+    }
+  });
+
+  return Object.keys(summary).map(function(key) {
+    return summary[key];
+  }).sort(function(a, b) {
+    if (a.needsAttentionCount !== b.needsAttentionCount) {
+      return b.needsAttentionCount - a.needsAttentionCount;
+    }
+
+    return b.activeClaimCount - a.activeClaimCount;
+  });
+}
+
+function getHomepageConditionsVisibility_(conditions) {
+  const conditionTypes = [
+    'Coverage Pending',
+    'Estimate Under Review',
+    'Supplement Under Review',
+    'Waiting on Payment',
+    'Revision Active',
+    'Carrier Revision Requested',
+    'Monitoring Active',
+    'Positive Asbestos Result',
+    'Abatement Required'
+  ];
+
+  const summary = conditionTypes.reduce(function(map, conditionType) {
+    map[conditionType] = {
+      conditionType: conditionType,
+      openCount: 0,
+      affectedClaimIds: {}
+    };
+    return map;
+  }, {});
+
+  (conditions || []).forEach(function(condition) {
+    const conditionType = condition.Condition_Type || 'Other';
+
+    if (!summary[conditionType]) {
+      summary[conditionType] = {
+        conditionType: conditionType,
+        openCount: 0,
+        affectedClaimIds: {}
+      };
+    }
+
+    summary[conditionType].openCount++;
+
+    if (condition.Claim_ID) {
+      summary[conditionType].affectedClaimIds[condition.Claim_ID] = true;
+    }
+  });
+
+  return Object.keys(summary).map(function(key) {
+    const item = summary[key];
+    return {
+      conditionType: item.conditionType,
+      openCount: item.openCount,
+      affectedClaimCount: Object.keys(item.affectedClaimIds).length
+    };
+  }).filter(function(item) {
+    return item.openCount > 0;
+  }).sort(function(a, b) {
+    return b.openCount - a.openCount;
+  });
+}
+
+function getHomepageComplianceVisibility_(complianceActions) {
+  const priorityCounts = {};
+  const statusCounts = {};
+  let criticalComplianceActionCount = 0;
+  let overdueComplianceActionCount = 0;
+
+  (complianceActions || []).forEach(function(action) {
+    const priority = String(action.Priority || action.Severity || 'Unspecified').trim() || 'Unspecified';
+    const status = String(action.Status || action.Action_Status || 'Open').trim() || 'Open';
+    const dueDate = action.Due_Date || action.Follow_Up_Date || '';
+
+    priorityCounts[priority] = (priorityCounts[priority] || 0) + 1;
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+    if (priority.toLowerCase() === 'critical') {
+      criticalComplianceActionCount++;
+    }
+
+    if (dueDate && isHomepageDueTodayOrOverdue_(dueDate)) {
+      overdueComplianceActionCount++;
+    }
+  });
+
+  return {
+    totalOpenComplianceActions: (complianceActions || []).length,
+    criticalComplianceActionCount: criticalComplianceActionCount,
+    overdueComplianceActionCount: overdueComplianceActionCount,
+    priorityCounts: priorityCounts,
+    statusCounts: statusCounts
+  };
 }
 
 function testGetHomepageClaimSummaryData() {

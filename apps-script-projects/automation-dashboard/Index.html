@@ -1519,6 +1519,27 @@
           <div class="homepage-activity-empty">Loading recent activity...</div>
         </div>
       </div>
+
+      <div class="homepage-activity-panel">
+        <h3 class="homepage-activity-title">Ownership Visibility</h3>
+        <div id="homepageOwnershipVisibility" class="homepage-activity-list">
+          <div class="homepage-activity-empty">Loading ownership visibility...</div>
+        </div>
+      </div>
+
+      <div class="homepage-activity-panel">
+        <h3 class="homepage-activity-title">Conditions Visibility</h3>
+        <div id="homepageConditionsVisibility" class="homepage-activity-list">
+          <div class="homepage-activity-empty">Loading conditions visibility...</div>
+        </div>
+      </div>
+
+      <div class="homepage-activity-panel">
+        <h3 class="homepage-activity-title">Compliance Visibility</h3>
+        <div id="homepageComplianceVisibility" class="homepage-activity-list">
+          <div class="homepage-activity-empty">Loading compliance visibility...</div>
+        </div>
+      </div>
     </section>
 
     <div class="workspace-layout">
@@ -1565,7 +1586,8 @@
         return;
       }
 
-      const data = response.data || {};
+      const rawData = response.data || {};
+      const data = rawData.data || rawData;
       const kpis = data.kpis || {};
 
       setHomepageKpiValue('homepage-kpi-needsAttention', kpis.needsAttention);
@@ -1578,6 +1600,9 @@
       renderHomepageTodaySchedule(data.todaySchedule || []);
       renderHomepageOperationalAlerts(data.operationalAlerts || []);
       renderHomepageRecentActivity(data.recentActivity || []);
+      renderHomepageOwnershipVisibility(data.ownershipVisibility || []);
+      renderHomepageConditionsVisibility(data.conditionsVisibility || []);
+      renderHomepageComplianceVisibility(data.complianceVisibility || {});
 
       const status = data.systemStatus || {};
       const statusText = status.homepageService === 'Connected'
@@ -1692,12 +1717,16 @@
         return;
       }
 
-      if (!alerts || alerts.length === 0) {
+      const alertItems = Array.isArray(alerts)
+        ? alerts
+        : (alerts && Array.isArray(alerts.topAlerts) ? alerts.topAlerts : []);
+
+      if (!alertItems || alertItems.length === 0) {
         container.innerHTML = '<div class="homepage-alert-empty">No open operational alerts right now.</div>';
         return;
       }
 
-      container.innerHTML = alerts.map(function(alert) {
+      container.innerHTML = alertItems.slice(0, 10).map(function(alert) {
         const meta = [
           alert.severity || '',
           alert.primaryOwner || '',
@@ -1710,14 +1739,14 @@
           <div class="homepage-alert-item">
             <div class="homepage-alert-top">
               <div class="homepage-alert-title">
-                ${escapeHtml(alert.alertType || 'Operational Alert')}
+                ${escapeHtml(alert.alertType || alert.alertCategory || 'Operational Alert')}
               </div>
               <div class="homepage-alert-meta">
                 ${escapeHtml(meta)}
               </div>
             </div>
             <div class="homepage-alert-reason">
-              ${escapeHtml(alert.claimDisplayName || '')}
+              ${escapeHtml(alert.claimDisplayName || alert.claimId || '')}
               ${reason ? ' — ' + escapeHtml(reason) : ''}
             </div>
           </div>
@@ -1738,26 +1767,123 @@
 
       container.innerHTML = activityItems.map(function(activity) {
         const meta = [
+          activity.occurredAt ? formatDisplayDateTime(activity.occurredAt) : '',
           activity.eventDate ? formatDisplayDateTime(activity.eventDate) : '',
           activity.relatedWorkflow || '',
-          activity.sourceSystem || ''
+          activity.sourceSystem || activity.source || ''
         ].filter(Boolean).join(' • ');
 
-        const detail = activity.detail || activity.eventType || '';
+        const detail = activity.title || activity.detail || activity.eventType || '';
 
         return `
           <div class="homepage-activity-item">
             <div class="homepage-activity-top">
               <div class="homepage-activity-name">
-                ${escapeHtml(activity.summary || activity.eventType || 'Timeline activity')}
+                ${escapeHtml(activity.claimDisplayName || activity.claimId || activity.summary || activity.eventType || 'Timeline activity')}
               </div>
               <div class="homepage-activity-meta">
                 ${escapeHtml(meta)}
               </div>
             </div>
             <div class="homepage-activity-detail">
-              ${escapeHtml(activity.claimDisplayName || '')}
-              ${detail ? ' — ' + escapeHtml(detail) : ''}
+              ${escapeHtml(detail)}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderHomepageOwnershipVisibility(items) {
+      const container = document.getElementById('homepageOwnershipVisibility');
+      if (!container) {
+        return;
+      }
+
+      if (!items || items.length === 0) {
+        container.innerHTML = '<div class="homepage-activity-empty">No ownership visibility available yet.</div>';
+        return;
+      }
+
+      container.innerHTML = items.map(function(item) {
+        return `
+          <div class="homepage-activity-item">
+            <div class="homepage-activity-top">
+              <div class="homepage-activity-name">
+                ${escapeHtml(item.ownershipArea || 'Ownership Area')}
+              </div>
+              <div class="homepage-activity-meta">
+                ${escapeHtml(String(item.activeClaimCount || 0))} active
+              </div>
+            </div>
+            <div class="homepage-activity-detail">
+              ${escapeHtml(String(item.needsAttentionCount || 0))} need attention • ${escapeHtml(String(item.atRiskCount || 0))} at risk • ${escapeHtml(String(item.escalatedCount || 0))} escalated • ${escapeHtml(String(item.criticalCount || 0))} critical
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderHomepageConditionsVisibility(items) {
+      const container = document.getElementById('homepageConditionsVisibility');
+      if (!container) {
+        return;
+      }
+
+      if (!items || items.length === 0) {
+        container.innerHTML = '<div class="homepage-activity-empty">No open operational conditions right now.</div>';
+        return;
+      }
+
+      container.innerHTML = items.map(function(item) {
+        return `
+          <div class="homepage-activity-item">
+            <div class="homepage-activity-top">
+              <div class="homepage-activity-name">
+                ${escapeHtml(item.conditionType || 'Condition')}
+              </div>
+              <div class="homepage-activity-meta">
+                ${escapeHtml(String(item.openCount || 0))} open
+              </div>
+            </div>
+            <div class="homepage-activity-detail">
+              ${escapeHtml(String(item.affectedClaimCount || 0))} claims affected
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderHomepageComplianceVisibility(summary) {
+      const container = document.getElementById('homepageComplianceVisibility');
+      if (!container) {
+        return;
+      }
+
+      const items = [
+        {
+          title: 'Open Compliance Actions',
+          value: summary && summary.totalOpenComplianceActions !== undefined ? summary.totalOpenComplianceActions : 0
+        },
+        {
+          title: 'Critical Compliance Actions',
+          value: summary && summary.criticalComplianceActionCount !== undefined ? summary.criticalComplianceActionCount : 0
+        },
+        {
+          title: 'Overdue Compliance Actions',
+          value: summary && summary.overdueComplianceActionCount !== undefined ? summary.overdueComplianceActionCount : 0
+        }
+      ];
+
+      container.innerHTML = items.map(function(item) {
+        return `
+          <div class="homepage-activity-item">
+            <div class="homepage-activity-top">
+              <div class="homepage-activity-name">
+                ${escapeHtml(item.title)}
+              </div>
+              <div class="homepage-activity-meta">
+                ${escapeHtml(String(item.value))}
+              </div>
             </div>
           </div>
         `;

@@ -1295,6 +1295,10 @@ function buildHomepageOperationalAlertsSummary_(activeAlerts, activeClaims) {
       reason: alert.Reason || alert.Recommended_Action || '',
       openedAt: alert.Opened_At || alert.Created_At || '',
       targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: alert.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', alert.Claim_ID || ''),
+      sourceSection: 'operationalAlerts',
       sortRank: getHomepageSeverityRank_(severity)
     };
   }).sort(function(a, b) {
@@ -1341,6 +1345,10 @@ function buildHomepageBecomingStale_(activeClaims) {
       lastMeaningfulActivityAt: lastActivity,
       daysSinceLastActivity: lastActivity ? daysSince_(lastActivity) : '',
       targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: claim.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', claim.Claim_ID || ''),
+      sourceSection: 'becomingStale',
       sortRank: getHomepagePriorityRankForHealth_(claim.Operational_Health || 'Healthy')
     };
   }).sort(function(a, b) {
@@ -1395,6 +1403,10 @@ function buildHomepageRecentActivity_() {
       occurredAt: occurredAt,
       source: event.Source || event.Created_By || '',
       targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: event.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', event.Claim_ID || ''),
+      sourceSection: 'recentActivity',
       sortTime: occurredAt ? new Date(occurredAt).getTime() : 0
     };
   }).sort(function(a, b) {
@@ -1462,7 +1474,12 @@ function buildHomepageOwnershipVisibility_(activeClaims) {
       needsAttentionCount: 0,
       criticalCount: 0,
       escalatedCount: 0,
-      atRiskCount: 0
+      atRiskCount: 0,
+      targetWorkspace: 'claims',
+      targetType: 'claimsFilter',
+      targetId: ownershipArea,
+      targetRoute: buildHomepageTargetRoute_('ownership', ownershipArea),
+      sourceSection: 'ownershipVisibility'
     };
     return map;
   }, {});
@@ -1477,7 +1494,12 @@ function buildHomepageOwnershipVisibility_(activeClaims) {
         needsAttentionCount: 0,
         criticalCount: 0,
         escalatedCount: 0,
-        atRiskCount: 0
+        atRiskCount: 0,
+        targetWorkspace: 'claims',
+        targetType: 'claimsFilter',
+        targetId: ownershipArea,
+        targetRoute: buildHomepageTargetRoute_('ownership', ownershipArea),
+        sourceSection: 'ownershipVisibility'
       };
     }
 
@@ -1531,7 +1553,12 @@ function buildHomepageConditionsVisibility_(activeConditions) {
       openCount: 0,
       overdueFollowUpCount: 0,
       withoutFollowUpCount: 0,
-      claimIds: []
+      claimIds: [],
+      targetWorkspace: 'claims',
+      targetType: 'claimsFilter',
+      targetId: conditionType,
+      targetRoute: buildHomepageTargetRoute_('condition', conditionType),
+      sourceSection: 'conditionsVisibility'
     };
     return map;
   }, {});
@@ -1545,7 +1572,12 @@ function buildHomepageConditionsVisibility_(activeConditions) {
         openCount: 0,
         overdueFollowUpCount: 0,
         withoutFollowUpCount: 0,
-        claimIds: []
+        claimIds: [],
+        targetWorkspace: 'claims',
+        targetType: 'claimsFilter',
+        targetId: conditionType,
+        targetRoute: buildHomepageTargetRoute_('condition', conditionType),
+        sourceSection: 'conditionsVisibility'
       };
     }
 
@@ -1571,7 +1603,12 @@ function buildHomepageConditionsVisibility_(activeConditions) {
       openCount: item.openCount,
       affectedClaimCount: item.claimIds.length,
       overdueFollowUpCount: item.overdueFollowUpCount,
-      withoutFollowUpCount: item.withoutFollowUpCount
+      withoutFollowUpCount: item.withoutFollowUpCount,
+      targetWorkspace: item.targetWorkspace,
+      targetType: item.targetType,
+      targetId: item.targetId,
+      targetRoute: item.targetRoute,
+      sourceSection: item.sourceSection
     };
   }).filter(function(item) {
     return item.openCount > 0;
@@ -1606,7 +1643,11 @@ function buildHomepageComplianceVisibility_(activeComplianceActions) {
       status: status,
       dueDate: action.Due_Date || '',
       sourceReport: action.Source_Report || '',
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: action.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', action.Claim_ID || ''),
+      sourceSection: 'complianceVisibility'
     };
 
     if (isOverdue) {
@@ -1879,8 +1920,34 @@ function buildHomepagePriorityItem_(claim, condition, priority, alert, complianc
     complianceDueDate: complianceAction ? complianceAction.Due_Date || '' : '',
     followUpDate: condition ? condition.Follow_Up_Date || '' : '',
     priorityRank: priority.priorityRank || 999,
-    targetWorkspace: 'claims'
+    targetWorkspace: 'claims',
+    targetType: 'claim',
+    targetId: claim.Claim_ID || '',
+    targetRoute: buildHomepageTargetRoute_('claim', claim.Claim_ID || ''),
+    sourceSection: 'todayPriorities'
   };
+}
+
+function buildHomepageTargetRoute_(targetType, targetId) {
+  const encodedTargetId = encodeURIComponent(String(targetId || ''));
+
+  if (targetType === 'claim') {
+    return encodedTargetId ? '/exec?page=claim&claimId=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'ownership') {
+    return encodedTargetId ? '/exec?page=claims&ownership=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'condition') {
+    return encodedTargetId ? '/exec?page=claims&condition=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'compliance') {
+    return encodedTargetId ? '/exec?page=claims&compliance=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  return '/exec?page=claims';
 }
 
 function getHomepageClaimDisplayName_(claim) {

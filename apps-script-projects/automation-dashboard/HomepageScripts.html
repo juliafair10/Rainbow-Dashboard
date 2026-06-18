@@ -18,13 +18,24 @@
       return;
     }
 
-    homepageData = response.data;
+    const rawHomepageData = response.data || {};
+    homepageData = rawHomepageData.data || rawHomepageData;
+
+    console.log('Rainbow Phase 8D homepage payload keys:', Object.keys(homepageData));
+    console.log('Rainbow Phase 8D ownershipVisibility:', homepageData.ownershipVisibility);
+    console.log('Rainbow Phase 8D conditionsVisibility:', homepageData.conditionsVisibility);
+
+    const ownershipVisibility = getHomepageOwnershipVisibilityForRender_(homepageData);
+    const conditionsVisibility = getHomepageConditionsVisibilityForRender_(homepageData);
 
     renderKpis(homepageData.kpis || {});
     renderTodayPriorities(homepageData.todayPriorities || []);
     renderBecomingStale(homepageData.becomingStale || []);
     renderOperationalAlerts(homepageData.operationalAlerts || []);
     renderRecentActivity(homepageData.recentActivity || []);
+    renderOwnershipVisibility(ownershipVisibility);
+    renderConditionsVisibility(conditionsVisibility);
+    renderComplianceVisibility(homepageData.complianceVisibility || {});
     renderRecentClaimSummaries(homepageData.recentClaimSummaries || []);
     renderTodaySchedule(homepageData.todaySchedule || []);
 
@@ -34,7 +45,7 @@
       const recentActivityCount = Array.isArray(homepageData.recentActivity) ? homepageData.recentActivity.length : 0;
       const scheduleCount = Array.isArray(homepageData.todaySchedule) ? homepageData.todaySchedule.length : 0;
 
-      statusStrip.textContent = 'Homepage connected • ' + loadedClaimCount + ' claims loaded • ' + recentActivityCount + ' recent activity • ' + scheduleCount + ' schedule items';
+      statusStrip.textContent = 'Phase 8D script active • Homepage connected • ' + loadedClaimCount + ' claims loaded • ' + recentActivityCount + ' recent activity • ' + scheduleCount + ' schedule items • ' + ownershipVisibility.length + ' ownership areas • ' + conditionsVisibility.length + ' condition groups';
     }
   }
 
@@ -45,6 +56,104 @@
     if (statusStrip) {
       statusStrip.textContent = 'Homepage data load failed.';
     }
+  }
+
+  function getHomepageOwnershipVisibilityForRender_(data) {
+    if (Array.isArray(data.ownershipVisibility) && data.ownershipVisibility.length > 0) {
+      return data.ownershipVisibility;
+    }
+
+    const sourceItems = [];
+    ['recentClaimSummaries', 'todayPriorities', 'becomingStale'].forEach(function(key) {
+      if (Array.isArray(data[key])) {
+        data[key].forEach(function(item) {
+          sourceItems.push(item);
+        });
+      }
+    });
+
+    const summary = {};
+
+    sourceItems.forEach(function(item) {
+      const ownershipArea = item.ownershipArea || item.Ownership_Area || 'Unassigned';
+      const claimId = item.claimId || item.Claim_ID || item.claimDisplayName || '';
+      const healthLevel = item.healthLevel || item.operationalHealth || item.Operational_Health || 'Healthy';
+
+      if (!summary[ownershipArea]) {
+        summary[ownershipArea] = {
+          ownershipArea: ownershipArea,
+          activeClaimCount: 0,
+          needsAttentionCount: 0,
+          criticalCount: 0,
+          escalatedCount: 0,
+          atRiskCount: 0,
+          claimIds: {}
+        };
+      }
+
+      if (claimId && !summary[ownershipArea].claimIds[claimId]) {
+        summary[ownershipArea].claimIds[claimId] = true;
+        summary[ownershipArea].activeClaimCount++;
+      }
+
+      if (['Attention Soon', 'At Risk', 'Escalated', 'Critical'].indexOf(healthLevel) !== -1) {
+        summary[ownershipArea].needsAttentionCount++;
+      }
+
+      if (healthLevel === 'Critical') summary[ownershipArea].criticalCount++;
+      if (healthLevel === 'Escalated') summary[ownershipArea].escalatedCount++;
+      if (healthLevel === 'At Risk') summary[ownershipArea].atRiskCount++;
+    });
+
+    return Object.keys(summary).map(function(key) {
+      const item = summary[key];
+      delete item.claimIds;
+      return item;
+    }).sort(function(a, b) {
+      return b.activeClaimCount - a.activeClaimCount;
+    });
+  }
+
+  function getHomepageConditionsVisibilityForRender_(data) {
+    if (Array.isArray(data.conditionsVisibility) && data.conditionsVisibility.length > 0) {
+      return data.conditionsVisibility;
+    }
+
+    const priorities = Array.isArray(data.todayPriorities) ? data.todayPriorities : [];
+    const summary = {};
+
+    priorities.forEach(function(item) {
+      const conditionType = item.conditionType || item.Condition_Type || '';
+
+      if (!conditionType) {
+        return;
+      }
+
+      if (!summary[conditionType]) {
+        summary[conditionType] = {
+          conditionType: conditionType,
+          openCount: 0,
+          affectedClaimIds: {}
+        };
+      }
+
+      summary[conditionType].openCount++;
+
+      if (item.claimId) {
+        summary[conditionType].affectedClaimIds[item.claimId] = true;
+      }
+    });
+
+    return Object.keys(summary).map(function(key) {
+      const item = summary[key];
+      return {
+        conditionType: item.conditionType,
+        openCount: item.openCount,
+        affectedClaimCount: Object.keys(item.affectedClaimIds).length
+      };
+    }).sort(function(a, b) {
+      return b.openCount - a.openCount;
+    });
   }
 
   function renderKpis(kpis) {
@@ -75,17 +184,17 @@
   }
 
   function renderOperationalAlerts(items) {
-    const normalizedItems = Array.isArray(items)
+    const alertItems = Array.isArray(items)
       ? items
-      : (items && typeof items === 'object' ? Object.values(items) : []);
+      : (items && Array.isArray(items.topAlerts) ? items.topAlerts : []);
 
-    const visibleItems = normalizedItems.slice(0, 5);
-    const hiddenCount = Math.max(normalizedItems.length - visibleItems.length, 0);
+    const visibleItems = alertItems.slice(0, 5);
+    const hiddenCount = Math.max(alertItems.length - visibleItems.length, 0);
 
     renderSimpleList('operationalAlertsList', visibleItems, function(item) {
-      return item.alertType || item.claimDisplayName || 'Alert';
+      return item.alertType || item.alertCategory || 'Alert';
     }, function(item) {
-      const claimText = item.claimDisplayName || item.customerName || item.claimId || '';
+      const claimText = item.claimDisplayName || item.claimId || '';
       const severityText = item.severity ? 'Severity: ' + item.severity : '';
       return [claimText, severityText].filter(Boolean).join(' • ');
     });
@@ -100,9 +209,50 @@
 
   function renderRecentActivity(items) {
     renderSimpleList('recentActivityList', items, function(item) {
-      return item.claimDisplayName || item.customerName || item.claimId || 'Activity';
+      return item.claimDisplayName || item.claimId || 'Activity';
     }, function(item) {
-      return item.summary || item.eventSummary || item.activitySummary || item.eventType || '';
+      return item.title || item.summary || item.eventType || '';
+    });
+  }
+
+  function renderOwnershipVisibility(items) {
+    renderSimpleList('ownershipVisibilityList', items, function(item) {
+      return item.ownershipArea || 'Ownership Area';
+    }, function(item) {
+      return (item.activeClaimCount || 0) + ' active claims • ' + (item.needsAttentionCount || 0) + ' need attention';
+    });
+  }
+
+  function renderConditionsVisibility(items) {
+    renderSimpleList('conditionsVisibilityList', items, function(item) {
+      return item.conditionType || 'Condition';
+    }, function(item) {
+      return (item.openCount || 0) + ' open • ' + (item.affectedClaimCount || 0) + ' claims affected';
+    });
+  }
+
+  function renderComplianceVisibility(summary) {
+    const items = [];
+
+    if (summary && typeof summary === 'object') {
+      items.push({
+        title: 'Open Compliance Actions',
+        meta: String(summary.totalOpenComplianceActions || 0)
+      });
+      items.push({
+        title: 'Critical Compliance Actions',
+        meta: String(summary.criticalComplianceActionCount || 0)
+      });
+      items.push({
+        title: 'Overdue Compliance Actions',
+        meta: String(summary.overdueComplianceActionCount || 0)
+      });
+    }
+
+    renderSimpleList('complianceVisibilityList', items, function(item) {
+      return item.title;
+    }, function(item) {
+      return item.meta;
     });
   }
 
