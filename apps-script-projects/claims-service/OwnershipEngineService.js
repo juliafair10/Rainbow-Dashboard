@@ -12,7 +12,7 @@ const OWNERSHIP_AREAS = {
   intake: 'Intake',
   fieldOperations: 'Field Operations',
   revisionManagement: 'Revision Management',
-  accountingOffice: 'Accounting & Office Operations'
+  accountingOffice: 'Office Operations'
 };
 
 function evaluateOwnership(claimId) {
@@ -230,6 +230,148 @@ function testLookupClaimForOwnership() {
   const result = lookupClaim({
     Display_Name: 'CLAIRE JACKSON',
     Claim_Number: '26N-0127-MLD'
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+function testOwnershipDistribution() {
+  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+
+  const result = claims.reduce(function(summary, claim) {
+    const area = claim.Ownership_Area || '(blank)';
+    summary[area] = (summary[area] || 0) + 1;
+    return summary;
+  }, {});
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testOwnershipEvaluationDistribution() {
+  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+
+  const result = claims.reduce(function(summary, claim) {
+    const claimId = claim.Claim_ID;
+    const evaluation = evaluateOwnership(claimId);
+
+    const currentArea = claim.Ownership_Area || '(blank)';
+    const proposedArea = evaluation && evaluation.success && evaluation.data
+      ? evaluation.data.ownerArea
+      : '(evaluation failed)';
+
+    const key = currentArea + ' -> ' + proposedArea;
+    summary[key] = (summary[key] || 0) + 1;
+
+    return summary;
+  }, {});
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function applyOwnershipTransitionsForAllClaims() {
+  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+
+  const result = claims.reduce(function(summary, claim) {
+    const claimId = claim.Claim_ID;
+
+    if (!claimId) {
+      summary.skippedMissingClaimId++;
+      return summary;
+    }
+
+    const ownershipResult = evaluateOwnership(claimId);
+
+    if (!ownershipResult || !ownershipResult.success || !ownershipResult.data) {
+      summary.failed++;
+      return summary;
+    }
+
+    const ownership = ownershipResult.data;
+    const currentArea = claim.Ownership_Area || '(blank)';
+    const proposedArea = ownership.ownerArea || '';
+    const transitionKey = currentArea + ' -> ' + proposedArea;
+
+    summary.preview[transitionKey] = (summary.preview[transitionKey] || 0) + 1;
+
+    if (!ownership.transitionTriggered) {
+      summary.unchanged++;
+      return summary;
+    }
+
+    const applyResult = applyOwnershipTransition(claimId);
+
+    if (!applyResult || !applyResult.success) {
+      summary.failed++;
+      return summary;
+    }
+
+    summary.updated++;
+    summary.applied[transitionKey] = (summary.applied[transitionKey] || 0) + 1;
+    return summary;
+  }, {
+    totalClaims: claims.length,
+    updated: 0,
+    unchanged: 0,
+    failed: 0,
+    skippedMissingClaimId: 0,
+    preview: {},
+    applied: {}
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function applyOwnershipAreasDirectFast() {
+  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+  const result = {
+    totalClaims: claims.length,
+    updated: 0,
+    unchanged: 0,
+    failed: 0,
+    preview: {},
+    failures: []
+  };
+
+  claims.forEach(function(claim) {
+    const claimId = claim.Claim_ID;
+    if (!claimId) {
+      result.failed++;
+      return;
+    }
+
+    const ownershipResult = evaluateOwnership(claimId);
+    if (!ownershipResult || !ownershipResult.success || !ownershipResult.data) {
+      result.failed++;
+      result.failures.push({ claimId: claimId, message: 'Evaluation failed' });
+      return;
+    }
+
+    const proposedArea = ownershipResult.data.ownerArea;
+    const currentArea = claim.Ownership_Area || '';
+    const key = currentArea + ' -> ' + proposedArea;
+    result.preview[key] = (result.preview[key] || 0) + 1;
+
+    if (currentArea === proposedArea) {
+      result.unchanged++;
+      return;
+    }
+
+    const updateResult = updateClaim(claimId, {
+      Ownership_Area: proposedArea,
+      Owner_Updated_At: nowIso(),
+      Updated_At: nowIso()
+    });
+
+    if (!updateResult || !updateResult.success) {
+      result.failed++;
+      result.failures.push({ claimId: claimId, message: updateResult ? updateResult.message : 'Update failed' });
+      return;
+    }
+
+    result.updated++;
   });
 
   Logger.log(JSON.stringify(result, null, 2));
