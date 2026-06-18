@@ -1128,6 +1128,7 @@ function getHomepageClaimSummary() {
     const claims = getRows(CLAIM_SHEET_NAMES.claims);
     const conditions = getRows(CLAIM_SHEET_NAMES.conditions);
     const alerts = getRows(CLAIM_SHEET_NAMES.alerts);
+    const complianceActions = getHomepageComplianceActions_();
 
     const activeClaims = claims.filter(function(claim) {
       return isHomepageActiveClaim_(claim);
@@ -1148,6 +1149,10 @@ function getHomepageClaimSummary() {
       return activeClaimIds[alert.Claim_ID] && isOpenStatus_(alert.Alert_Status);
     });
 
+    const activeComplianceActions = complianceActions.filter(function(action) {
+      return activeClaimIds[action.Claim_ID] && isOpenStatus_(action.Status);
+    });
+
     const kpis = {
       needsAttention: countClaimsByHealth_(activeClaims, ['Attention Soon', 'At Risk', 'Escalated', 'Critical']),
       atRisk: countClaimsByHealth_(activeClaims, ['At Risk']),
@@ -1159,7 +1164,10 @@ function getHomepageClaimSummary() {
         'Supplement Under Review',
         'Waiting on Payment'
       ]),
-      monitoringActive: countClaimsWithAnyCondition_(activeConditions, ['Monitoring Active'])
+      monitoringActive: countClaimsWithAnyCondition_(activeConditions, ['Monitoring Active']),
+      openComplianceActions: activeComplianceActions.length,
+      criticalComplianceActions: countComplianceActionsByPriority_(activeComplianceActions, ['Critical']),
+      overdueComplianceActions: countOverdueComplianceActions_(activeComplianceActions)
     };
 
     return successResponse({
@@ -1167,8 +1175,9 @@ function getHomepageClaimSummary() {
       activeClaimCount: activeClaims.length,
       openConditionCount: activeConditions.length,
       openAlertCount: activeAlerts.length,
+      openComplianceActionCount: activeComplianceActions.length,
       kpis: kpis,
-      todayPriorities: buildHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts)
+      todayPriorities: buildHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts, activeComplianceActions)
     }, 'Homepage claim summary generated successfully.');
 
   } catch (error) {
@@ -1209,7 +1218,12 @@ function isHomepageActiveClaim_(claim) {
 
 function isOpenStatus_(status) {
   const normalized = String(status || '').toLowerCase();
-  return normalized !== 'closed' && normalized !== 'resolved' && normalized !== 'complete' && normalized !== 'completed';
+  return normalized !== 'closed' &&
+    normalized !== 'resolved' &&
+    normalized !== 'dismissed' &&
+    normalized !== 'suppressed' &&
+    normalized !== 'complete' &&
+    normalized !== 'completed';
 }
 
 function countClaimsByHealth_(claims, healthLevels) {
@@ -1252,7 +1266,7 @@ function testGetHomepageClaimSummary() {
   return response;
 }
 
-function buildHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts) {
+function buildHomepageTodayPriorities_(activeClaims, activeConditions, activeAlerts, activeComplianceActions) {
   const claimById = (activeClaims || []).reduce(function(map, claim) {
     if (claim.Claim_ID) {
       map[claim.Claim_ID] = claim;
@@ -1303,6 +1317,20 @@ function buildHomepageTodayPriorities_(activeClaims, activeConditions, activeAle
     }
 
     priorities.push(buildHomepagePriorityItem_(claim, null, alertPriority, alert));
+  });
+
+  (activeComplianceActions || []).forEach(function(action) {
+    const claim = claimById[action.Claim_ID];
+    if (!claim) {
+      return;
+    }
+
+    const compliancePriority = getHomepageComplianceActionPriority_(action);
+    if (!compliancePriority) {
+      return;
+    }
+
+    priorities.push(buildHomepagePriorityItem_(claim, null, compliancePriority, null, action));
   });
 
   priorities.sort(function(a, b) {
@@ -1447,7 +1475,7 @@ function getHomepageAlertPriority_(alert) {
   return null;
 }
 
-function buildHomepagePriorityItem_(claim, condition, priority, alert) {
+function buildHomepagePriorityItem_(claim, condition, priority, alert, complianceAction) {
   return {
     claimId: claim.Claim_ID || '',
     claimDisplayName: getHomepageClaimDisplayName_(claim),
@@ -1462,6 +1490,9 @@ function buildHomepagePriorityItem_(claim, condition, priority, alert) {
     type: priority.type || '',
     conditionType: condition ? condition.Condition_Type || '' : '',
     alertType: alert ? alert.Alert_Type || '' : '',
+    complianceActionTitle: complianceAction ? complianceAction.Action_Title || '' : '',
+    compliancePriority: complianceAction ? complianceAction.Priority || '' : '',
+    complianceDueDate: complianceAction ? complianceAction.Due_Date || '' : '',
     followUpDate: condition ? condition.Follow_Up_Date || '' : '',
     priorityRank: priority.priorityRank || 999,
     targetWorkspace: 'claims'
@@ -1488,4 +1519,153 @@ function getHomepagePriorityRankForHealth_(healthLevel) {
   };
 
   return ranks[healthLevel] || 999;
+}
+
+function getHomepageComplianceActions_() {
+  const spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = spreadsheet.getSheetByName('Compliance_Actions');
+
+  if (!sheet) {
+    return [];
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (!values || values.length < 2) {
+    return [];
+  }
+
+  const headers = values[0].map(function(header) {
+    return String(header || '').trim().replace(/\s+/g, '_');
+  });
+
+  return values.slice(1).filter(function(row) {
+    return row.some(function(value) {
+      return String(value || '').trim() !== '';
+    });
+  }).map(function(row) {
+    const record = {};
+
+    headers.forEach(function(header, index) {
+      record[header] = row[index];
+    });
+
+    return record;
+  });
+}
+
+function countComplianceActionsByPriority_(actions, priorities) {
+  const priorityMap = (priorities || []).reduce(function(map, priority) {
+    map[String(priority || '').toLowerCase()] = true;
+    return map;
+  }, {});
+
+  return (actions || []).filter(function(action) {
+    return priorityMap[String(action.Priority || '').toLowerCase()];
+  }).length;
+}
+
+function countOverdueComplianceActions_(actions) {
+  const now = new Date();
+
+  return (actions || []).filter(function(action) {
+    if (!action.Due_Date) {
+      return false;
+    }
+
+    const dueDate = new Date(action.Due_Date);
+
+    if (isNaN(dueDate.getTime())) {
+      return false;
+    }
+
+    return dueDate.getTime() < now.getTime();
+  }).length;
+}
+
+function getHomepageComplianceActionPriority_(action) {
+  const priority = String(action.Priority || '').toLowerCase();
+  const dueDate = action.Due_Date ? new Date(action.Due_Date) : null;
+  const isOverdue = dueDate && !isNaN(dueDate.getTime()) && dueDate.getTime() < new Date().getTime();
+
+  if (priority === 'critical' && isOverdue) {
+    return {
+      type: 'Compliance',
+      title: 'Critical compliance action overdue',
+      reason: action.Action_Title || action.Required_Action || 'Critical compliance action is overdue.',
+      priorityRank: 15
+    };
+  }
+
+  if (priority === 'critical') {
+    return {
+      type: 'Compliance',
+      title: 'Critical compliance action open',
+      reason: action.Action_Title || action.Required_Action || 'Critical compliance action is open.',
+      priorityRank: 35
+    };
+  }
+
+  if (isOverdue) {
+    return {
+      type: 'Compliance',
+      title: 'Compliance action overdue',
+      reason: action.Action_Title || action.Required_Action || 'Compliance action is overdue.',
+      priorityRank: 40
+    };
+  }
+
+  return null;
+}
+
+function testInspectComplianceActionStatusDistribution() {
+  const actions = getHomepageComplianceActions_();
+  const claims = getRows(CLAIM_SHEET_NAMES.claims);
+
+  const activeClaimIds = claims.filter(function(claim) {
+    return isHomepageActiveClaim_(claim);
+  }).reduce(function(map, claim) {
+    if (claim.Claim_ID) {
+      map[claim.Claim_ID] = true;
+    }
+    return map;
+  }, {});
+
+  const statusCounts = {};
+  const priorityCounts = {};
+  let activeClaimActionCount = 0;
+  let openActiveClaimActionCount = 0;
+
+  actions.forEach(function(action) {
+    const status = String(action.Status || '').trim() || '(blank)';
+    const priority = String(action.Priority || '').trim() || '(blank)';
+
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+    priorityCounts[priority] = (priorityCounts[priority] || 0) + 1;
+
+    if (activeClaimIds[action.Claim_ID]) {
+      activeClaimActionCount++;
+
+      if (isOpenStatus_(action.Status)) {
+        openActiveClaimActionCount++;
+      }
+    }
+  });
+
+  const result = {
+    status: 'Success',
+    success: true,
+    message: 'Compliance action status distribution inspected successfully.',
+    data: {
+      totalComplianceActions: actions.length,
+      activeClaimActionCount: activeClaimActionCount,
+      openActiveClaimActionCount: openActiveClaimActionCount,
+      statusCounts: statusCounts,
+      priorityCounts: priorityCounts,
+      sampleActions: actions.slice(0, 10)
+    }
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
