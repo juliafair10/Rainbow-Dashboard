@@ -183,12 +183,33 @@
 
       (group.claims || []).forEach(function(claim) {
         html += '<div class="claim-row" data-claim-id="' + escapeHtml(claim.claimId || '') + '">';
-        html += '<div><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong></div>';
-        html += '<div>' + escapeHtml(claim.jobNumber || '') + '</div>';
+        const openRequirements = getClaimOpenRequirementsForDisplay_(claim);
+        const nextAction = getClaimNextActionForDisplay_(claim);
+        const attentionReason = claim.attentionReason || claim.healthReason || '';
+        html += '<div><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong><br><span>' + escapeHtml(claim.jobNumber || '') + '</span></div>';
+        html += '<div>' + escapeHtml(claim.lifecycleState || '') + '</div>';
         html += '<div>' + escapeHtml(claim.healthLevel || '') + ' • ' + escapeHtml(claim.ownershipArea || '') + '</div>';
 
         if ((claim.activeConditions || []).length) {
           html += '<div>' + escapeHtml(claim.activeConditions.join(', ')) + '</div>';
+        } else {
+          html += '<div>No active conditions</div>';
+        }
+
+        if (openRequirements.length) {
+          html += '<div><strong>Open Requirements:</strong> ' +
+            escapeHtml(openRequirements.slice(0, 2).join(' • ')) +
+            '</div>';
+        }
+
+        if (nextAction) {
+          html += '<div><strong>Next Action:</strong> ' +
+            escapeHtml(nextAction) +
+            '</div>';
+        }
+
+        if (attentionReason) {
+          html += '<div>' + escapeHtml(attentionReason) + '</div>';
         }
 
         if (claim.lastMeaningfulActivityDate) {
@@ -225,9 +246,74 @@
     );
   }
 
+  function getClaimOpenRequirementsForDisplay_(claim) {
+    if (claim && Array.isArray(claim.openRequirements) && claim.openRequirements.length) {
+      return claim.openRequirements;
+    }
+
+    const requirements = [];
+    const conditions = claim && Array.isArray(claim.activeConditions)
+      ? claim.activeConditions
+      : [];
+
+    conditions.forEach(function(condition) {
+      if (condition === 'Carrier Revision Requested') {
+        requirements.push('Respond to carrier revision');
+      }
+
+      if (condition === 'Revision Active') {
+        requirements.push('Continue revision follow-up');
+      }
+
+      if (condition === 'Coverage Pending') {
+        requirements.push('Coverage determination pending');
+      }
+
+      if (condition === 'Waiting on Payment') {
+        requirements.push('Payment follow-up may be needed');
+      }
+    });
+
+    return requirements.filter(function(item, index, array) {
+      return array.indexOf(item) === index;
+    });
+  }
+
+  function getClaimNextActionForDisplay_(claim) {
+    if (claim && claim.nextAction) {
+      return claim.nextAction;
+    }
+
+    if (!claim) {
+      return '';
+    }
+
+    if (claim.healthLevel === 'At Risk' || claim.healthLevel === 'Escalated') {
+      return 'Review claim and restore operational cadence';
+    }
+
+    if (Array.isArray(claim.activeConditions) && claim.activeConditions.length) {
+      return 'Review active claim conditions';
+    }
+
+    return '';
+  }
+
   function markSelectedClaim_(claimId) {
     document.querySelectorAll('.claim-row').forEach(function(row) {
-      row.classList.toggle('is-selected', row.getAttribute('data-claim-id') === claimId);
+      const isSelected = row.getAttribute('data-claim-id') === claimId;
+
+      row.classList.toggle('is-selected', isSelected);
+
+      if (isSelected) {
+        row.style.borderColor = 'rgba(157, 105, 153, 0.46)';
+        row.style.boxShadow = '0 16px 38px rgba(84, 55, 86, 0.13)';
+        row.style.background = 'rgba(255,255,255,0.99)';
+      } else {
+        row.style.borderColor = '';
+        row.style.boxShadow = '';
+        row.style.background = '';
+      }
     });
   }
 
@@ -257,7 +343,23 @@
     const operational = detail.operationalContext || {};
     const links = detail.externalLinks || [];
     const workflows = detail.relatedWorkflows || [];
-    const timeline = detail.timelineSection || {};
+    const timelineEvents = getRecentTimelineEvents_(detail);
+
+    const detailClaimSummary = {
+      claimId: detail.claimId || header.claimId || '',
+      healthLevel: header.healthLevel || '',
+      healthReason: header.healthReason || operational.healthReason || '',
+      ownershipArea: header.ownershipArea || '',
+      lifecycleState: header.lifecycleState || '',
+      activeConditions: header.activeConditions || [],
+      openRequirements: header.openRequirements || operational.openRequirements || [],
+      nextAction: header.nextAction || operational.nextAction || '',
+      attentionReason: header.attentionReason || operational.attentionReason || header.healthReason || operational.healthReason || ''
+    };
+
+    const detailOpenRequirements = getClaimOpenRequirementsForDisplay_(detailClaimSummary);
+    const detailNextAction = getClaimNextActionForDisplay_(detailClaimSummary);
+    const detailAttentionReason = detailClaimSummary.attentionReason || detailClaimSummary.healthReason || '';
 
     let html = '';
 
@@ -281,6 +383,30 @@
 
     html += '</div>';
 
+    if (detailOpenRequirements.length || detailNextAction || detailAttentionReason) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>Operational Next Steps</h4>';
+
+      if (detailOpenRequirements.length) {
+        html += '<div><strong>Open Requirements</strong></div>';
+        detailOpenRequirements.forEach(function(requirement) {
+          html += '<div>• ' + escapeHtml(requirement) + '</div>';
+        });
+      }
+
+      if (detailNextAction) {
+        html += '<div style="margin-top:10px;"><strong>Recommended Next Action</strong></div>';
+        html += '<div>' + escapeHtml(detailNextAction) + '</div>';
+      }
+
+      if (detailAttentionReason) {
+        html += '<div style="margin-top:10px;"><strong>Why this is surfacing</strong></div>';
+        html += '<div>' + escapeHtml(detailAttentionReason) + '</div>';
+      }
+
+      html += '</div>';
+    }
+
     if (links.length) {
       html += '<div class="claim-detail-section">';
       html += '<h4>External Links</h4>';
@@ -297,19 +423,21 @@
       html += '</div>';
     }
 
-    if (timeline.events && timeline.events.length) {
-      html += '<div class="claim-detail-section">';
-      html += '<h4>Recent Timeline</h4>';
-      timeline.events.slice(0, 5).forEach(function(event) {
+    html += '<div class="claim-detail-section">';
+    html += '<h4>Recent Activity</h4>';
+
+    if (timelineEvents.length) {
+      timelineEvents.slice(0, 5).forEach(function(event) {
         html += '<div class="claim-detail-timeline-item">';
-        html += '<div>' + escapeHtml(event.summary || event.title || event.eventSummary || 'Timeline Event') + '</div>';
-        if (event.eventDate || event.date) {
-          html += '<small>' + escapeHtml(event.eventDate || event.date) + '</small>';
-        }
+        html += '<div>' + escapeHtml(getTimelineEventSummary_(event)) + '</div>';
+        html += '<small>' + escapeHtml(getTimelineEventDate_(event)) + '</small>';
         html += '</div>';
       });
-      html += '</div>';
+    } else {
+      html += '<div class="claims-empty-state">No recent activity available yet.</div>';
     }
+
+    html += '</div>';
 
     if (workflows.length) {
       html += '<div class="claim-detail-section">';
@@ -330,6 +458,63 @@
     }
 
     panel.innerHTML = html;
+  }
+
+  function getRecentTimelineEvents_(detail) {
+    if (!detail) {
+      return [];
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.events)) {
+      return detail.timelineSection.events;
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.recentEvents)) {
+      return detail.timelineSection.recentEvents;
+    }
+
+    if (Array.isArray(detail.recentTimelineEvents)) {
+      return detail.recentTimelineEvents;
+    }
+
+    if (detail.activitySummary) {
+      return [{
+        summary: detail.activitySummary.lastActivitySummary || detail.activitySummary.lastActivityType || 'Recent claim activity',
+        eventDate: detail.activitySummary.lastActivityDate || ''
+      }];
+    }
+
+    return [];
+  }
+
+  function getTimelineEventSummary_(event) {
+    return event.summary ||
+      event.title ||
+      event.eventSummary ||
+      event.description ||
+      event.lastActivitySummary ||
+      event.activitySummary ||
+      'Timeline Event';
+  }
+
+  function getTimelineEventDate_(event) {
+    const rawDate = event.eventDate || event.date || event.createdAt || event.timestamp || '';
+
+    if (!rawDate) {
+      return '';
+    }
+
+    const date = new Date(rawDate);
+
+    if (isNaN(date.getTime())) {
+      return rawDate;
+    }
+
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
   }
 
   function handleClaimsWorkspaceError(error) {

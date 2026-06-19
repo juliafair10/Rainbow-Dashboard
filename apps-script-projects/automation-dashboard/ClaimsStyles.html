@@ -76,6 +76,9 @@
   .claim-detail-panel {
     position: sticky;
     top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
 
   .claims-group {
@@ -117,12 +120,13 @@
   }
 
   .claim-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 18px;
+    display: grid;
+    grid-template-columns: minmax(150px, 1.15fr) minmax(170px, 1.35fr) minmax(230px, 1.75fr) minmax(190px, 1.35fr);
+    gap: 12px 18px;
+    align-items: start;
     border: 1px solid rgba(77, 53, 80, 0.10);
     border-radius: 18px;
-    padding: 15px 16px;
+    padding: 16px 18px;
     margin-bottom: 11px;
     cursor: pointer;
     background: rgba(255,255,255,0.94);
@@ -130,10 +134,71 @@
     transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
   }
 
+
   .claim-row:hover {
     transform: translateY(-1px);
     box-shadow: 0 14px 34px rgba(84, 55, 86, 0.09);
     border-color: rgba(157, 105, 153, 0.28);
+  }
+
+  .claim-row > div {
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.28;
+    color: rgba(33, 24, 39, 0.78);
+  }
+
+  .claim-row > div:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    font-size: 14px;
+    line-height: 1.18;
+  }
+
+  .claim-row > div:nth-child(2) {
+    grid-column: 1;
+    grid-row: 3;
+    color: rgba(33, 24, 39, 0.56);
+    font-size: 12px;
+  }
+
+  .claim-row > div:nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+    font-weight: 650;
+  }
+
+  .claim-row > div:nth-child(4) {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+  }
+
+  .claim-row > div:nth-child(5) {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(250, 247, 252, 0.82);
+    border: 1px solid rgba(77, 53, 80, 0.06);
+  }
+
+  .claim-row > div:nth-child(6) {
+    grid-column: 4;
+    grid-row: 1;
+    font-weight: 650;
+  }
+
+  .claim-row > div:nth-child(7) {
+    grid-column: 4;
+    grid-row: 2;
+    color: rgba(33, 24, 39, 0.62);
+  }
+
+  .claim-row > div:nth-child(8) {
+    grid-column: 4;
+    grid-row: 3;
+    color: rgba(33, 24, 39, 0.56);
+    font-size: 12px;
   }
 
   .claim-row-main {
@@ -226,6 +291,84 @@
   .claim-side-value {
     color: rgba(33, 24, 39, 0.78);
     font-weight: 650;
+  }
+
+  .claim-row.is-selected {
+    border-color: rgba(157, 105, 153, 0.46);
+    box-shadow: 0 16px 38px rgba(84, 55, 86, 0.13);
+    background: rgba(255,255,255,0.99);
+  }
+
+  .claim-detail-header {
+    margin-bottom: 4px;
+    padding: 4px 2px 8px;
+  }
+
+  .claim-detail-header h2 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+  }
+
+  .claim-detail-subtitle {
+    margin-top: 4px;
+    color: rgba(33, 24, 39, 0.58);
+    font-size: 13px;
+  }
+
+  .claim-detail-section {
+    margin-top: 0;
+    padding: 15px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.78);
+    border: 1px solid rgba(77, 53, 80, 0.08);
+    box-shadow: 0 8px 24px rgba(84, 55, 86, 0.045);
+  }
+
+  .claim-detail-section h4 {
+    margin: 0 0 11px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(33, 24, 39, 0.58);
+  }
+
+  .claim-detail-section div,
+  .claim-detail-section a {
+    font-size: 13px;
+    line-height: 1.48;
+  }
+
+  .claim-detail-section a {
+    color: inherit;
+    text-decoration: none;
+    font-weight: 650;
+  }
+
+  .claim-detail-section a:hover {
+    text-decoration: underline;
+  }
+
+  .claim-detail-pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 10px;
+  }
+
+  .claim-detail-timeline-item {
+    padding: 8px 0;
+    border-top: 1px solid rgba(77, 53, 80, 0.08);
+  }
+
+  .claim-detail-timeline-item:first-of-type {
+    border-top: 0;
+  }
+
+  .claim-detail-timeline-item small {
+    display: block;
+    margin-top: 2px;
+    color: rgba(33, 24, 39, 0.54);
   }
 
   .claims-loading,
