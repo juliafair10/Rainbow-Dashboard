@@ -187,6 +187,14 @@ function testClaimDrawer() {
   return drawer;
 }
 
+function testGetClaimDrawerCoveragePending() {
+  var drawer = getClaimDrawer('CLM-26A-0052-WTR');
+
+  Logger.log(JSON.stringify(drawer, null, 2));
+
+  return drawer;
+}
+
 function debugClaimSummariesLookup() {
   var sheet = SpreadsheetApp
     .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
@@ -216,5 +224,6 @@ function debugClaimSummariesLookup() {
 var ClaimDrawerService = {
   getClaimDrawer: getClaimDrawer,
   testClaimDrawer: testClaimDrawer,
+  testGetClaimDrawerCoveragePending: testGetClaimDrawerCoveragePending,
   debugClaimSummariesLookup: debugClaimSummariesLookup
 };

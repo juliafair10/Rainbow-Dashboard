@@ -4,6 +4,12 @@ function getClaimsForLens(lensId, options) {
   lensId = lensId || 'all';
   options = options || {};
 
+  if (lensId === 'closed') {
+    options = Object.assign({}, options, {
+      includeTerminal: true
+    });
+  }
+
   var claims = ClaimsQueryService.getAllClaimSummaries(options);
 
   switch (lensId) {
@@ -52,8 +58,6 @@ function claimNeedsAttention_(claim) {
     'scheduled follow-up date has passed',
     'overdue',
     'missed cadence',
-    'requires attention',
-    'needs attention',
     'stale',
     'no future visit',
     'no scheduled visit',
@@ -184,7 +188,36 @@ function testClaimsLensSourceSignals() {
   return summary;
 }
 
+function testClaimsLensCounts() {
+  var lensIds = [
+    'all',
+    'needsAttention',
+    'waitingOnInsurance',
+    'missingEoj',
+    'paidMonitoring',
+    'closed'
+  ];
+
+  var summary = {};
+
+  lensIds.forEach(function(lensId) {
+    var claims = getClaimsForLens(lensId, {});
+
+    summary[lensId] = {
+      count: claims.length,
+      sampleClaimIds: claims.slice(0, 10).map(function(claim) {
+        return claim.claimId;
+      })
+    };
+  });
+
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
+}
+
 var ClaimsLensService = {
   getClaimsForLens: getClaimsForLens,
-  testClaimsLensSourceSignals: testClaimsLensSourceSignals
+  testClaimsLensSourceSignals: testClaimsLensSourceSignals,
+  testClaimsLensCounts: testClaimsLensCounts
 };

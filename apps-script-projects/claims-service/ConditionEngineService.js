@@ -75,11 +75,11 @@ function reconcileClaimConditions(claimId) {
   const toRemove = [];
 
   const addResults = toAdd.map(function(conditionName) {
-    return addCondition(claimId, conditionName, 'Condition Engine');
+    return addConditionFromEngine_(claimId, conditionName, 'Condition Engine');
   });
 
   const removeResults = toRemove.map(function(conditionName) {
-    return removeCondition(claimId, conditionName, 'Condition Engine');
+    return removeConditionFromEngine_(claimId, conditionName, 'Condition Engine');
   });
 
   return successResponse({
@@ -95,44 +95,17 @@ function reconcileClaimConditions(claimId) {
   }, 'Claim conditions reconciled successfully.');
 }
 
-function addCondition(claimId, conditionName, source) {
+function addConditionFromEngine_(claimId, conditionName, source) {
   if (!claimId || !conditionName) {
     return validationErrorResponse(['Claim_ID and conditionName are required to add a condition.']);
   }
-
-  if (typeof addClaimCondition === 'function') {
-    return addClaimCondition(claimId, {
-      Condition_Type: conditionName,
-      Condition_Status: 'Active',
-      Condition_Name: conditionName,
-      Condition_Source: source || 'ConditionEngineService',
-      Status: 'Active',
-      Opened_At: nowIso(),
-      Started_At: nowIso(),
-      Source_System: 'claims-service',
-      Reason: 'Added by Condition Engine.',
-      Notes: 'Added by Condition Engine.',
-      Created_At: nowIso(),
-      Updated_At: nowIso()
-    });
-  }
-
   return appendConditionEngineFallbackRow_(claimId, conditionName, 'Active', source || 'ConditionEngineService');
 }
 
-function removeCondition(claimId, conditionName, source) {
+function removeConditionFromEngine_(claimId, conditionName, source) {
   if (!claimId || !conditionName) {
     return validationErrorResponse(['Claim_ID and conditionName are required to remove a condition.']);
   }
-
-  if (typeof resolveClaimCondition === 'function') {
-    return resolveClaimCondition(claimId, conditionName, {
-      Resolved_By: source || 'ConditionEngineService',
-      Resolved_At: nowIso(),
-      Resolution_Notes: 'Removed by Condition Engine.'
-    });
-  }
-
   return appendConditionEngineFallbackRow_(claimId, conditionName, 'Resolved', source || 'ConditionEngineService');
 }
 
