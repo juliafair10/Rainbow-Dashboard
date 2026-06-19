@@ -1172,7 +1172,12 @@ function getHomepageOwnershipVisibility_(claims) {
       needsAttentionCount: 0,
       criticalCount: 0,
       escalatedCount: 0,
-      atRiskCount: 0
+      atRiskCount: 0,
+      targetWorkspace: 'claims',
+      targetType: 'claimsFilter',
+      targetId: ownershipArea,
+      targetRoute: buildHomepageTargetRoute_('ownership', ownershipArea),
+      sourceSection: 'ownershipVisibility'
     };
     return map;
   }, {});
@@ -1187,7 +1192,12 @@ function getHomepageOwnershipVisibility_(claims) {
         needsAttentionCount: 0,
         criticalCount: 0,
         escalatedCount: 0,
-        atRiskCount: 0
+        atRiskCount: 0,
+        targetWorkspace: 'claims',
+        targetType: 'claimsFilter',
+        targetId: ownershipArea,
+        targetRoute: buildHomepageTargetRoute_('ownership', ownershipArea),
+        sourceSection: 'ownershipVisibility'
       };
     }
 
@@ -1239,7 +1249,12 @@ function getHomepageConditionsVisibility_(conditions) {
     map[conditionType] = {
       conditionType: conditionType,
       openCount: 0,
-      affectedClaimIds: {}
+      affectedClaimIds: {},
+      targetWorkspace: 'claims',
+      targetType: 'claimsFilter',
+      targetId: conditionType,
+      targetRoute: buildHomepageTargetRoute_('condition', conditionType),
+      sourceSection: 'conditionsVisibility'
     };
     return map;
   }, {});
@@ -1251,7 +1266,12 @@ function getHomepageConditionsVisibility_(conditions) {
       summary[conditionType] = {
         conditionType: conditionType,
         openCount: 0,
-        affectedClaimIds: {}
+        affectedClaimIds: {},
+        targetWorkspace: 'claims',
+        targetType: 'claimsFilter',
+        targetId: conditionType,
+        targetRoute: buildHomepageTargetRoute_('condition', conditionType),
+        sourceSection: 'conditionsVisibility'
       };
     }
 
@@ -1267,7 +1287,12 @@ function getHomepageConditionsVisibility_(conditions) {
     return {
       conditionType: item.conditionType,
       openCount: item.openCount,
-      affectedClaimCount: Object.keys(item.affectedClaimIds).length
+      affectedClaimCount: Object.keys(item.affectedClaimIds).length,
+      targetWorkspace: item.targetWorkspace,
+      targetType: item.targetType,
+      targetId: item.targetId,
+      targetRoute: item.targetRoute,
+      sourceSection: item.sourceSection
     };
   }).filter(function(item) {
     return item.openCount > 0;
@@ -1313,6 +1338,18 @@ function buildHomepageTargetRoute_(targetType, targetId) {
 
   if (targetType === 'claim') {
     return encodedTargetId ? '/exec?page=claim&claimId=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'ownership') {
+    return encodedTargetId ? '/exec?page=claims&ownership=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'condition') {
+    return encodedTargetId ? '/exec?page=claims&condition=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  if (targetType === 'compliance') {
+    return '/exec?page=claims&compliance=' + (encodedTargetId || 'open');
   }
 
   return '/exec?page=claims';
