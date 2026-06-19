@@ -1,5 +1,6 @@
 <script>
   let homepageData = null;
+  const RAINBOW_DASHBOARD_WEB_APP_URL = 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzX9Mvyr2zk1GkBR2Nfdv9PE994onOVpxQpJj9lq3j87n2NN_iZ3eRWDFWlbfmrvpNoFw/exec';
 
   document.addEventListener('DOMContentLoaded', function() {
     loadHomepageData();
@@ -329,11 +330,21 @@
         ? 'rainbow-list-item rainbow-list-item--clickable'
         : 'rainbow-list-item';
 
+      const href = isNavigable
+        ? buildRainbowAbsoluteUrl_(item.targetRoute)
+        : '';
+
+      const openTag = isNavigable
+        ? '<a class="' + itemClass + '" data-homepage-item-index="' + index + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '">'
+        : '<div class="' + itemClass + '" data-homepage-item-index="' + index + '">';
+
+      const closeTag = isNavigable ? '</a>' : '</div>';
+
       return [
-        '<div class="' + itemClass + '" data-homepage-item-index="' + index + '">',
+        openTag,
         '<div class="rainbow-list-title">' + escapeHtml(titleFn(item)) + '</div>',
         '<div class="rainbow-list-meta">' + escapeHtml(metaFn ? metaFn(item) : '') + '</div>',
-        '</div>'
+        closeTag
       ].join('');
     }).join('');
 
@@ -357,8 +368,11 @@
       element.setAttribute('tabindex', '0');
       element.setAttribute('title', 'Open related Rainbow view');
 
-      element.addEventListener('click', function() {
+      element.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
         handleHomepageNavigation_(item);
+        return false;
       });
 
       element.addEventListener('keydown', function(event) {
@@ -382,14 +396,36 @@
       sourceSection: item.sourceSection || ''
     });
 
-    showHomepageNavigationPlaceholder_(item);
+    navigateToRainbowRoute_(item.targetRoute);
+  }
+
+  function navigateToRainbowRoute_(targetRoute) {
+    if (!targetRoute) {
+      return;
+    }
+
+    const targetUrl = buildRainbowAbsoluteUrl_(targetRoute);
+
+    try {
+      window.open(targetUrl, '_blank');
+    } catch (error) {
+      window.location.href = targetUrl;
+    }
+  }
+
+  function buildRainbowAbsoluteUrl_(targetRoute) {
+    const normalizedRoute = targetRoute.charAt(0) === '?'
+      ? targetRoute
+      : '?' + targetRoute.replace(/^\/+exec\??/, '');
+
+    return RAINBOW_DASHBOARD_WEB_APP_URL + normalizedRoute;
   }
 
   function showHomepageNavigationPlaceholder_(item) {
     const statusStrip = document.getElementById('systemStatusStrip');
 
     if (statusStrip) {
-      statusStrip.textContent = 'Navigation ready: ' + (item.targetRoute || '/exec?page=claims') + ' • Workspace routing will be activated in a later phase.';
+      statusStrip.textContent = 'Navigation target: ' + (item && item.targetRoute ? item.targetRoute : '?view=claimsShell');
     }
   }
 

@@ -1337,22 +1337,36 @@ function buildHomepageTargetRoute_(targetType, targetId) {
   const encodedTargetId = encodeURIComponent(String(targetId || ''));
 
   if (targetType === 'claim') {
-    return encodedTargetId ? '/exec?page=claim&claimId=' + encodedTargetId : '/exec?page=claims';
+    return encodedTargetId ? '?view=claimShell&claimId=' + encodedTargetId : '?view=claimsShell';
   }
 
   if (targetType === 'ownership') {
-    return encodedTargetId ? '/exec?page=claims&ownership=' + encodedTargetId : '/exec?page=claims';
+    return encodedTargetId ? '?view=claimsShell&ownership=' + encodedTargetId : '?view=claimsShell';
   }
 
   if (targetType === 'condition') {
-    return encodedTargetId ? '/exec?page=claims&condition=' + encodedTargetId : '/exec?page=claims';
+    return encodedTargetId ? '?view=claimsShell&condition=' + encodedTargetId : '?view=claimsShell';
   }
 
   if (targetType === 'compliance') {
-    return '/exec?page=claims&compliance=' + (encodedTargetId || 'open');
+    return '?view=claimsShell&compliance=' + (encodedTargetId || 'open');
   }
 
-  return '/exec?page=claims';
+  return '?view=claimsShell';
+}
+
+function testHomepageClaimsTargetRoutes() {
+  const result = {
+    claimRoute: buildHomepageTargetRoute_('claim', 'CLM-26A-0052-WTR'),
+    ownershipRoute: buildHomepageTargetRoute_('ownership', 'Field Operations'),
+    conditionRoute: buildHomepageTargetRoute_('condition', 'Coverage Pending'),
+    complianceRoute: buildHomepageTargetRoute_('compliance', 'open'),
+    defaultRoute: buildHomepageTargetRoute_('', '')
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
 }
 
 function testGetHomepageClaimSummaryData() {

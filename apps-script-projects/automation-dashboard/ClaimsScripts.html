@@ -1,0 +1,357 @@
+<script>
+  const claimsWorkspaceCache = {};
+  document.addEventListener('DOMContentLoaded', function() {
+    initializeClaimsWorkspace();
+  });
+
+  window.addEventListener('popstate', function(event) {
+    const state = event.state || {};
+    const routeContext = state.routeContext || readClaimsRouteContextFromLocation_();
+
+    updateClaimsRouteContext_(routeContext);
+    markActiveLens_(routeContext.lensId || 'all');
+    loadClaimsWorkspace(routeContext);
+  });
+
+  function initializeClaimsWorkspace() {
+    const routeContextElement = document.getElementById('claimsRouteContext');
+    const params = new URLSearchParams(window.location.search);
+    const serverRouteContext = window.RAINBOW_INITIAL_ROUTE_CONTEXT || {};
+
+    const routeContext = {
+      lensId: serverRouteContext.lensId || params.get('lensId') || 'all',
+      ownership: serverRouteContext.ownership || params.get('ownership') || '',
+      condition: serverRouteContext.condition || params.get('condition') || '',
+      claimId: serverRouteContext.claimId || params.get('claimId') || '',
+      compliance: serverRouteContext.compliance || params.get('compliance') || ''
+    };
+
+    updateClaimsRouteContext_(routeContext);
+    markActiveLens_(routeContext.lensId);
+
+    initializeLensButtons();
+
+    loadClaimsWorkspace(routeContext);
+
+    window.history.replaceState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
+  }
+
+  function readClaimsRouteContextFromLocation_() {
+    const params = new URLSearchParams(window.location.search);
+    const serverRouteContext = window.RAINBOW_INITIAL_ROUTE_CONTEXT || {};
+
+    return {
+      lensId: params.get('lensId') || serverRouteContext.lensId || 'all',
+      ownership: params.get('ownership') || serverRouteContext.ownership || '',
+      condition: params.get('condition') || serverRouteContext.condition || '',
+      claimId: params.get('claimId') || serverRouteContext.claimId || '',
+      compliance: params.get('compliance') || serverRouteContext.compliance || ''
+    };
+  }
+
+  function buildClaimsRouteUrl_(routeContext) {
+    const params = new URLSearchParams();
+
+    if (routeContext && routeContext.claimId) {
+      params.set('view', 'claimShell');
+      params.set('claimId', routeContext.claimId);
+    } else {
+      params.set('view', 'claimsShell');
+      params.set('lensId', (routeContext && routeContext.lensId) || 'all');
+
+      if (routeContext && routeContext.ownership) {
+        params.set('ownership', routeContext.ownership);
+      }
+
+      if (routeContext && routeContext.condition) {
+        params.set('condition', routeContext.condition);
+      }
+
+      if (routeContext && routeContext.compliance) {
+        params.set('compliance', routeContext.compliance);
+      }
+    }
+
+    return window.location.pathname + '?' + params.toString();
+  }
+
+  function initializeLensButtons() {
+    document.querySelectorAll('[data-lens]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const lensId = button.getAttribute('data-lens') || 'all';
+
+        const routeContext = {
+          lensId: lensId,
+          ownership: '',
+          condition: '',
+          claimId: ''
+        };
+
+        markActiveLens_(lensId);
+        updateClaimsRouteContext_(routeContext);
+        window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
+
+        const stream = document.getElementById('claimsStream');
+        const panel = document.getElementById('claimDetailPanel');
+
+        if (stream) {
+          stream.innerHTML = '<div class="claims-loading">Loading ' + escapeHtml(lensId) + ' claims...</div>';
+        }
+
+        if (panel) {
+          panel.innerHTML = '<div class="claims-empty-state">Select a claim to view details.</div>';
+        }
+
+        loadClaimsWorkspace(routeContext);
+
+        return false;
+      });
+    });
+  }
+
+  function markActiveLens_(activeLensId) {
+    document.querySelectorAll('[data-lens]').forEach(function(button) {
+      button.classList.toggle('is-active', button.getAttribute('data-lens') === activeLensId);
+    });
+  }
+
+  function updateClaimsRouteContext_(routeContext) {
+    const routeContextElement = document.getElementById('claimsRouteContext');
+
+    if (!routeContextElement) {
+      return;
+    }
+
+    const pseudoRoute = routeContext.claimId
+      ? '?view=claimShell&claimId=' + encodeURIComponent(routeContext.claimId)
+      : '?view=claimsShell&lensId=' + encodeURIComponent(routeContext.lensId || 'all');
+    routeContextElement.textContent = pseudoRoute;
+  }
+
+  function getClaimsCacheKey_(routeContext) {
+    return [
+      routeContext.lensId || 'all',
+      routeContext.ownership || '',
+      routeContext.condition || '',
+      routeContext.claimId || ''
+    ].join('|');
+  }
+
+  function loadClaimsWorkspace(routeContext) {
+    const cacheKey = getClaimsCacheKey_(routeContext || {});
+
+    if (claimsWorkspaceCache[cacheKey]) {
+      renderClaimsWorkspace(claimsWorkspaceCache[cacheKey]);
+
+      if (routeContext && routeContext.claimId) {
+        loadClaimDetail(routeContext.claimId);
+      }
+
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function(payload) {
+        claimsWorkspaceCache[cacheKey] = payload;
+        renderClaimsWorkspace(payload);
+
+        if (routeContext && routeContext.claimId) {
+          loadClaimDetail(routeContext.claimId);
+        }
+      })
+      .withFailureHandler(handleClaimsWorkspaceError)
+      .getClaimsWorkspacePageData(routeContext);
+  }
+
+  function renderClaimsWorkspace(payload) {
+    const stream = document.getElementById('claimsStream');
+    const claimsList = payload && payload.claimsList ? payload.claimsList : payload;
+
+    if (!claimsList || !Array.isArray(claimsList.groups)) {
+      stream.innerHTML = '<div class="claims-empty-state">No claims returned.</div>';
+      return;
+    }
+
+    let html = '';
+
+    claimsList.groups.forEach(function(group) {
+      html += '<div class="claims-group">';
+      html += '<h3>' + escapeHtml(group.groupLabel || 'Claims') + '</h3>';
+
+      (group.claims || []).forEach(function(claim) {
+        html += '<div class="claim-row" data-claim-id="' + escapeHtml(claim.claimId || '') + '">';
+        html += '<div><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong></div>';
+        html += '<div>' + escapeHtml(claim.jobNumber || '') + '</div>';
+        html += '<div>' + escapeHtml(claim.healthLevel || '') + ' • ' + escapeHtml(claim.ownershipArea || '') + '</div>';
+
+        if ((claim.activeConditions || []).length) {
+          html += '<div>' + escapeHtml(claim.activeConditions.join(', ')) + '</div>';
+        }
+
+        if (claim.lastMeaningfulActivityDate) {
+          html += '<div>Last Activity: ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
+        }
+
+        html += '</div>';
+      });
+
+      html += '</div>';
+    });
+
+    stream.innerHTML = html;
+
+    Array.prototype.forEach.call(
+      stream.querySelectorAll('.claim-row'),
+      function(row) {
+        row.addEventListener('click', function() {
+          const claimId = row.getAttribute('data-claim-id');
+          const routeContext = {
+            lensId: 'all',
+            ownership: '',
+            condition: '',
+            claimId: claimId,
+            compliance: ''
+          };
+
+          markSelectedClaim_(claimId);
+          updateClaimsRouteContext_(routeContext);
+          window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
+          loadClaimDetail(claimId);
+        });
+      }
+    );
+  }
+
+  function markSelectedClaim_(claimId) {
+    document.querySelectorAll('.claim-row').forEach(function(row) {
+      row.classList.toggle('is-selected', row.getAttribute('data-claim-id') === claimId);
+    });
+  }
+
+  function loadClaimDetail(claimId) {
+    markSelectedClaim_(claimId);
+
+    const panel = document.getElementById('claimDetailPanel');
+    if (panel) {
+      panel.innerHTML = '<div class="claims-loading">Loading claim detail...</div>';
+    }
+
+    google.script.run
+      .withSuccessHandler(renderClaimDetail)
+      .withFailureHandler(handleClaimsWorkspaceError)
+      .getClaimDetailPageData(claimId);
+  }
+
+  function renderClaimDetail(detail) {
+    const panel = document.getElementById('claimDetailPanel');
+
+    if (!detail) {
+      panel.innerHTML = '<div class="claims-empty-state">No claim detail returned.</div>';
+      return;
+    }
+
+    const header = detail.claimHeader || {};
+    const operational = detail.operationalContext || {};
+    const links = detail.externalLinks || [];
+    const workflows = detail.relatedWorkflows || [];
+    const timeline = detail.timelineSection || {};
+
+    let html = '';
+
+    html += '<div class="claim-detail-header">';
+    html += '<h2>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h2>';
+    html += '<div class="claim-detail-subtitle">' + escapeHtml(header.jobNumber || detail.claimId || '') + '</div>';
+    html += '</div>';
+
+    html += '<div class="claim-detail-section">';
+    html += '<h4>Operational Context</h4>';
+    html += '<div><strong>Health:</strong> ' + escapeHtml(header.healthLevel || '') + '</div>';
+    html += '<div><strong>Ownership:</strong> ' + escapeHtml(header.ownershipArea || '') + '</div>';
+
+    if ((header.activeConditions || []).length) {
+      html += '<div class="claim-detail-pill-row">';
+      header.activeConditions.forEach(function(condition) {
+        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(condition) + '</span>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+
+    if (links.length) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>External Links</h4>';
+      links.forEach(function(link) {
+        const label = link.label || link.linkType || 'Link';
+        const url = link.url || '';
+
+        if (url) {
+          html += '<div><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a></div>';
+        } else {
+          html += '<div>' + escapeHtml(label) + '</div>';
+        }
+      });
+      html += '</div>';
+    }
+
+    if (timeline.events && timeline.events.length) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>Recent Timeline</h4>';
+      timeline.events.slice(0, 5).forEach(function(event) {
+        html += '<div class="claim-detail-timeline-item">';
+        html += '<div>' + escapeHtml(event.summary || event.title || event.eventSummary || 'Timeline Event') + '</div>';
+        if (event.eventDate || event.date) {
+          html += '<small>' + escapeHtml(event.eventDate || event.date) + '</small>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (workflows.length) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>Related Workflows</h4>';
+      workflows.forEach(function(workflow) {
+        html += '<div>' + escapeHtml(workflow.name || workflow.workflowName || workflow.workflowType || String(workflow)) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (operational.recommendedActions && operational.recommendedActions.length) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>Recommended Actions</h4>';
+      operational.recommendedActions.forEach(function(action) {
+        html += '<div>' + escapeHtml(action.label || action.actionId || 'Action') + '</div>';
+      });
+      html += '</div>';
+    }
+
+    panel.innerHTML = html;
+  }
+
+  function handleClaimsWorkspaceError(error) {
+    const stream = document.getElementById('claimsStream');
+    const panel = document.getElementById('claimDetailPanel');
+    const message = error && error.message ? error.message : String(error);
+
+    if (stream) {
+      stream.innerHTML = '<div class="claims-empty-state">Claims Workspace error: ' +
+        escapeHtml(message) +
+        '</div>';
+    }
+
+    if (panel) {
+      panel.innerHTML = '<div class="claims-empty-state">Unable to load claim detail.</div>';
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+</script>

@@ -675,6 +675,8 @@ const STATUS = {
 
 const FETCH_TIMEOUT_MS = 30000;
 
+const CLAIMS_SERVICE_URL_FALLBACK = 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzrsk0ixP_q0jrkDtXyXeTo7NjspbQvgRVC4m7XUWTam3CIkfF0oazo5NYYRhuDw5Pr3Q/exec';
+
 function include(filename) {
   return HtmlService
     .createHtmlOutputFromFile(filename)
@@ -713,9 +715,38 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
+  if (view === 'claimsShell') {
+    return renderClaimsShell_(e, 'Rainbow Claims Workspace');
+  }
+
+  if (view === 'claimShell') {
+    return renderClaimsShell_(e, 'Rainbow Claim Workspace');
+  }
+
   return HtmlService
     .createHtmlOutputFromFile('Index')
     .setTitle(DASHBOARD_CONFIG.dashboardTitle)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function renderClaimsShell_(e, title) {
+  const params = e && e.parameter ? e.parameter : {};
+  const template = HtmlService.createTemplateFromFile('ClaimsShell');
+
+  template.initialRouteContext = {
+    view: String(params.view || 'claimsShell'),
+    lensId: String(params.lensId || params.lens || 'all'),
+    ownership: String(params.ownership || params.ownershipArea || ''),
+    ownershipArea: String(params.ownershipArea || params.ownership || ''),
+    condition: String(params.condition || params.conditionType || ''),
+    conditionType: String(params.conditionType || params.condition || ''),
+    claimId: String(params.claimId || ''),
+    compliance: String(params.compliance || '')
+  };
+
+  return template
+    .evaluate()
+    .setTitle(title || 'Rainbow Claims Workspace')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
@@ -778,6 +809,7 @@ function getHomepagePriorityFeed() {
   };
 }
 
+
 function getHomepageComplianceSummary() {
   const data = getHomepageData_();
   const complianceActions = data.complianceActions || data.openComplianceActions || [];
@@ -794,81 +826,118 @@ function getHomepageComplianceSummary() {
   };
 }
 
-function testHomepageOperationalIntelligence() {
-  try {
-    const data = getHomepageData_();
-    const kpis = data.kpis || {};
-    const claimSummary = data.claimSummary || {};
-    const systemStatus = data.systemStatus || {};
-    const todayPriorities = data.todayPriorities || data.priorityFeed || [];
-    const becomingStale = data.becomingStale || [];
-    const operationalAlerts = data.operationalAlerts || [];
-    const recentActivity = data.recentActivity || [];
-    const complianceActions = data.complianceActions || data.openComplianceActions || [];
+function getClaimsWorkspacePageData(options) {
+  const routeOptions = options || {};
 
-    const healthCounts = kpis.healthCounts || claimSummary.healthCounts || data.healthCounts || {};
+  return fetchClaimsServiceJson_('getClaimsWorkspace', {
+    lensId: routeOptions.lensId || routeOptions.lens || 'all',
+    lens: routeOptions.lens || routeOptions.lensId || 'all',
+    ownership: routeOptions.ownership || routeOptions.ownershipArea || '',
+    ownershipArea: routeOptions.ownershipArea || routeOptions.ownership || '',
+    condition: routeOptions.condition || routeOptions.conditionType || '',
+    conditionType: routeOptions.conditionType || routeOptions.condition || '',
+    claimId: routeOptions.claimId || '',
+    compliance: routeOptions.compliance || ''
+  });
+}
 
-    const diagnostics = {
-      activeClaimCount: Number(
-        kpis.activeClaims ||
-        claimSummary.activeClaimCount ||
-        data.activeClaimCount ||
-        0
-      ),
-      healthCounts: healthCounts,
-      needsAttentionCount: Number(
-        kpis.needsAttention ||
-        kpis.needsAttentionCount ||
-        0
-      ),
-      atRiskEscalatedCount: Number(
-        kpis.atRiskEscalated ||
-        kpis.atRiskEscalatedCount ||
-        0
-      ),
-      followUpsDueCount: Number(
-        kpis.followUpsDue ||
-        kpis.followUpsDueCount ||
-        0
-      ),
-      priorityItemCount: Array.isArray(todayPriorities) ? todayPriorities.length : 0,
-      staleItemCount: Array.isArray(becomingStale) ? becomingStale.length : 0,
-      openAlertCount: Array.isArray(operationalAlerts) ? operationalAlerts.length : 0,
-      complianceActionCount: Array.isArray(complianceActions) ? complianceActions.length : 0,
-      recentActivityCount: Array.isArray(recentActivity) ? recentActivity.length : 0,
-      systemStatus: systemStatus
-    };
+function getClaimDetailPageData(claimId) {
+  return fetchClaimsServiceJson_('getClaimDetail', {
+    claimId: claimId || ''
+  });
+}
 
-    Logger.log('=== HOMEPAGE OPERATIONAL INTELLIGENCE TEST ===');
-    Logger.log('Active claim count: ' + diagnostics.activeClaimCount);
-    Logger.log('Health counts: ' + JSON.stringify(diagnostics.healthCounts));
-    Logger.log('Needs attention count: ' + diagnostics.needsAttentionCount);
-    Logger.log('At risk / escalated count: ' + diagnostics.atRiskEscalatedCount);
-    Logger.log('Follow-ups due count: ' + diagnostics.followUpsDueCount);
-    Logger.log('Priority item count: ' + diagnostics.priorityItemCount);
-    Logger.log('Stale item count: ' + diagnostics.staleItemCount);
-    Logger.log('Open alert count: ' + diagnostics.openAlertCount);
-    Logger.log('Compliance action count: ' + diagnostics.complianceActionCount);
-    Logger.log('Recent activity count: ' + diagnostics.recentActivityCount);
+function fetchClaimsServiceJson_(action, params) {
+  const serviceUrl = getClaimsServiceUrl_();
 
-    return {
-      status: 'Success',
-      success: true,
-      generatedAt: new Date().toISOString(),
-      diagnostics: diagnostics,
-      data: data
-    };
-  } catch (err) {
-    Logger.log('ERROR: Homepage operational intelligence test failed - ' + (err && err.message ? err.message : String(err)));
-
+  if (!serviceUrl) {
     return {
       status: 'Error',
       success: false,
-      generatedAt: new Date().toISOString(),
-      error: err && err.message ? err.message : String(err)
+      message: 'CLAIMS_SERVICE_URL is not configured.',
+      action: action,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  const url = buildAutomationUrl_(serviceUrl, Object.assign({
+    action: action
+  }, params || {}));
+
+  try {
+    const response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      muteHttpExceptions: true,
+      followRedirects: true,
+      timeout: FETCH_TIMEOUT_MS
+    });
+
+    const responseCode = response.getResponseCode();
+    const text = response.getContentText();
+
+    if (responseCode < 200 || responseCode >= 300) {
+      return {
+        status: 'Error',
+        success: false,
+        message: 'Claims service returned HTTP ' + responseCode,
+        responseCode: responseCode,
+        bodyPreview: truncate_(text, 1000),
+        action: action,
+        generatedAt: new Date().toISOString()
+      };
+    }
+
+    return JSON.parse(text);
+  } catch (err) {
+    return {
+      status: 'Error',
+      success: false,
+      message: err && err.message ? err.message : String(err),
+      action: action,
+      generatedAt: new Date().toISOString()
     };
   }
 }
+
+function getClaimsServiceUrl_() {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredUrl = properties.getProperty('CLAIMS_SERVICE_URL');
+
+  return configuredUrl || CLAIMS_SERVICE_URL_FALLBACK;
+}
+
+function testClaimsWorkspaceDataBridge() {
+  const claimsWorkspaceResponse = getClaimsWorkspacePageData({ lensId: 'all' });
+  const claimDetailResponse = getClaimDetailPageData('CLM-26A-0052-WTR');
+
+  const result = {
+    status: 'Success',
+    claimsServiceUrlConfigured: !!getClaimsServiceUrl_(),
+    claimsServiceUrlSource: PropertiesService.getScriptProperties().getProperty('CLAIMS_SERVICE_URL') ? 'Script Properties' : 'Fallback Constant',
+    claimsWorkspaceReturned: !!claimsWorkspaceResponse,
+    claimsWorkspaceStatus: claimsWorkspaceResponse && claimsWorkspaceResponse.status ? claimsWorkspaceResponse.status : '',
+    claimsWorkspaceSuccess: claimsWorkspaceResponse && claimsWorkspaceResponse.success !== undefined ? claimsWorkspaceResponse.success : '',
+    claimsWorkspaceMessage: claimsWorkspaceResponse && claimsWorkspaceResponse.message ? claimsWorkspaceResponse.message : '',
+    claimsWorkspaceKeys: claimsWorkspaceResponse && typeof claimsWorkspaceResponse === 'object' ? Object.keys(claimsWorkspaceResponse) : [],
+    claimsWorkspaceTotalCount: claimsWorkspaceResponse && claimsWorkspaceResponse.claimsList
+      ? claimsWorkspaceResponse.claimsList.totalCount
+      : null,
+    claimDetailReturned: !!claimDetailResponse,
+    claimDetailStatus: claimDetailResponse && claimDetailResponse.status ? claimDetailResponse.status : '',
+    claimDetailSuccess: claimDetailResponse && claimDetailResponse.success !== undefined ? claimDetailResponse.success : '',
+    claimDetailMessage: claimDetailResponse && claimDetailResponse.message ? claimDetailResponse.message : '',
+    claimDetailKeys: claimDetailResponse && typeof claimDetailResponse === 'object' ? Object.keys(claimDetailResponse) : [],
+    claimDetailClaimId: claimDetailResponse && claimDetailResponse.claimId
+      ? claimDetailResponse.claimId
+      : '',
+    generatedAt: new Date().toISOString()
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
 
 
 function getDashboardData() {
@@ -1780,4 +1849,20 @@ function testHomepageShellRoute() {
     homepageUrl: url,
     generatedAt: new Date().toISOString()
   };
+}
+
+function testClaimsShellRoute() {
+  const baseUrl = ScriptApp.getService().getUrl();
+
+  const result = {
+    status: 'Success',
+    claimsShellUrl: baseUrl + '?view=claimsShell&v=1',
+    coveragePendingUrl: baseUrl + '?view=claimsShell&condition=Coverage%20Pending&v=1',
+    claimShellUrl: baseUrl + '?view=claimShell&claimId=CLM-26A-0052-WTR&v=1',
+    generatedAt: new Date().toISOString()
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
 }

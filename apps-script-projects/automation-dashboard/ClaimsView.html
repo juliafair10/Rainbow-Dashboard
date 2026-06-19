@@ -1,0 +1,37 @@
+
+
+<div class="claims-shell">
+  <div class="claims-header">
+    <h1>Claims Workspace</h1>
+    <div id="claimsRouteContext" class="claims-route-context"></div>
+  </div>
+
+  <div class="claims-lenses" id="claimsLenses">
+    <button data-lens="all">All Claims</button>
+    <button data-lens="needsAttention">Needs Attention</button>
+    <button data-lens="waitingOnInsurance">Waiting On Insurance</button>
+    <button data-lens="missingEoj">Missing EOJ</button>
+    <button data-lens="paidMonitoring">Paid / Monitoring</button>
+    <button data-lens="closed">Closed</button>
+  </div>
+
+  <div class="claims-search">
+    <input
+      id="claimsSearch"
+      type="text"
+      placeholder="Search claims..."
+    >
+  </div>
+
+  <div class="claims-layout">
+    <div id="claimsStream" class="claims-stream">
+      <div class="claims-loading">Loading claims...</div>
+    </div>
+
+    <div id="claimDetailPanel" class="claim-detail-panel">
+      <div class="claims-empty-state">
+        Select a claim to view details.
+      </div>
+    </div>
+  </div>
+</div>
