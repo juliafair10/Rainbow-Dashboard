@@ -323,14 +323,75 @@
       return;
     }
 
-    container.innerHTML = normalizedItems.map(function(item) {
+    container.innerHTML = normalizedItems.map(function(item, index) {
+      const isNavigable = !!(item && item.targetRoute);
+      const itemClass = isNavigable
+        ? 'rainbow-list-item rainbow-list-item--clickable'
+        : 'rainbow-list-item';
+
       return [
-        '<div class="rainbow-list-item">',
+        '<div class="' + itemClass + '" data-homepage-item-index="' + index + '">',
         '<div class="rainbow-list-title">' + escapeHtml(titleFn(item)) + '</div>',
         '<div class="rainbow-list-meta">' + escapeHtml(metaFn ? metaFn(item) : '') + '</div>',
         '</div>'
       ].join('');
     }).join('');
+
+    attachHomepageListNavigation_(container, normalizedItems);
+  }
+
+  function attachHomepageListNavigation_(container, items) {
+    if (!container || !Array.isArray(items)) return;
+
+    const elements = container.querySelectorAll('[data-homepage-item-index]');
+
+    elements.forEach(function(element) {
+      const index = Number(element.getAttribute('data-homepage-item-index'));
+      const item = items[index];
+
+      if (!item || !item.targetRoute) {
+        return;
+      }
+      console.log('Navigation attached:', item.targetRoute);
+
+      element.setAttribute('role', 'button');
+      element.setAttribute('tabindex', '0');
+      element.setAttribute('title', 'Open related Rainbow view');
+
+      element.addEventListener('click', function() {
+        handleHomepageNavigation_(item);
+      });
+
+      element.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleHomepageNavigation_(item);
+        }
+      });
+    });
+  }
+
+  function handleHomepageNavigation_(item) {
+    if (!item || !item.targetRoute) {
+      return;
+    }
+
+    console.log('Rainbow homepage navigation target:', {
+      targetType: item.targetType || '',
+      targetId: item.targetId || '',
+      targetRoute: item.targetRoute || '',
+      sourceSection: item.sourceSection || ''
+    });
+
+    showHomepageNavigationPlaceholder_(item);
+  }
+
+  function showHomepageNavigationPlaceholder_(item) {
+    const statusStrip = document.getElementById('systemStatusStrip');
+
+    if (statusStrip) {
+      statusStrip.textContent = 'Navigation ready: ' + (item.targetRoute || '/exec?page=claims') + ' • Workspace routing will be activated in a later phase.';
+    }
   }
 
   function escapeHtml(value) {

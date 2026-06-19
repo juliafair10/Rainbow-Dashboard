@@ -133,7 +133,11 @@ function getHomepageRecentClaimSummaries_(summaries) {
         lastActivitySummary: summary.Last_Activity_Summary || '',
         timelineEventCount: summary.Timeline_Event_Count || 0,
         openComplianceActions: summary.Open_Compliance_Actions || 0,
-        targetWorkspace: 'claims'
+        targetWorkspace: 'claims',
+        targetType: 'claim',
+        targetId: summary.Claim_ID || '',
+        targetRoute: buildHomepageTargetRoute_('claim', summary.Claim_ID || ''),
+        sourceSection: 'recentClaimSummaries'
       };
     });
 }
@@ -843,7 +847,11 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       alertType: '',
       followUpDate: '',
       priorityRank: getHomepageHealthPriorityRank_(healthLevel),
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: claim.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', claim.Claim_ID || ''),
+      sourceSection: 'todayPriorities'
     });
   });
 
@@ -878,7 +886,11 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       alertType: '',
       followUpDate: condition.Follow_Up_Date || '',
       priorityRank: conditionPriority.rank,
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: condition.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', condition.Claim_ID || ''),
+      sourceSection: 'todayPriorities'
     });
   });
 
@@ -912,7 +924,11 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       alertType: alert.Alert_Type || '',
       followUpDate: '',
       priorityRank: getHomepageAlertPriorityRank_(alert.Alert_Type, alert.Severity || alert.Priority),
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: alert.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', alert.Claim_ID || ''),
+      sourceSection: 'todayPriorities'
     });
   });
 
@@ -947,7 +963,11 @@ function getHomepageTodayPriorities_(claims, conditions, alerts, complianceActio
       alertType: '',
       followUpDate: dueDate,
       priorityRank: getHomepagePriorityRank_(action.Priority || action.Severity),
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: action.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', action.Claim_ID || ''),
+      sourceSection: 'todayPriorities'
     });
   });
 
@@ -1043,7 +1063,11 @@ function getHomepageBecomingStale_(claims, conditions, alerts, summaries) {
       staleReason: isHealthyButDrifting
         ? 'Healthy claim with no recent activity signal in 3+ days.'
         : (claim.Health_Reason || 'Claim health indicates attention may be needed soon.'),
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: claim.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', claim.Claim_ID || ''),
+      sourceSection: 'becomingStale'
     });
   });
 
@@ -1087,7 +1111,11 @@ function getHomepageRecentActivity_(claims, timeline) {
       sourceSystem: event.Source_System || event.Event_Source || '',
       relatedWorkflow: event.Related_Workflow || '',
       isMeaningful: event.Is_Meaningful_Activity === true || event.Is_Meaningful_Activity === 'TRUE',
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: event.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', event.Claim_ID || ''),
+      sourceSection: 'recentActivity'
     };
   });
 }
@@ -1125,7 +1153,11 @@ function getHomepageOperationalAlerts_(claims, alerts) {
       reason: alert.Reason || '',
       recommendedAction: alert.Recommended_Action || alert.Required_Action || '',
       createdAt: alert.Created_At || '',
-      targetWorkspace: 'claims'
+      targetWorkspace: 'claims',
+      targetType: 'claim',
+      targetId: alert.Claim_ID || '',
+      targetRoute: buildHomepageTargetRoute_('claim', alert.Claim_ID || ''),
+      sourceSection: 'operationalAlerts'
     };
   });
 }
@@ -1274,6 +1306,16 @@ function getHomepageComplianceVisibility_(complianceActions) {
     priorityCounts: priorityCounts,
     statusCounts: statusCounts
   };
+}
+
+function buildHomepageTargetRoute_(targetType, targetId) {
+  const encodedTargetId = encodeURIComponent(String(targetId || ''));
+
+  if (targetType === 'claim') {
+    return encodedTargetId ? '/exec?page=claim&claimId=' + encodedTargetId : '/exec?page=claims';
+  }
+
+  return '/exec?page=claims';
 }
 
 function testGetHomepageClaimSummaryData() {
