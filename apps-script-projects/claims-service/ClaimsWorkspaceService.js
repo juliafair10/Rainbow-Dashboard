@@ -1,8 +1,8 @@
 
 
 function getClaimsList(lensId, options) {
-  lensId = lensId || 'all';
-  options = options || {};
+  options = normalizeClaimsWorkspaceOptions_(lensId, options);
+  lensId = options.lensId || 'all';
 
   var claims = ClaimsLensService.getClaimsForLens(lensId, options);
   var stream = ClaimsStreamService.buildClaimsStream(claims, lensId, options);
@@ -13,21 +13,21 @@ function getClaimsList(lensId, options) {
     generatedAt: new Date().toISOString(),
     totalCount: claims.length,
     groups: stream.groups,
-    filtersApplied: {
-      lensId: lensId,
-      excludeTerminal: lensId !== 'closed'
-    },
+    filtersApplied: buildClaimsWorkspaceFiltersApplied_(lensId, options),
+    routeContext: buildClaimsWorkspaceRouteContext_(options),
     sortApplied: stream.sortApplied,
     warnings: stream.warnings
   };
 }
 
 function getClaimsWorkspace(options) {
-  options = options || {};
+  options = normalizeClaimsWorkspaceOptions_(options && (options.lensId || options.lens), options);
 
   return {
     generatedAt: new Date().toISOString(),
     defaultLensId: 'all',
+    activeLensId: options.lensId || 'all',
+    routeContext: buildClaimsWorkspaceRouteContext_(options),
     availableLenses: [
       {
         lensId: 'all',
@@ -56,6 +56,73 @@ function getClaimsWorkspace(options) {
     ],
     claimsList: getClaimsList(options.lensId || 'all', options)
   };
+}
+
+function normalizeClaimsWorkspaceOptions_(lensId, options) {
+  if (typeof lensId === 'object' && !options) {
+    options = lensId;
+    lensId = options && (options.lensId || options.lens || options.claimsLens);
+  }
+
+  options = Object.assign({}, options || {});
+
+  options.lensId = normalizeClaimsWorkspaceValue_(
+    lensId ||
+    options.lensId ||
+    options.lens ||
+    options.claimsLens ||
+    'all'
+  ) || 'all';
+  options.page = normalizeClaimsWorkspaceValue_(options.page || '');
+  options.ownershipArea = normalizeClaimsWorkspaceValue_(options.ownershipArea || options.ownership || '');
+  options.conditionType = normalizeClaimsWorkspaceValue_(options.conditionType || options.condition || '');
+  options.claimId = normalizeClaimsWorkspaceValue_(options.claimId || options.claim || '');
+  options.compliance = normalizeClaimsWorkspaceValue_(options.compliance || options.complianceType || '');
+  options.routeSource = normalizeClaimsWorkspaceValue_(options.routeSource || '');
+
+  return options;
+}
+
+function buildClaimsWorkspaceFiltersApplied_(lensId, options) {
+  return {
+    lensId: lensId || 'all',
+    excludeTerminal: lensId !== 'closed' && !options.claimId,
+    ownershipArea: options.ownershipArea || '',
+    conditionType: options.conditionType || '',
+    claimId: options.claimId || '',
+    compliance: options.compliance || ''
+  };
+}
+
+function buildClaimsWorkspaceRouteContext_(options) {
+  return {
+    page: options.page || '',
+    routeSource: options.routeSource || '',
+    lensId: options.lensId || 'all',
+    ownershipArea: options.ownershipArea || '',
+    conditionType: options.conditionType || '',
+    claimId: options.claimId || '',
+    compliance: options.compliance || '',
+    hasRouteFilters: !!(
+      options.ownershipArea ||
+      options.conditionType ||
+      options.claimId ||
+      options.compliance ||
+      (options.lensId && options.lensId !== 'all')
+    )
+  };
+}
+
+function normalizeClaimsWorkspaceValue_(value) {
+  if (typeof normalizeString === 'function') {
+    return normalizeString(value);
+  }
+
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim().replace(/\s+/g, ' ');
 }
 
 function getClaimsLensName_(lensId) {
@@ -112,9 +179,92 @@ function testClaimsWorkspaceLensCounts() {
   return results;
 }
 
+function testClaimsWorkspaceRouteFilters() {
+  var claims = ClaimsLensService.getClaimsForLens('all', {});
+  var sampleClaim = claims.find(function(claim) {
+    return claim.claimId;
+  });
+  var ownershipClaim = claims.find(function(claim) {
+    return claim.ownershipArea;
+  });
+  var conditionClaim = claims.find(function(claim) {
+    return (claim.activeConditions || []).length > 0;
+  });
+
+  var ownershipArea = ownershipClaim ? ownershipClaim.ownershipArea : '';
+  var conditionType = conditionClaim
+    ? getClaimsWorkspaceTestConditionType_(conditionClaim.activeConditions[0])
+    : '';
+  var claimId = sampleClaim ? sampleClaim.claimId : '';
+
+  var lensRoute = getClaimsList('needsAttention', {
+    page: 'claims',
+    routeSource: 'test'
+  });
+  var ownershipRoute = getClaimsList('all', {
+    page: 'claims',
+    ownership: ownershipArea,
+    routeSource: 'test'
+  });
+  var conditionRoute = getClaimsList('all', {
+    page: 'claims',
+    condition: conditionType,
+    routeSource: 'test'
+  });
+  var claimRoute = getClaimsList('all', {
+    page: 'claims',
+    claimId: claimId,
+    routeSource: 'test'
+  });
+
+  var result = {
+    lensRoute: summarizeClaimsWorkspaceRouteTest_(lensRoute),
+    ownershipRoute: summarizeClaimsWorkspaceRouteTest_(ownershipRoute),
+    conditionRoute: summarizeClaimsWorkspaceRouteTest_(conditionRoute),
+    claimRoute: summarizeClaimsWorkspaceRouteTest_(claimRoute),
+    samples: {
+      ownershipArea: ownershipArea,
+      conditionType: conditionType,
+      claimId: claimId
+    }
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function testClaimsWorkspaceRouteConsumption() {
+  return testClaimsWorkspaceRouteFilters();
+}
+
+function summarizeClaimsWorkspaceRouteTest_(list) {
+  return {
+    lensId: list.lensId,
+    totalCount: list.totalCount,
+    filtersApplied: list.filtersApplied,
+    routeContext: list.routeContext
+  };
+}
+
+function getClaimsWorkspaceTestConditionType_(condition) {
+  if (!condition || typeof condition !== 'object') {
+    return condition || '';
+  }
+
+  return condition.Condition_Type ||
+    condition.Condition_Name ||
+    condition.conditionType ||
+    condition.conditionName ||
+    condition.Name ||
+    '';
+}
+
 var ClaimsWorkspaceService = {
   getClaimsWorkspace: getClaimsWorkspace,
   getClaimsList: getClaimsList,
   testClaimsWorkspaceAllClaims: testClaimsWorkspaceAllClaims,
-  testClaimsWorkspaceLensCounts: testClaimsWorkspaceLensCounts
+  testClaimsWorkspaceLensCounts: testClaimsWorkspaceLensCounts,
+  testClaimsWorkspaceRouteFilters: testClaimsWorkspaceRouteFilters,
+  testClaimsWorkspaceRouteConsumption: testClaimsWorkspaceRouteConsumption
 };

@@ -4,34 +4,116 @@ function getClaimsForLens(lensId, options) {
   lensId = lensId || 'all';
   options = options || {};
 
-  if (lensId === 'closed') {
+  if (lensId === 'closed' || normalizeClaimsRouteValue_(options.claimId || options.claim)) {
     options = Object.assign({}, options, {
       includeTerminal: true
     });
   }
 
   var claims = ClaimsQueryService.getAllClaimSummaries(options);
+  var lensClaims;
 
   switch (lensId) {
     case 'needsAttention':
-      return filterNeedsAttention_(claims);
+      lensClaims = filterNeedsAttention_(claims);
+      break;
 
     case 'waitingOnInsurance':
-      return filterWaitingOnInsurance_(claims);
+      lensClaims = filterWaitingOnInsurance_(claims);
+      break;
 
     case 'missingEoj':
-      return filterMissingEoj_(claims);
+      lensClaims = filterMissingEoj_(claims);
+      break;
 
     case 'paidMonitoring':
-      return filterPaidMonitoring_(claims);
+      lensClaims = filterPaidMonitoring_(claims);
+      break;
 
     case 'closed':
-      return filterClosedClaims_(claims);
+      lensClaims = filterClosedClaims_(claims);
+      break;
 
     case 'all':
     default:
-      return claims;
+      lensClaims = claims;
+      break;
   }
+
+  return filterClaimsByWorkspaceRoute_(lensClaims, options);
+}
+
+function filterClaimsByWorkspaceRoute_(claims, options) {
+  options = options || {};
+
+  var ownershipArea = normalizeClaimsRouteComparable_(options.ownershipArea || options.ownership);
+  var conditionType = normalizeClaimsRouteComparable_(options.conditionType || options.condition);
+  var claimId = normalizeClaimsRouteComparable_(options.claimId || options.claim);
+
+  if (!ownershipArea && !conditionType && !claimId) {
+    return claims;
+  }
+
+  return claims.filter(function(claim) {
+    if (claimId && !claimMatchesRouteClaimId_(claim, claimId)) {
+      return false;
+    }
+
+    if (ownershipArea && normalizeClaimsRouteComparable_(claim.ownershipArea) !== ownershipArea) {
+      return false;
+    }
+
+    if (conditionType && !claimHasRouteCondition_(claim, conditionType)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function claimMatchesRouteClaimId_(claim, normalizedClaimId) {
+  return [
+    claim.claimId,
+    claim.jobNumber,
+    claim.claimNumber
+  ].some(function(value) {
+    return normalizeClaimsRouteComparable_(value) === normalizedClaimId;
+  });
+}
+
+function claimHasRouteCondition_(claim, normalizedConditionType) {
+  return (claim.activeConditions || []).some(function(condition) {
+    return normalizeClaimsRouteComparable_(getClaimsRouteConditionValue_(condition)) === normalizedConditionType;
+  });
+}
+
+function getClaimsRouteConditionValue_(condition) {
+  if (!condition || typeof condition !== 'object') {
+    return condition;
+  }
+
+  return condition.Condition_Type ||
+    condition.Condition_Name ||
+    condition.conditionType ||
+    condition.conditionName ||
+    condition.Name ||
+    '';
+}
+
+function normalizeClaimsRouteComparable_(value) {
+  return normalizeClaimsRouteValue_(value).toLowerCase();
+}
+
+function normalizeClaimsRouteValue_(value) {
+  if (typeof normalizeString === 'function') {
+    return normalizeString(value);
+  }
+
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim().replace(/\s+/g, ' ');
 }
 
 function filterNeedsAttention_(claims) {

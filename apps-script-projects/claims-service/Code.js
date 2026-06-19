@@ -70,11 +70,13 @@ function doPost(e) {
 
 function routeClaimServiceRequest_(e, method) {
   try {
-    const action = e && e.parameter && e.parameter.action
-      ? e.parameter.action
-      : 'healthCheck';
-
     const payload = parseRequestPayload_(e);
+    const hasExplicitAction = !!(e && e.parameter && e.parameter.action);
+    const action = hasExplicitAction ? e.parameter.action : 'healthCheck';
+
+    if (!hasExplicitAction && isClaimsPageRouteRequest_(payload)) {
+      return routeClaimsPageRequest_(payload);
+    }
 
     switch (action) {
       case 'healthCheck':
@@ -92,7 +94,7 @@ function routeClaimServiceRequest_(e, method) {
 
       case 'getClaimsList':
         return jsonResponse_(ClaimsWorkspaceService.getClaimsList(
-          payload.lensId || (e.parameter && e.parameter.lensId) || 'all',
+          payload.lensId || payload.lens || (e.parameter && (e.parameter.lensId || e.parameter.lens)) || 'all',
           payload
         ));
 
@@ -170,6 +172,126 @@ function routeClaimServiceRequest_(e, method) {
       stack: error && error.stack ? error.stack : ''
     }));
   }
+}
+
+function isClaimsPageRouteRequest_(payload) {
+  const page = normalizeString(payload && payload.page).toLowerCase();
+
+  return page === 'claims' || page === 'claim';
+}
+
+function routeClaimsPageRequest_(payload) {
+  const routeOptions = buildClaimsWorkspaceRouteOptions_(payload);
+
+  if (routeOptions.page === 'claim') {
+    if (!routeOptions.claimId) {
+      return jsonResponse_(validationErrorResponse(['claimId is required for claim page routes.']));
+    }
+
+    return jsonResponse_(ClaimDetailService.getClaimDetail(routeOptions.claimId));
+  }
+
+  return jsonResponse_(ClaimsWorkspaceService.getClaimsWorkspace(routeOptions));
+}
+
+function buildClaimsWorkspaceRouteOptions_(payload) {
+  payload = payload || {};
+
+  const lensId = normalizeString(
+    payload.lensId ||
+    payload.lens ||
+    payload.claimsLens ||
+    'all'
+  );
+
+  return {
+    page: normalizeString(payload.page || 'claims').toLowerCase(),
+    lensId: lensId || 'all',
+    ownershipArea: normalizeString(payload.ownershipArea || payload.ownership || ''),
+    conditionType: normalizeString(payload.conditionType || payload.condition || ''),
+    claimId: normalizeString(payload.claimId || payload.claim || ''),
+    compliance: normalizeString(payload.compliance || payload.complianceType || ''),
+    routeSource: 'page'
+  };
+}
+
+function testClaimsWorkspacePageRouting() {
+  const workspaceResponse = routeClaimServiceRequest_({
+    parameter: {
+      page: 'claims',
+      lensId: 'all'
+    }
+  }, 'GET');
+  const workspacePayload = parseClaimsRouteTestResponse_(workspaceResponse);
+
+  const explicitActionResponse = routeClaimServiceRequest_({
+    parameter: {
+      action: 'healthCheck',
+      page: 'claims'
+    }
+  }, 'GET');
+  const explicitActionPayload = parseClaimsRouteTestResponse_(explicitActionResponse);
+
+  const result = {
+    pageRoute: {
+      activeLensId: workspacePayload.activeLensId || '',
+      routeContext: workspacePayload.routeContext || {},
+      totalCount: workspacePayload.claimsList ? workspacePayload.claimsList.totalCount : 0
+    },
+    explicitActionPreserved: !!(
+      explicitActionPayload &&
+      explicitActionPayload.success === true &&
+      explicitActionPayload.data &&
+      explicitActionPayload.data.service === 'claims-service'
+    )
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function testClaimDetailRoute() {
+  const claims = ClaimsQueryService.getAllClaimSummaries({});
+  const claim = claims.find(function(item) {
+    return item.claimId;
+  });
+
+  if (!claim) {
+    throw new Error('No claim available for claim detail route test.');
+  }
+
+  const response = routeClaimServiceRequest_({
+    parameter: {
+      page: 'claim',
+      claimId: claim.claimId
+    }
+  }, 'GET');
+  const payload = parseClaimsRouteTestResponse_(response);
+
+  const result = {
+    requestedClaimId: claim.claimId,
+    returnedClaimId: payload.claimId || '',
+    claimHeaderClaimId: payload.claimHeader ? payload.claimHeader.claimId || '' : '',
+    hasTimelineSection: !!payload.timelineSection,
+    hasOperationalContext: !!payload.operationalContext
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+function parseClaimsRouteTestResponse_(response) {
+  if (response && typeof response.getContent === 'function') {
+    return safeJsonParse(response.getContent(), {});
+  }
+
+  if (response && response.content) {
+    return safeJsonParse(response.content, {});
+  }
+
+  return response || {};
 }
 
 function testListAllSheets() {
