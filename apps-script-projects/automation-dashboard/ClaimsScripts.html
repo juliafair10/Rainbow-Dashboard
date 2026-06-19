@@ -202,6 +202,12 @@
             '</div>';
         }
 
+        if (claim.alertCount && claim.alertCount > 0) {
+          html += '<div><strong>Operational Alerts:</strong> ' +
+            escapeHtml(getClaimOperationalAlertSummary_(claim)) +
+            '</div>';
+        }
+
         if (nextAction) {
           html += '<div><strong>Next Action:</strong> ' +
             escapeHtml(nextAction) +
@@ -244,6 +250,20 @@
         });
       }
     );
+  }
+
+  function getClaimOperationalAlertSummary_(claim) {
+    const alerts = Array.isArray(claim.operationalAlerts)
+      ? claim.operationalAlerts
+      : [];
+
+    if (!alerts.length) {
+      return claim.alertCount + ' alert' + (claim.alertCount === 1 ? '' : 's');
+    }
+
+    return alerts.slice(0, 2).map(function(alert) {
+      return alert.alertName || alert.alertType || 'Operational Alert';
+    }).join(' • ');
   }
 
   function getClaimOpenRequirementsForDisplay_(claim) {
