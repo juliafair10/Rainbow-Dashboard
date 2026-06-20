@@ -148,32 +148,36 @@
     color: rgba(33, 24, 39, 0.78);
   }
 
-  .claim-row > div:nth-child(1) {
+  .claim-row-identity {
     grid-column: 1;
     grid-row: 1 / span 2;
     font-size: 14px;
     line-height: 1.18;
   }
 
-  .claim-row > div:nth-child(2) {
+  .claim-row-lifecycle {
     grid-column: 1;
     grid-row: 3;
     color: rgba(33, 24, 39, 0.56);
     font-size: 12px;
   }
 
-  .claim-row > div:nth-child(3) {
+  .claim-row-health {
     grid-column: 2;
     grid-row: 1;
     font-weight: 650;
   }
 
-  .claim-row > div:nth-child(4) {
+  .claim-row-conditions {
     grid-column: 2;
     grid-row: 2 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
   }
 
-  .claim-row > div:nth-child(5) {
+  .claim-row-requirements {
     grid-column: 3;
     grid-row: 1 / span 2;
     padding: 10px 12px;
@@ -182,23 +186,71 @@
     border: 1px solid rgba(77, 53, 80, 0.06);
   }
 
-  .claim-row > div:nth-child(6) {
+  .claim-row-action {
     grid-column: 4;
     grid-row: 1;
     font-weight: 650;
   }
 
-  .claim-row > div:nth-child(7) {
+  .claim-row-attention {
     grid-column: 4;
     grid-row: 2;
     color: rgba(33, 24, 39, 0.62);
   }
 
-  .claim-row > div:nth-child(8) {
+  .claim-row-activity {
     grid-column: 4;
     grid-row: 3;
     color: rgba(33, 24, 39, 0.56);
     font-size: 12px;
+  }
+
+  .claim-alert-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 100%;
+  }
+
+  .claim-alert-pill {
+    display: inline-block;
+    max-width: 158px;
+    padding: 4px 7px;
+    border: 1px solid rgba(77, 53, 80, 0.10);
+    border-radius: 999px;
+    background: rgba(250, 247, 252, 0.78);
+    color: rgba(33, 24, 39, 0.64);
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.12;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .claim-alert-pill-critical,
+  .claim-alert-pill-high {
+    border-color: rgba(164, 70, 78, 0.18);
+    background: rgba(255, 239, 239, 0.74);
+    color: rgba(100, 42, 49, 0.74);
+  }
+
+  .claim-alert-pill-medium {
+    border-color: rgba(155, 113, 44, 0.16);
+    background: rgba(255, 249, 235, 0.78);
+    color: rgba(92, 66, 30, 0.72);
+  }
+
+  .claim-alert-pill-low,
+  .claim-alert-pill-info,
+  .claim-alert-pill-overflow {
+    border-color: rgba(93, 107, 117, 0.13);
+    background: rgba(244, 248, 247, 0.78);
+    color: rgba(48, 62, 68, 0.62);
+  }
+
+  .claim-alert-pill-overflow {
+    max-width: none;
   }
 
   .claim-row-main {

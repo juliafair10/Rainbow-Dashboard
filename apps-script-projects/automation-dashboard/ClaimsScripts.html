@@ -186,9 +186,10 @@
         const openRequirements = getClaimOpenRequirementsForDisplay_(claim);
         const nextAction = getClaimNextActionForDisplay_(claim);
         const attentionReason = claim.attentionReason || claim.healthReason || '';
-        html += '<div><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong><br><span>' + escapeHtml(claim.jobNumber || '') + '</span></div>';
-        html += '<div>' + escapeHtml(claim.lifecycleState || '') + '</div>';
-        html += '<div>' + escapeHtml(claim.healthLevel || '') + ' • ' + escapeHtml(claim.ownershipArea || '') + '</div>';
+        html += '<div class="claim-row-identity"><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong><br><span>' + escapeHtml(claim.jobNumber || '') + '</span></div>';
+        html += '<div class="claim-row-lifecycle">' + escapeHtml(claim.lifecycleState || '') + '</div>';
+        html += '<div class="claim-row-health">' + escapeHtml(claim.healthLevel || '') + ' • ' + escapeHtml(claim.ownershipArea || '') + '</div>';
+        html += '<div class="claim-row-conditions">';
 
         if ((claim.activeConditions || []).length) {
           html += '<div>' + escapeHtml(claim.activeConditions.join(', ')) + '</div>';
@@ -196,30 +197,27 @@
           html += '<div>No active conditions</div>';
         }
 
+        html += renderClaimOperationalAlertBadges_(claim);
+        html += '</div>';
+
         if (openRequirements.length) {
-          html += '<div><strong>Open Requirements:</strong> ' +
+          html += '<div class="claim-row-requirements"><strong>Open Requirements:</strong> ' +
             escapeHtml(openRequirements.slice(0, 2).join(' • ')) +
             '</div>';
         }
 
-        if (claim.alertCount && claim.alertCount > 0) {
-          html += '<div><strong>Operational Alerts:</strong> ' +
-            escapeHtml(getClaimOperationalAlertSummary_(claim)) +
-            '</div>';
-        }
-
         if (nextAction) {
-          html += '<div><strong>Next Action:</strong> ' +
+          html += '<div class="claim-row-action"><strong>Next Action:</strong> ' +
             escapeHtml(nextAction) +
             '</div>';
         }
 
         if (attentionReason) {
-          html += '<div>' + escapeHtml(attentionReason) + '</div>';
+          html += '<div class="claim-row-attention">' + escapeHtml(attentionReason) + '</div>';
         }
 
         if (claim.lastMeaningfulActivityDate) {
-          html += '<div>Last Activity: ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
+          html += '<div class="claim-row-activity">Last Activity: ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
         }
 
         html += '</div>';
@@ -252,18 +250,70 @@
     );
   }
 
-  function getClaimOperationalAlertSummary_(claim) {
+  function renderClaimOperationalAlertBadges_(claim) {
     const alerts = Array.isArray(claim.operationalAlerts)
       ? claim.operationalAlerts
       : [];
+    const alertCount = getClaimOperationalAlertCount_(claim, alerts);
 
-    if (!alerts.length) {
-      return claim.alertCount + ' alert' + (claim.alertCount === 1 ? '' : 's');
+    if (!alertCount) {
+      return '';
     }
 
-    return alerts.slice(0, 2).map(function(alert) {
-      return alert.alertName || alert.alertType || 'Operational Alert';
-    }).join(' • ');
+    const visibleAlerts = alerts.length
+      ? alerts.slice(0, 2)
+      : [{
+        alertName: alertCount + ' alert' + (alertCount === 1 ? '' : 's'),
+        severity: claim.highestAlertSeverity || ''
+      }];
+    let html = '<div class="claim-alert-badges">';
+
+    visibleAlerts.forEach(function(alert) {
+      html += '<span class="claim-alert-pill ' +
+        getClaimOperationalAlertSeverityClass_(alert.severity || claim.highestAlertSeverity) +
+        '">' +
+        escapeHtml(alert.alertName || alert.alertType || 'Operational Alert') +
+        '</span>';
+    });
+
+    if (alerts.length && alertCount > visibleAlerts.length) {
+      html += '<span class="claim-alert-pill claim-alert-pill-overflow">+' +
+        escapeHtml(alertCount - visibleAlerts.length) +
+        ' more</span>';
+    }
+
+    html += '</div>';
+
+    return html;
+  }
+
+  function getClaimOperationalAlertCount_(claim, alerts) {
+    const parsedCount = Number(claim && claim.alertCount);
+    const alertCount = isNaN(parsedCount) ? 0 : parsedCount;
+
+    return Math.max(alertCount, alerts.length);
+  }
+
+  function getClaimOperationalAlertSeverityClass_(severity) {
+    const normalized = String(severity || '').toLowerCase();
+
+    if (normalized === 'critical') {
+      return 'claim-alert-pill-critical';
+    }
+
+    if (normalized === 'high') {
+      return 'claim-alert-pill-high';
+    }
+
+    if (normalized === 'low') {
+      return 'claim-alert-pill-low';
+    }
+
+    if (normalized === 'info') {
+      return 'claim-alert-pill-info';
+    }
+
+    return 'claim-alert-pill-medium';
   }
 
   function getClaimOpenRequirementsForDisplay_(claim) {
