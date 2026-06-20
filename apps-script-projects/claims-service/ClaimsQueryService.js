@@ -11,12 +11,13 @@ function getAllClaimSummaries(options) {
   var headers = values[0];
   var rows = values.slice(1);
   var activeConditionsByClaim = getActiveConditionsByClaim_();
+  var activeAlertsByClaim = getActiveAlertsByClaim_();
 
   var includeTerminal = options.includeTerminal === true;
 
   return rows
     .map(function(row) {
-      return normalizeClaimRow_(headers, row, activeConditionsByClaim);
+      return normalizeClaimRow_(headers, row, activeConditionsByClaim, activeAlertsByClaim);
     })
     .filter(function(claim) {
       return claim.claimId;
@@ -49,7 +50,7 @@ function getClaimsDatabaseSheet_() {
   return sheet;
 }
 
-function normalizeClaimRow_(headers, row, activeConditionsByClaim) {
+function normalizeClaimRow_(headers, row, activeConditionsByClaim, activeAlertsByClaim) {
   var raw = {};
 
   headers.forEach(function(header, index) {
@@ -67,6 +68,25 @@ function normalizeClaimRow_(headers, row, activeConditionsByClaim) {
     ? hydratedConditions
     : sheetConditions;
 
+  var hydratedAlerts = activeAlertsByClaim && claimId
+    ? (activeAlertsByClaim[claimId] || [])
+    : [];
+
+  var sheetAlerts = splitList_(pick_(raw, ['Alerts', 'Active_Alerts', 'Active Alerts']));
+
+  var activeAlerts = hydratedAlerts.length
+    ? hydratedAlerts
+    : sheetAlerts;
+
+  var missingLinks = splitList_(pick_(raw, [
+    'Missing_Links',
+    'Missing Links',
+    'Missing_Operational_Links',
+    'Missing Operational Links',
+    'Missing_External_Links',
+    'Missing External Links'
+  ]));
+
   return {
     claimId: pick_(raw, ['Claim_ID', 'Claim ID', 'claimId']),
     jobNumber: pick_(raw, ['Job Number', 'Job_Number']),
@@ -80,14 +100,14 @@ function normalizeClaimRow_(headers, row, activeConditionsByClaim) {
     healthLevel: pick_(raw, ['Health Status', 'Health_Level', 'Health Level']),
     healthReason: pick_(raw, ['Health Reason', 'Health_Reason']),
     activeConditions: activeConditions,
-    activeAlerts: splitList_(pick_(raw, ['Alerts', 'Active_Alerts', 'Active Alerts'])),
+    activeAlerts: activeAlerts,
     financialTrackSummary: null,
     lastMeaningfulActivityDate: pick_(raw, ['Last Activity Date', 'Last_Meaningful_Activity_Date', 'Last Meaningful Activity Date']),
     daysSinceMeaningfulActivity: pick_(raw, ['Days_Since_Meaningful_Activity', 'Days Since Meaningful Activity']),
     totalClaimAgeDays: pick_(raw, ['Total_Claim_Age_Days', 'Total Claim Age Days']),
     nextAction: pick_(raw, ['Next_Action', 'Next Action']),
     nextScheduledEvent: null,
-    missingLinks: [],
+    missingLinks: missingLinks,
     timelinePreview: [],
     operationalTags: buildOperationalTags_(raw),
     createdDate: pick_(raw, ['Created Date', 'Created_Date']),
@@ -215,6 +235,138 @@ function getConditionsSheet_() {
 
   return null;
 }
+function getActiveAlertsByClaim_() {
+  try {
+    var sheet = getAlertsSheet_();
+
+    if (!sheet) {
+      return {};
+    }
+
+    var values = sheet.getDataRange().getValues();
+
+    if (values.length < 2) {
+      return {};
+    }
+
+    var headers = values[0].map(function(header) {
+      return String(header).trim();
+    });
+
+    var result = {};
+
+    values.slice(1).forEach(function(row) {
+      var raw = {};
+
+      headers.forEach(function(header, index) {
+        raw[header] = row[index];
+      });
+
+      var claimId = pick_(raw, [
+        'Claim_ID',
+        'Claim ID',
+        'claimId',
+        'ClaimId'
+      ]);
+
+      var alertName = pick_(raw, [
+        'Alert_Name',
+        'Alert Name',
+        'Alert_Type',
+        'Alert Type',
+        'alertName',
+        'Name',
+        'Title'
+      ]);
+
+      var status = String(pick_(raw, [
+        'Status',
+        'Alert_Status',
+        'Alert Status'
+      ]) || '').toLowerCase();
+
+      if (!claimId || !alertName) {
+        return;
+      }
+
+      if (status && status !== 'active' && status !== 'open') {
+        return;
+      }
+
+      if (!result[claimId]) {
+        result[claimId] = [];
+      }
+
+      result[claimId].push({
+        alertType: pick_(raw, [
+          'Alert_Type',
+          'Alert Type',
+          'Type',
+          'alertType'
+        ]) || alertName,
+        alertName: alertName,
+        severity: pick_(raw, [
+          'Severity',
+          'Priority',
+          'severity'
+        ]) || 'Medium',
+        source: pick_(raw, [
+          'Source',
+          'source'
+        ]) || 'Claim Alerts',
+        reason: pick_(raw, [
+          'Reason',
+          'Description',
+          'Message',
+          'reason'
+        ]),
+        nextStep: pick_(raw, [
+          'Next_Step',
+          'Next Step',
+          'Recommended_Action',
+          'Recommended Action',
+          'nextStep'
+        ])
+      });
+    });
+
+    return result;
+  } catch (error) {
+    Logger.log('Alert hydration failed: ' + error);
+    return {};
+  }
+}
+
+function getAlertsSheet_() {
+  var spreadsheetId = typeof CLAIMS_DATABASE_SPREADSHEET_ID !== 'undefined'
+    ? CLAIMS_DATABASE_SPREADSHEET_ID
+    : CLAIM_FOUNDATION_SPREADSHEET_ID;
+
+  var ss = SpreadsheetApp.openById(spreadsheetId);
+
+  var possibleSheetNames = [];
+
+  if (typeof CLAIM_SHEET_NAMES !== 'undefined' && CLAIM_SHEET_NAMES.alerts) {
+    possibleSheetNames.push(CLAIM_SHEET_NAMES.alerts);
+  }
+
+  possibleSheetNames.push('Alerts');
+  possibleSheetNames.push('Claim_Alerts');
+  possibleSheetNames.push('Claim Alerts');
+  possibleSheetNames.push('Operational_Alerts');
+  possibleSheetNames.push('Operational Alerts');
+
+  for (var i = 0; i < possibleSheetNames.length; i++) {
+    var sheet = ss.getSheetByName(possibleSheetNames[i]);
+
+    if (sheet) {
+      return sheet;
+    }
+  }
+
+  return null;
+}
+
 function testClaimsQueryConditionHydration() {
   var conditionsByClaim = getActiveConditionsByClaim_();
   var claimIds = Object.keys(conditionsByClaim).filter(function(claimId) {
@@ -230,6 +382,29 @@ function testClaimsQueryConditionHydration() {
       return {
         claimId: claimId,
         conditions: conditionsByClaim[claimId]
+      };
+    })
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testClaimsQueryAlertHydration() {
+  var alertsByClaim = getActiveAlertsByClaim_();
+  var claimIds = Object.keys(alertsByClaim).filter(function(claimId) {
+    return alertsByClaim[claimId] && alertsByClaim[claimId].length;
+  });
+
+  var result = {
+    claimCountWithHydratedAlerts: claimIds.length,
+    totalHydratedAlerts: claimIds.reduce(function(total, claimId) {
+      return total + alertsByClaim[claimId].length;
+    }, 0),
+    sampleClaims: claimIds.slice(0, 10).map(function(claimId) {
+      return {
+        claimId: claimId,
+        alerts: alertsByClaim[claimId]
       };
     })
   };
@@ -301,5 +476,6 @@ var ClaimsQueryService = {
   getAllClaimSummaries: getAllClaimSummaries,
   testClaimsQueryHeaders: testClaimsQueryHeaders,
   testClaimsQueryIncludeTerminal: testClaimsQueryIncludeTerminal,
-  testClaimsQueryConditionHydration: testClaimsQueryConditionHydration
+  testClaimsQueryConditionHydration: testClaimsQueryConditionHydration,
+  testClaimsQueryAlertHydration: testClaimsQueryAlertHydration
 };

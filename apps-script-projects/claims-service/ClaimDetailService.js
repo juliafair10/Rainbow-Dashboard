@@ -14,39 +14,54 @@ function getClaimDetail(claimId) {
   var externalLinks = ClaimExternalLinkService.getClaimExternalLinks(claimId);
   var financialTracks = ClaimFinancialTrackService.getClaimFinancialTracks(claimId);
   var timeline = getWorkspaceTimelineForClaim_(claimId);
+  var workspaceSummary = typeof enrichClaimWorkspaceSummary_ === 'function'
+    ? enrichClaimWorkspaceSummary_(drawer.claimSummary)
+    : drawer.claimSummary;
 
   return {
     claimId: claimId,
 
     claimHeader: {
-      claimId: drawer.claimSummary.claimId,
-      customerName: drawer.claimSummary.customerName,
-      displayName: drawer.claimSummary.displayName,
-      claimNumber: drawer.claimSummary.claimNumber,
-      address: drawer.claimSummary.address,
+      claimId: workspaceSummary.claimId,
+      customerName: workspaceSummary.customerName,
+      displayName: workspaceSummary.displayName,
+      claimNumber: workspaceSummary.claimNumber,
+      jobNumber: workspaceSummary.jobNumber,
+      address: workspaceSummary.address,
       lifecycleState: drawer.lifecycleState,
       ownershipArea: drawer.ownership.ownershipArea,
       primaryOwner: drawer.ownership.primaryOwner,
       healthLevel: drawer.operationalHealth.level,
       healthReason: drawer.operationalHealth.reason,
-      activeConditions: drawer.activeConditions,
-      activeAlerts: drawer.activeAlerts
+      activeConditions: workspaceSummary.activeConditions || drawer.activeConditions,
+      activeAlerts: workspaceSummary.activeAlerts || drawer.activeAlerts,
+      openRequirements: workspaceSummary.openRequirements || [],
+      nextAction: workspaceSummary.nextAction || '',
+      attentionReason: workspaceSummary.attentionReason || '',
+      operationalAlerts: workspaceSummary.operationalAlerts || [],
+      alertCount: workspaceSummary.alertCount || 0,
+      highestAlertSeverity: workspaceSummary.highestAlertSeverity || ''
     },
 
     timelineSection: {
+      events: timeline.events,
+      recentEvents: timeline.recentEvents,
       timelineEvents: timeline.events,
       timelineCount: timeline.count,
       timelineSummary: timeline.count > 0
         ? 'Timeline events loaded from Rainbow Claims Database.'
         : 'No timeline events found in Rainbow Claims Database.'
     },
+    recentTimelineEvents: timeline.recentEvents,
 
     operationalContext: {
-      nextAction: drawer.claimSummary.nextAction,
+      nextAction: workspaceSummary.nextAction,
+      attentionReason: workspaceSummary.attentionReason || '',
+      openRequirements: workspaceSummary.openRequirements || [],
       blockers: [],
       currentCadence: null,
       upcomingScheduledWork: drawer.upcomingCalendarEvents,
-      recentActivitySummary: drawer.claimSummary.lastMeaningfulActivityDate,
+      recentActivitySummary: workspaceSummary.lastMeaningfulActivityDate,
       timelineEventCount: timeline.count
     },
 
@@ -66,14 +81,32 @@ function getClaimDetail(claimId) {
 
 function getWorkspaceTimelineForClaim_(claimId) {
   try {
+    if (typeof getTimelineForClaim === 'function') {
+      var timelineResponse = getTimelineForClaim(claimId);
+
+      if (timelineResponse && timelineResponse.success && timelineResponse.data) {
+        var timelineRows = Array.isArray(timelineResponse.data.timeline)
+          ? timelineResponse.data.timeline
+          : [];
+        var normalizedTimelineEvents = timelineRows.map(normalizeWorkspaceTimelineEvent_);
+
+        return {
+          count: timelineResponse.data.count || normalizedTimelineEvents.length,
+          events: normalizedTimelineEvents.slice(0, 25),
+          recentEvents: normalizedTimelineEvents.slice(0, 5)
+        };
+      }
+    }
+
     var sheet = SpreadsheetApp
       .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
-      .getSheetByName('Timeline_Events');
+      .getSheetByName(CLAIM_SHEET_NAMES.timeline || 'Timeline_Events');
 
     if (!sheet) {
       return {
         count: 0,
-        events: []
+        events: [],
+        recentEvents: []
       };
     }
 
@@ -81,11 +114,12 @@ function getWorkspaceTimelineForClaim_(claimId) {
     if (values.length < 2) {
       return {
         count: 0,
-        events: []
+        events: [],
+        recentEvents: []
       };
     }
 
-    var headerRowIndex = values[0].indexOf('Event ID') !== -1 ? 0 : 1;
+    var headerRowIndex = findWorkspaceTimelineHeaderRowIndex_(values);
     var headers = values[headerRowIndex];
     var rows = values.slice(headerRowIndex + 1).filter(function(row) {
       return row.join('').trim() !== '';
@@ -103,41 +137,142 @@ function getWorkspaceTimelineForClaim_(claimId) {
 
       return record;
     }).filter(function(record) {
-      var recordClaimId = String(record['Claim ID'] || '');
-      var recordJobNumber = String(record['Job Number'] || '');
+      var recordClaimId = String(record.Claim_ID || record['Claim ID'] || '');
+      var recordJobNumber = String(record.Job_Number || record['Job Number'] || '');
+      var recordClaimNumber = String(record.Claim_Number || record['Claim Number'] || '');
 
       return recordClaimId === normalizedClaimId ||
              recordClaimId === normalizedJobNumber ||
              recordJobNumber === normalizedClaimId ||
-             recordJobNumber === normalizedJobNumber;
-    }).map(function(record) {
-      return {
-        eventId: record['Event ID'] || '',
-        claimId: record['Claim ID'] || '',
-        jobNumber: record['Job Number'] || '',
-        eventDate: record['Date'] || '',
-        source: record['Source'] || '',
-        eventType: record['Event Type'] || '',
-        actor: record['Actor'] || '',
-        summary: record['Summary'] || '',
-        details: record['Details'] || '',
-        visibility: record['Visibility'] || ''
-      };
-    }).sort(function(a, b) {
-      return new Date(b.eventDate || 0) - new Date(a.eventDate || 0);
+             recordJobNumber === normalizedJobNumber ||
+             recordClaimNumber === normalizedClaimId ||
+             recordClaimNumber === normalizedJobNumber;
+    }).map(normalizeWorkspaceTimelineEvent_).sort(function(a, b) {
+      return new Date(b.eventDate || b.createdAt || 0) - new Date(a.eventDate || a.createdAt || 0);
     });
 
     return {
       count: events.length,
-      events: events.slice(0, 25)
+      events: events.slice(0, 25),
+      recentEvents: events.slice(0, 5)
     };
   } catch (error) {
     Logger.log('Workspace timeline unavailable for ' + claimId + ': ' + error);
     return {
       count: 0,
-      events: []
+      events: [],
+      recentEvents: []
     };
   }
+}
+
+function findWorkspaceTimelineHeaderRowIndex_(values) {
+  for (var rowIndex = 0; rowIndex < Math.min(values.length, 10); rowIndex++) {
+    var normalizedHeaders = values[rowIndex].map(function(value) {
+      return normalizeWorkspaceTimelineHeaderName_(value);
+    });
+
+    if (normalizedHeaders.indexOf('claimid') !== -1 &&
+        (normalizedHeaders.indexOf('eventdate') !== -1 ||
+         normalizedHeaders.indexOf('date') !== -1 ||
+         normalizedHeaders.indexOf('timelineeventid') !== -1)) {
+      return rowIndex;
+    }
+  }
+
+  return 0;
+}
+
+function normalizeWorkspaceTimelineEvent_(record) {
+  record = record || {};
+
+  return {
+    eventId: getWorkspaceTimelineValue_(record, [
+      'Timeline_Event_ID',
+      'Timeline Event ID',
+      'Event_ID',
+      'Event ID'
+    ]),
+    claimId: getWorkspaceTimelineValue_(record, [
+      'Claim_ID',
+      'Claim ID',
+      'claimId'
+    ]),
+    jobNumber: getWorkspaceTimelineValue_(record, [
+      'Job_Number',
+      'Job Number',
+      'jobNumber'
+    ]),
+    eventDate: getWorkspaceTimelineValue_(record, [
+      'Event_Date',
+      'Event Date',
+      'Activity_Date',
+      'Activity Date',
+      'Date',
+      'eventDate'
+    ]),
+    createdAt: getWorkspaceTimelineValue_(record, [
+      'Created_At',
+      'Created At',
+      'createdAt'
+    ]),
+    source: getWorkspaceTimelineValue_(record, [
+      'Event_Source',
+      'Event Source',
+      'Source_System',
+      'Source System',
+      'Source',
+      'source'
+    ]),
+    eventType: getWorkspaceTimelineValue_(record, [
+      'Event_Type',
+      'Event Type',
+      'Activity_Type',
+      'Activity Type',
+      'Type',
+      'eventType'
+    ]),
+    actor: getWorkspaceTimelineValue_(record, [
+      'Actor',
+      'Owner',
+      'actor'
+    ]),
+    summary: getWorkspaceTimelineValue_(record, [
+      'Summary',
+      'Activity_Label',
+      'Activity Label',
+      'Description',
+      'summary'
+    ]),
+    details: getWorkspaceTimelineValue_(record, [
+      'Detail',
+      'Details',
+      'Note',
+      'Notes',
+      'detail',
+      'details'
+    ]),
+    visibility: getWorkspaceTimelineValue_(record, [
+      'Visibility',
+      'visibility'
+    ])
+  };
+}
+
+function getWorkspaceTimelineValue_(record, keys) {
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+
+    if (record[key] !== null && record[key] !== undefined && String(record[key]).trim() !== '') {
+      return record[key];
+    }
+  }
+
+  return '';
+}
+
+function normalizeWorkspaceTimelineHeaderName_(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function testClaimDetailTimeline() {

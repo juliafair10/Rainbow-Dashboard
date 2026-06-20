@@ -43,6 +43,29 @@ function getClaimsForLens(lensId, options) {
   return filterClaimsByWorkspaceRoute_(lensClaims, options);
 }
 
+function getClaimsLensCounts(options) {
+  options = Object.assign({}, options || {}, {
+    claimId: '',
+    claim: '',
+    includeTerminal: true
+  });
+
+  var allClaims = ClaimsQueryService.getAllClaimSummaries(options);
+  var routeFilteredClaims = filterClaimsByWorkspaceRoute_(allClaims, options);
+  var activeClaims = routeFilteredClaims.filter(function(claim) {
+    return !isClosedClaim_(claim);
+  });
+
+  return {
+    all: activeClaims.length,
+    needsAttention: filterNeedsAttention_(activeClaims).length,
+    waitingOnInsurance: filterWaitingOnInsurance_(activeClaims).length,
+    missingEoj: filterMissingEoj_(activeClaims).length,
+    paidMonitoring: filterPaidMonitoring_(activeClaims).length,
+    closed: filterClosedClaims_(routeFilteredClaims).length
+  };
+}
+
 function filterClaimsByWorkspaceRoute_(claims, options) {
   options = options || {};
 
@@ -167,13 +190,21 @@ function claimNeedsAttention_(claim) {
     return true;
   }
 
+  if (alerts.some(function(alert) {
+    var severity = getClaimsLensAlertSeverity_(alert);
+
+    return severity === 'critical' || severity === 'high';
+  })) {
+    return true;
+  }
+
   return false;
 }
 
 function filterWaitingOnInsurance_(claims) {
   return claims.filter(function(claim) {
     return (claim.activeConditions || []).some(function(condition) {
-      var value = String(condition).toLowerCase();
+      var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
 
       return value.indexOf('coverage pending') !== -1 ||
              value.indexOf('estimate under review') !== -1 ||
@@ -185,16 +216,15 @@ function filterWaitingOnInsurance_(claims) {
 
 function filterMissingEoj_(claims) {
   return claims.filter(function(claim) {
-    return (claim.activeAlerts || []).some(function(alert) {
-      return String(alert).toLowerCase().indexOf('missing eoj') !== -1;
-    });
+    return containsAnyInList_(claim.activeAlerts || [], ['missing eoj']) ||
+      containsAnyInList_(claim.missingLinks || [], ['eoj']);
   });
 }
 
 function filterPaidMonitoring_(claims) {
   return claims.filter(function(claim) {
     return (claim.activeConditions || []).some(function(condition) {
-      var value = String(condition).toLowerCase();
+      var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
 
       return value.indexOf('monitoring active') !== -1 ||
              value.indexOf('monitoring') !== -1;
@@ -204,11 +234,15 @@ function filterPaidMonitoring_(claims) {
 
 function filterClosedClaims_(claims) {
   return claims.filter(function(claim) {
-    var lifecycle = String(claim.lifecycleState || '').toLowerCase();
-
-    return lifecycle === 'operationally complete' ||
-           lifecycle === 'not sold';
+    return isClosedClaim_(claim);
   });
+}
+
+function isClosedClaim_(claim) {
+  var lifecycle = String(claim && claim.lifecycleState || '').toLowerCase();
+
+  return lifecycle === 'operationally complete' ||
+         lifecycle === 'not sold';
 }
 
 function containsAny_(value, phrases) {
@@ -223,8 +257,43 @@ function containsAnyInList_(items, phrases) {
   items = items || [];
 
   return items.some(function(item) {
-    return containsAny_(item, phrases);
+    return containsAny_(getClaimsLensSignalText_(item), phrases);
   });
+}
+
+function getClaimsLensSignalText_(item) {
+  if (!item || typeof item !== 'object') {
+    return item || '';
+  }
+
+  return [
+    item.alertName,
+    item.alertType,
+    item.Alert_Name,
+    item.Alert_Type,
+    item.name,
+    item.Name,
+    item.Condition_Type,
+    item.Condition_Name,
+    item.conditionType,
+    item.conditionName,
+    item.linkType,
+    item.Link_Type,
+    item.missingLinkType,
+    item.Missing_Link_Type,
+    item.reason,
+    item.Reason,
+    item.message,
+    item.Message
+  ].filter(Boolean).join(' ');
+}
+
+function getClaimsLensAlertSeverity_(alert) {
+  if (!alert || typeof alert !== 'object') {
+    return '';
+  }
+
+  return String(alert.severity || alert.Severity || alert.priority || alert.Priority || '').toLowerCase();
 }
 
 function testClaimsLensSourceSignals() {
@@ -300,6 +369,7 @@ function testClaimsLensCounts() {
 
 var ClaimsLensService = {
   getClaimsForLens: getClaimsForLens,
+  getClaimsLensCounts: getClaimsLensCounts,
   testClaimsLensSourceSignals: testClaimsLensSourceSignals,
   testClaimsLensCounts: testClaimsLensCounts
 };

@@ -5,6 +5,11 @@ function getClaimsList(lensId, options) {
   lensId = options.lensId || 'all';
 
   var claims = ClaimsLensService.getClaimsForLens(lensId, options);
+
+  claims = claims.map(function(claim) {
+    return enrichClaimWorkspaceSummary_(claim);
+  });
+
   var stream = ClaimsStreamService.buildClaimsStream(claims, lensId, options);
 
   return {
@@ -22,40 +27,354 @@ function getClaimsList(lensId, options) {
 
 function getClaimsWorkspace(options) {
   options = normalizeClaimsWorkspaceOptions_(options && (options.lensId || options.lens), options);
+  var claimsList = getClaimsList(options.lensId || 'all', options);
+  var lensCounts = ClaimsLensService.getClaimsLensCounts
+    ? ClaimsLensService.getClaimsLensCounts(options)
+    : {};
 
   return {
     generatedAt: new Date().toISOString(),
     defaultLensId: 'all',
     activeLensId: options.lensId || 'all',
     routeContext: buildClaimsWorkspaceRouteContext_(options),
-    availableLenses: [
-      {
-        lensId: 'all',
-        lensName: 'All Claims'
-      },
-      {
-        lensId: 'needsAttention',
-        lensName: 'Needs Attention'
-      },
-      {
-        lensId: 'waitingOnInsurance',
-        lensName: 'Waiting on Insurance'
-      },
-      {
-        lensId: 'missingEoj',
-        lensName: 'Missing EOJ'
-      },
-      {
-        lensId: 'paidMonitoring',
-        lensName: 'Paid / Monitoring'
-      },
-      {
-        lensId: 'closed',
-        lensName: 'Closed'
-      }
-    ],
-    claimsList: getClaimsList(options.lensId || 'all', options)
+    availableLenses: buildClaimsWorkspaceAvailableLenses_(lensCounts),
+    lensCounts: lensCounts,
+    queueIntelligence: buildClaimsWorkspaceQueueIntelligence_(claimsList, lensCounts, options),
+    claimsList: claimsList
   };
+}
+
+function buildClaimsWorkspaceAvailableLenses_(lensCounts) {
+  var lensIds = [
+    'all',
+    'needsAttention',
+    'waitingOnInsurance',
+    'missingEoj',
+    'paidMonitoring',
+    'closed'
+  ];
+
+  return lensIds.map(function(lensId) {
+    return {
+      lensId: lensId,
+      lensName: getClaimsLensName_(lensId),
+      count: lensCounts && lensCounts[lensId] !== undefined ? lensCounts[lensId] : null
+    };
+  });
+}
+
+function buildClaimsWorkspaceQueueIntelligence_(claimsList, lensCounts, options) {
+  var claims = getClaimsWorkspaceClaimsFromList_(claimsList);
+  var totalOperationalAlerts = 0;
+  var missingLinkCount = 0;
+
+  claims.forEach(function(claim) {
+    var operationalAlerts = claim.operationalAlerts || [];
+    var alertCount = Number(claim.alertCount);
+
+    totalOperationalAlerts += isNaN(alertCount) ? operationalAlerts.length : alertCount;
+
+    var missingLinkAlerts = operationalAlerts.filter(function(alert) {
+      var alertType = String(alert.alertType || '').toLowerCase();
+      var source = String(alert.source || '').toLowerCase();
+
+      return alertType.indexOf('missing link') !== -1 || source === 'missinglinks';
+    }).length;
+
+    missingLinkCount += missingLinkAlerts || (claim.missingLinks || []).length;
+  });
+
+  return {
+    lensId: claimsList.lensId,
+    lensName: claimsList.lensName,
+    visibleClaimCount: claims.length,
+    totalClaimsNeedingAttention: lensCounts && lensCounts.needsAttention !== undefined
+      ? lensCounts.needsAttention
+      : 0,
+    totalOperationalAlerts: totalOperationalAlerts,
+    missingLinkCount: missingLinkCount,
+    stalestClaim: getClaimsWorkspaceStalestClaim_(claims),
+    viewLogic: buildClaimsWorkspaceViewLogic_(claimsList, options)
+  };
+}
+
+function getClaimsWorkspaceClaimsFromList_(claimsList) {
+  var claims = [];
+
+  (claimsList.groups || []).forEach(function(group) {
+    claims = claims.concat(group.claims || []);
+  });
+
+  return claims;
+}
+
+function getClaimsWorkspaceStalestClaim_(claims) {
+  var stalestClaim = null;
+  var highestAge = -1;
+
+  claims.forEach(function(claim) {
+    var age = getClaimsWorkspaceActivityAge_(claim);
+
+    if (age > highestAge) {
+      highestAge = age;
+      stalestClaim = claim;
+    }
+  });
+
+  if (!stalestClaim) {
+    return null;
+  }
+
+  return {
+    claimId: stalestClaim.claimId || '',
+    displayName: stalestClaim.displayName || stalestClaim.claimId || '',
+    lastMeaningfulActivityDate: stalestClaim.lastMeaningfulActivityDate || '',
+    daysSinceMeaningfulActivity: highestAge >= 0 ? highestAge : ''
+  };
+}
+
+function getClaimsWorkspaceActivityAge_(claim) {
+  var explicitAge = Number(claim.daysSinceMeaningfulActivity);
+
+  if (!isNaN(explicitAge)) {
+    return explicitAge;
+  }
+
+  if (!claim.lastMeaningfulActivityDate) {
+    return -1;
+  }
+
+  var timestamp = new Date(claim.lastMeaningfulActivityDate).getTime();
+
+  if (isNaN(timestamp)) {
+    return -1;
+  }
+
+  return Math.max(0, Math.floor((new Date().getTime() - timestamp) / 86400000));
+}
+
+function buildClaimsWorkspaceViewLogic_(claimsList, options) {
+  var filters = [];
+
+  if (options.ownershipArea) {
+    filters.push('Ownership: ' + options.ownershipArea);
+  }
+
+  if (options.conditionType) {
+    filters.push('Condition: ' + options.conditionType);
+  }
+
+  if (options.compliance) {
+    filters.push('Compliance: ' + options.compliance);
+  }
+
+  return {
+    lensName: claimsList.lensName || getClaimsLensName_(options.lensId || 'all'),
+    filters: filters,
+    summary: filters.length
+      ? claimsList.lensName + ' filtered by ' + filters.join(', ')
+      : claimsList.lensName + ' lens'
+  };
+}
+function enrichClaimWorkspaceSummary_(claim) {
+  claim = Object.assign({}, claim || {});
+
+  claim.openRequirements = buildClaimOpenRequirements_(claim);
+  claim.nextAction = buildClaimNextAction_(claim);
+  claim.attentionReason = buildClaimAttentionReason_(claim);
+  claim.operationalAlerts = buildClaimOperationalAlerts_(claim);
+  claim.alertCount = claim.operationalAlerts.length;
+  claim.highestAlertSeverity = getHighestClaimAlertSeverity_(claim.operationalAlerts);
+
+  return claim;
+}
+
+function buildClaimOpenRequirements_(claim) {
+  var requirements = [];
+  var conditions = claim.activeConditions || [];
+
+  conditions.forEach(function(condition) {
+    var name = getClaimsWorkspaceTestConditionType_(condition);
+
+    if (name === 'Carrier Revision Requested') {
+      requirements.push('Respond to carrier revision');
+    }
+
+    if (name === 'Revision Active') {
+      requirements.push('Continue revision follow-up');
+    }
+
+    if (name === 'Coverage Pending') {
+      requirements.push('Coverage determination pending');
+    }
+
+    if (name === 'Waiting on Payment') {
+      requirements.push('Payment follow-up may be needed');
+    }
+  });
+
+  return requirements.filter(function(item, index, array) {
+    return array.indexOf(item) === index;
+  });
+}
+
+function buildClaimNextAction_(claim) {
+  if (claim.healthLevel === 'At Risk' || claim.healthLevel === 'Escalated') {
+    return 'Review claim and restore operational cadence';
+  }
+
+  if ((claim.activeConditions || []).length) {
+    return 'Review active claim conditions';
+  }
+
+  return '';
+}
+
+function buildClaimAttentionReason_(claim) {
+  return claim.healthReason ||
+    claim.operationalReason ||
+    claim.staleReason ||
+    '';
+}
+
+function buildClaimOperationalAlerts_(claim) {
+  var alerts = [];
+
+  (claim.activeAlerts || []).forEach(function(alert) {
+    alerts.push(normalizeClaimOperationalAlert_(alert));
+  });
+
+  (claim.missingLinks || []).forEach(function(link) {
+    var linkName = getClaimsWorkspaceAlertValue_(link, [
+      'linkType',
+      'Link_Type',
+      'missingLinkType',
+      'Missing_Link_Type',
+      'name',
+      'Name'
+    ]) || String(link || 'Missing Link');
+
+    alerts.push({
+      alertType: 'Missing Link',
+      alertName: 'Missing ' + linkName,
+      severity: 'Medium',
+      source: 'missingLinks',
+      reason: 'Required operational link is missing.',
+      nextStep: 'Add or verify the missing operational link.'
+    });
+  });
+
+  return dedupeClaimOperationalAlerts_(alerts);
+}
+
+function normalizeClaimOperationalAlert_(alert) {
+  if (!alert || typeof alert !== 'object') {
+    return {
+      alertType: 'Alert',
+      alertName: String(alert || 'Operational Alert'),
+      severity: 'Medium',
+      source: 'activeAlerts',
+      reason: '',
+      nextStep: ''
+    };
+  }
+
+  return {
+    alertType: getClaimsWorkspaceAlertValue_(alert, [
+      'alertType',
+      'Alert_Type',
+      'type',
+      'Type'
+    ]) || 'Operational Alert',
+    alertName: getClaimsWorkspaceAlertValue_(alert, [
+      'alertName',
+      'Alert_Name',
+      'name',
+      'Name',
+      'title',
+      'Title'
+    ]) || 'Operational Alert',
+    severity: getClaimsWorkspaceAlertValue_(alert, [
+      'severity',
+      'Severity',
+      'priority',
+      'Priority'
+    ]) || 'Medium',
+    source: getClaimsWorkspaceAlertValue_(alert, [
+      'source',
+      'Source'
+    ]) || 'activeAlerts',
+    reason: getClaimsWorkspaceAlertValue_(alert, [
+      'reason',
+      'Reason',
+      'description',
+      'Description',
+      'message',
+      'Message'
+    ]) || '',
+    nextStep: getClaimsWorkspaceAlertValue_(alert, [
+      'nextStep',
+      'Next_Step',
+      'recommendedAction',
+      'Recommended_Action'
+    ]) || ''
+  };
+}
+
+function getClaimsWorkspaceAlertValue_(record, keys) {
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+
+    if (record[key] !== null && record[key] !== undefined && String(record[key]).trim() !== '') {
+      return String(record[key]).trim();
+    }
+  }
+
+  return '';
+}
+
+function dedupeClaimOperationalAlerts_(alerts) {
+  var seen = {};
+
+  return alerts.filter(function(alert) {
+    var key = [
+      alert.alertType || '',
+      alert.alertName || '',
+      alert.severity || ''
+    ].join('|');
+
+    if (seen[key]) {
+      return false;
+    }
+
+    seen[key] = true;
+    return true;
+  });
+}
+
+function getHighestClaimAlertSeverity_(alerts) {
+  var severityRank = {
+    Critical: 5,
+    High: 4,
+    Medium: 3,
+    Low: 2,
+    Info: 1
+  };
+
+  var highestSeverity = '';
+  var highestRank = 0;
+
+  (alerts || []).forEach(function(alert) {
+    var severity = alert.severity || 'Medium';
+    var rank = severityRank[severity] || severityRank.Medium;
+
+    if (rank > highestRank) {
+      highestRank = rank;
+      highestSeverity = severity;
+    }
+  });
+
+  return highestSeverity;
 }
 
 function normalizeClaimsWorkspaceOptions_(lensId, options) {
@@ -260,11 +579,23 @@ function getClaimsWorkspaceTestConditionType_(condition) {
     '';
 }
 
+function testClaimsWorkspaceSample() {
+  var result = getClaimsList('needsAttention', {});
+  var sampleClaim = result && result.groups && result.groups[0] && result.groups[0].claims
+    ? result.groups[0].claims[0]
+    : null;
+
+  Logger.log(JSON.stringify(sampleClaim, null, 2));
+
+  return sampleClaim;
+}
+
 var ClaimsWorkspaceService = {
   getClaimsWorkspace: getClaimsWorkspace,
   getClaimsList: getClaimsList,
   testClaimsWorkspaceAllClaims: testClaimsWorkspaceAllClaims,
   testClaimsWorkspaceLensCounts: testClaimsWorkspaceLensCounts,
   testClaimsWorkspaceRouteFilters: testClaimsWorkspaceRouteFilters,
-  testClaimsWorkspaceRouteConsumption: testClaimsWorkspaceRouteConsumption
+  testClaimsWorkspaceRouteConsumption: testClaimsWorkspaceRouteConsumption,
+  testClaimsWorkspaceSample: testClaimsWorkspaceSample
 };
