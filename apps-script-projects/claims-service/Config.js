@@ -31,6 +31,15 @@ const REPORT_EMAIL_IMPORT_CONFIG = {
     processedLabel: 'Rainbow/Data Imports/Compliance Tasks/Processed',
     errorLabel: 'Rainbow/Data Imports/Compliance Tasks/Error',
     filenamePrefix: 'Compliance_Tasks'
+  },
+  historicalNotes: {
+    reportKey: 'historicalNotes',
+    displayName: 'Historical Notes',
+    gmailQuery: '',
+    parentFolderId: '1hFyhuJjcaSzGpixXI-bijiFGtmYRXhEz',
+    processedLabel: '',
+    errorLabel: '',
+    filenamePrefix: 'Job Notes'
   }
 };
 
