@@ -185,11 +185,211 @@
   }
 
   function renderTodayPriorities(items) {
-    document.getElementById('todayPrioritiesCount').textContent = items.length + ' items';
-    renderSimpleList('todayPrioritiesList', items, function(item) {
-      return item.claimDisplayName || 'Claim';
+    const groupedItems = groupHomepagePrioritiesByClaim_(items || []);
+    document.getElementById('todayPrioritiesCount').textContent = groupedItems.length + ' items';
+    renderPriorityList_('todayPrioritiesList', groupedItems);
+  }
+
+  function groupHomepagePrioritiesByClaim_(items) {
+    const grouped = {};
+    const order = [];
+
+    (items || []).forEach(function(item) {
+      const key = item.claimId || item.targetId || item.claimDisplayName || item.title || 'priority';
+
+      if (!grouped[key]) {
+        grouped[key] = Object.assign({}, item, {
+          _priorityTitles: [],
+          _conditionTypes: [],
+          _alertTypes: []
+        });
+        order.push(key);
+      }
+
+      if (item.title && grouped[key]._priorityTitles.indexOf(item.title) === -1) {
+        grouped[key]._priorityTitles.push(item.title);
+      }
+
+      if (item.conditionType && grouped[key]._conditionTypes.indexOf(item.conditionType) === -1) {
+        grouped[key]._conditionTypes.push(item.conditionType);
+      }
+
+      if (item.alertType && grouped[key]._alertTypes.indexOf(item.alertType) === -1) {
+        grouped[key]._alertTypes.push(item.alertType);
+      }
+
+      if (!grouped[key].reason && item.reason) {
+        grouped[key].reason = item.reason;
+      }
+
+      if (!grouped[key].healthLevel && item.healthLevel) {
+        grouped[key].healthLevel = item.healthLevel;
+      }
+
+      if (!grouped[key].ownershipArea && item.ownershipArea) {
+        grouped[key].ownershipArea = item.ownershipArea;
+      }
+
+      if (!grouped[key].targetRoute && item.targetRoute) {
+        grouped[key].targetRoute = item.targetRoute;
+      }
+    });
+
+    return order.map(function(key) {
+      return grouped[key];
     });
   }
+
+  function buildHomepagePriorityTags_(item) {
+    const tags = [];
+    const seen = {};
+
+    function addTag(label, type) {
+      const normalizedLabel = String(label || '').trim();
+      if (!normalizedLabel || seen[normalizedLabel]) {
+        return;
+      }
+
+      seen[normalizedLabel] = true;
+      tags.push({
+        label: normalizedLabel,
+        type: type || 'default'
+      });
+    }
+
+    addTag(item.ownershipArea || item.primaryOwner, 'workspace');
+
+    (item._conditionTypes || []).forEach(function(conditionType) {
+      addTag(conditionType, 'condition');
+    });
+
+    if (item.conditionType) {
+      addTag(item.conditionType, 'condition');
+    }
+
+    (item._alertTypes || []).forEach(function(alertType) {
+      addTag(alertType, 'alert');
+    });
+
+    if (item.alertType) {
+      addTag(item.alertType, 'alert');
+    }
+
+    addTag(item.healthLevel, 'health');
+
+    if (tags.length === 0 && item.type) {
+      addTag(item.type, 'condition');
+    }
+
+    return tags.slice(0, 3);
+  }
+
+  function renderPriorityList_(containerId, items) {
+    const container = document.getElementById(containerId);
+
+    if (!container) return;
+
+    const normalizedItems = Array.isArray(items) ? items : [];
+
+    if (normalizedItems.length === 0) {
+      container.innerHTML = '<div class="rainbow-empty-state">No operational priorities require action right now.</div>';
+      return;
+    }
+
+    container.innerHTML = normalizedItems.map(function(item, index) {
+      const isNavigable = !!(item && item.targetRoute);
+      const itemClass = isNavigable
+        ? 'rainbow-priority-row rainbow-priority-row--clickable'
+        : 'rainbow-priority-row';
+      const tags = buildHomepagePriorityTags_(item);
+      const titleText = item.claimDisplayName || item.customerName || item.claimId || item.title || 'Operational priority';
+      const subtitleText = [item.claimNumber || '', item.claimId || ''].filter(Boolean).join(' • ');
+      const reasonText = item.reason || item.primaryReason || item.conditionType || item.alertType || item.title || 'Review this operational focus item.';
+      const actionText = getHomepagePriorityActionText_(item);
+      const dueText = getHomepagePriorityDueText_(item);
+      const dotClass = getHomepagePriorityDotClass_(item);
+      const href = isNavigable ? buildRainbowAbsoluteUrl_(item.targetRoute) : '';
+      const openTag = isNavigable
+        ? '<a class="' + itemClass + '" data-homepage-item-index="' + index + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '">'
+        : '<div class="' + itemClass + '" data-homepage-item-index="' + index + '">';
+      const closeTag = isNavigable ? '</a>' : '</div>';
+
+      return [
+        openTag,
+        '<div class="rainbow-priority-identity">',
+        '<span class="rainbow-priority-dot ' + dotClass + '"></span>',
+        '<div>',
+        '<div class="rainbow-priority-name">' + escapeHtml(titleText) + '</div>',
+        '<div class="rainbow-priority-subtitle">' + escapeHtml(subtitleText) + '</div>',
+        '</div>',
+        '</div>',
+        '<div class="rainbow-priority-context">',
+        '<div class="rainbow-priority-tags">' + tags.map(function(tag) {
+          return '<span class="rainbow-priority-tag rainbow-priority-tag--' + escapeHtml(tag.type) + '">' + escapeHtml(tag.label) + '</span>';
+        }).join('') + '</div>',
+        '</div>',
+        '<div>',
+        '<div class="rainbow-priority-due">' + escapeHtml(dueText) + '</div>',
+        '<div class="rainbow-priority-note">' + escapeHtml(reasonText) + '</div>',
+        '</div>',
+        '<div class="rainbow-priority-action">',
+        '<span class="rainbow-priority-open">' + escapeHtml(actionText) + ' →</span>',
+        '</div>',
+        closeTag
+      ].join('');
+    }).join('');
+
+    attachHomepageListNavigation_(container, normalizedItems);
+  }
+
+  function getHomepagePriorityActionText_(item) {
+    const title = String(item.title || '').toLowerCase();
+    const condition = String(item.conditionType || '').toLowerCase();
+    const alert = String(item.alertType || '').toLowerCase();
+
+    if (title.indexOf('revision') !== -1 || condition.indexOf('revision') !== -1) {
+      return 'Open revision';
+    }
+
+    if (alert.indexOf('xact') !== -1 || alert.indexOf('symbility') !== -1) {
+      return 'Add link';
+    }
+
+    if (title.indexOf('payment') !== -1 || condition.indexOf('payment') !== -1) {
+      return 'Review payment';
+    }
+
+    return 'Open claim';
+  }
+
+  function getHomepagePriorityDueText_(item) {
+    if (item.followUpDate) {
+      return 'Follow up due';
+    }
+
+    if (item.healthLevel === 'At Risk') {
+      return 'Needs attention';
+    }
+
+    if (item.healthLevel === 'Healthy') {
+      return 'Monitor';
+    }
+
+    return 'Review today';
+  }
+
+  function getHomepagePriorityDotClass_(item) {
+    if (item.healthLevel === 'At Risk' || item.healthLevel === 'Escalated' || item.healthLevel === 'Critical') {
+      return 'rainbow-priority-dot--risk';
+    }
+
+    if (item.healthLevel === 'Healthy') {
+      return 'rainbow-priority-dot--healthy';
+    }
+
+    return '';
+  }
+
 
   function renderBecomingStale(items) {
     renderSimpleList('becomingStaleList', items, function(item) {

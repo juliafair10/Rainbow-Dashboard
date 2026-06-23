@@ -233,6 +233,31 @@
     margin-bottom: 14px;
   }
 
+  .rainbow-priority-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    color: #7d6f83;
+    font-size: 12px;
+    font-weight: 750;
+  }
+
+  .rainbow-priority-toolbar-link {
+    color: #8a3f63;
+    text-decoration: none;
+  }
+
+  .rainbow-priority-toolbar-select {
+    border: 1px solid rgba(72, 54, 75, 0.10);
+    border-radius: 10px;
+    padding: 7px 10px;
+    background: rgba(255, 255, 255, 0.76);
+    color: #4a404d;
+    font-size: 12px;
+    font-weight: 750;
+  }
+
   .rainbow-muted {
     font-size: 12px;
     white-space: nowrap;
@@ -242,6 +267,12 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .rainbow-priority-list {
+    gap: 0;
+    overflow: hidden;
+    border-top: 1px solid rgba(72, 54, 75, 0.07);
   }
 
   .rainbow-list-item {
@@ -286,6 +317,158 @@
     line-height: 1.35;
   }
 
+  .rainbow-priority-row {
+    display: grid;
+    grid-template-columns: minmax(230px, 1.25fr) minmax(190px, 0.9fr) minmax(150px, 0.65fr) minmax(126px, auto);
+    align-items: center;
+    gap: 18px;
+    padding: 15px 8px;
+    border-bottom: 1px solid rgba(72, 54, 75, 0.07);
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .rainbow-priority-row:visited,
+  .rainbow-priority-row:hover,
+  .rainbow-priority-row:active {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .rainbow-priority-row--clickable {
+    cursor: pointer;
+  }
+
+  .rainbow-priority-row--clickable:hover {
+    background: rgba(255, 255, 255, 0.52);
+  }
+
+  .rainbow-priority-dot {
+    width: 11px;
+    height: 11px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #f472b6, #fb7185);
+    box-shadow: 0 0 0 4px rgba(244, 114, 182, 0.12);
+  }
+
+  .rainbow-priority-dot--risk {
+    background: linear-gradient(135deg, #f97316, #fb7185);
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12);
+  }
+
+  .rainbow-priority-dot--healthy {
+    background: linear-gradient(135deg, #14b8a6, #86efac);
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.12);
+  }
+
+  .rainbow-priority-identity {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .rainbow-priority-name {
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.2;
+    color: #2d2730;
+  }
+
+  .rainbow-priority-subtitle {
+    margin-top: 5px;
+    color: var(--rainbow-muted);
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .rainbow-priority-context {
+    min-width: 0;
+  }
+
+  .rainbow-priority-due {
+    color: #db2777;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1.25;
+  }
+
+  .rainbow-priority-note {
+    margin-top: 5px;
+    color: #536076;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .rainbow-priority-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .rainbow-priority-tag {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1;
+    border: 1px solid rgba(72, 54, 75, 0.08);
+    background: rgba(255, 255, 255, 0.68);
+    color: #5f5563;
+  }
+
+  .rainbow-priority-tag--workspace {
+    background: rgba(247, 220, 233, 0.64);
+    border-color: rgba(214, 129, 171, 0.22);
+    color: #8a3f63;
+  }
+
+  .rainbow-priority-tag--condition {
+    background: rgba(235, 228, 255, 0.68);
+    border-color: rgba(139, 116, 219, 0.20);
+    color: #5d4a91;
+  }
+
+  .rainbow-priority-tag--alert {
+    background: rgba(255, 233, 221, 0.78);
+    border-color: rgba(228, 138, 96, 0.22);
+    color: #8a4b2e;
+  }
+
+  .rainbow-priority-tag--health {
+    background: rgba(255, 247, 237, 0.88);
+    border-color: rgba(245, 158, 11, 0.22);
+    color: #92400e;
+  }
+
+  .rainbow-priority-action {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .rainbow-priority-action-label {
+    display: none;
+  }
+
+  .rainbow-priority-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    padding: 9px 12px;
+    background: rgba(247, 220, 233, 0.72);
+    color: #9d174d;
+    font-size: 12px;
+    font-weight: 850;
+    white-space: nowrap;
+  }
+
   .rainbow-empty-state {
     padding: 18px;
     border-radius: 18px;
@@ -304,6 +487,19 @@
     color: #5e5363;
     font-size: 13px;
     line-height: 1.45;
+  }
+
+  
+  @media (max-width: 900px) {
+    .rainbow-priority-row {
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 15px 4px;
+    }
+
+    .rainbow-priority-action {
+      justify-content: flex-start;
+    }
   }
 
   @media (max-width: 1100px) {
