@@ -507,6 +507,7 @@ function normalizeTimelineEngineDate_(value) {
   return new Date(0);
 }
 
+
 function rebuildTimelineDerivedFieldsForClaim_(claimId) {
   const lastMeaningfulActivity = deriveLastMeaningfulActivityForClaim_(claimId);
 
@@ -521,6 +522,62 @@ function rebuildTimelineDerivedFieldsForClaim_(claimId) {
   return updateClaim(claimId, {
     Last_Meaningful_Activity_At: lastMeaningfulActivity.Event_Date
   });
+}
+
+function rebuildTimelineDerivedFieldsForActiveClaims(limit) {
+  ensureTimelineEngineClaimsColumn_('Last_Meaningful_Activity_At');
+
+  const claims = ClaimsQueryService.getAllClaimSummaries({ includeTerminal: false }) || [];
+  const maxClaims = limit || claims.length;
+  const results = [];
+  let rebuiltCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+
+  claims.slice(0, maxClaims).forEach(function(claim) {
+    const claimId = claim.claimId || claim.Claim_ID || '';
+
+    if (!claimId) {
+      skippedCount++;
+      return;
+    }
+
+    try {
+      const rebuildResult = rebuildTimelineDerivedFieldsForClaim_(claimId);
+      const success = !!(rebuildResult && rebuildResult.success);
+
+      if (success) {
+        rebuiltCount++;
+      } else {
+        failedCount++;
+      }
+
+      results.push({
+        claimId: claimId,
+        success: success,
+        message: rebuildResult && rebuildResult.message ? rebuildResult.message : '',
+        lastMeaningfulActivityAt: rebuildResult && rebuildResult.data && rebuildResult.data.row
+          ? rebuildResult.data.row.Last_Meaningful_Activity_At || ''
+          : ''
+      });
+    } catch (error) {
+      failedCount++;
+      results.push({
+        claimId: claimId,
+        success: false,
+        message: error && error.message ? error.message : String(error)
+      });
+    }
+  });
+
+  return successResponse({
+    totalActiveClaims: claims.length,
+    processedClaims: Math.min(maxClaims, claims.length),
+    rebuiltCount: rebuiltCount,
+    skippedCount: skippedCount,
+    failedCount: failedCount,
+    sampleResults: results.slice(0, 10)
+  }, 'Timeline derived fields rebuilt for active claims.');
 }
 
 function ensureTimelineEngineClaimsColumn_(columnName) {
@@ -710,4 +767,11 @@ function testTimelineRuleDrivenFieldWork() {
 
   Logger.log(JSON.stringify(event, null, 2));
   return event;
+}
+
+function testRebuildTimelineDerivedFieldsForActiveClaims() {
+  var result = rebuildTimelineDerivedFieldsForActiveClaims();
+  Logger.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }

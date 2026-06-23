@@ -25,6 +25,11 @@ function runRainbowMorningAutomation() {
     runMorningHistoricalNotesImport_
   ));
 
+  steps.push(runMorningAutomationStep_(
+    'rebuildTimelineDerivedFieldsForActiveClaims',
+    runMorningTimelineRebuild_
+  ));
+
   // Future morning workflow placeholders. Do not enable until the owning
   // import/refresh functions exist and are explicitly approved for automation.
   // importLatestDailyOpenJobsReport();
@@ -62,6 +67,10 @@ function runMorningHistoricalNotesImport_() {
     result,
     'Historical notes incremental timeline import completed.'
   );
+}
+
+function runMorningTimelineRebuild_() {
+  return rebuildTimelineDerivedFieldsForActiveClaims(10);
 }
 
 function createRainbowMorningAutomationTrigger() {
