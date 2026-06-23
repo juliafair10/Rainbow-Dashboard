@@ -3,8 +3,21 @@
   const RAINBOW_DASHBOARD_WEB_APP_URL = 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzX9Mvyr2zk1GkBR2Nfdv9PE994onOVpxQpJj9lq3j87n2NN_iZ3eRWDFWlbfmrvpNoFw/exec';
 
   document.addEventListener('DOMContentLoaded', function() {
+    bindHomepageNavRoutes();
     loadHomepageData();
   });
+
+  function bindHomepageNavRoutes() {
+    document.querySelectorAll('[data-homepage-route]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const targetRoute = button.getAttribute('data-homepage-route');
+
+        if (targetRoute) {
+          navigateToRainbowRoute_(targetRoute);
+        }
+      });
+    });
+  }
 
   function loadHomepageData() {
     google.script.run
@@ -418,6 +431,10 @@
       ? targetRoute
       : '?' + targetRoute.replace(/^\/+exec\??/, '');
 
+    if (window.RAINBOW_DASHBOARD_WEB_APP_URL_FROM_SERVER) {
+      return window.RAINBOW_DASHBOARD_WEB_APP_URL_FROM_SERVER + normalizedRoute;
+    }
+
     return RAINBOW_DASHBOARD_WEB_APP_URL + normalizedRoute;
   }
 
@@ -425,7 +442,7 @@
     const statusStrip = document.getElementById('systemStatusStrip');
 
     if (statusStrip) {
-      statusStrip.textContent = 'Navigation target: ' + (item && item.targetRoute ? item.targetRoute : '?view=claimsShell');
+      statusStrip.textContent = 'Navigation target: ' + (item && item.targetRoute ? item.targetRoute : '?view=claimShell');
     }
   }
 

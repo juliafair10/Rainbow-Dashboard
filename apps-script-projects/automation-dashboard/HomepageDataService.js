@@ -1337,22 +1337,22 @@ function buildHomepageTargetRoute_(targetType, targetId) {
   const encodedTargetId = encodeURIComponent(String(targetId || ''));
 
   if (targetType === 'claim') {
-    return encodedTargetId ? '?view=claimShell&claimId=' + encodedTargetId : '?view=claimsShell';
+    return encodedTargetId ? '?view=claimShell&claimId=' + encodedTargetId : '?view=claimShell';
   }
 
   if (targetType === 'ownership') {
-    return encodedTargetId ? '?view=claimsShell&ownership=' + encodedTargetId : '?view=claimsShell';
+    return encodedTargetId ? '?view=claimShell&ownership=' + encodedTargetId : '?view=claimShell';
   }
 
   if (targetType === 'condition') {
-    return encodedTargetId ? '?view=claimsShell&condition=' + encodedTargetId : '?view=claimsShell';
+    return encodedTargetId ? '?view=claimShell&condition=' + encodedTargetId : '?view=claimShell';
   }
 
   if (targetType === 'compliance') {
-    return '?view=claimsShell&compliance=' + (encodedTargetId || 'open');
+    return '?view=claimShell&compliance=' + (encodedTargetId || 'open');
   }
 
-  return '?view=claimsShell';
+  return '?view=claimShell';
 }
 
 function testHomepageClaimsTargetRoutes() {

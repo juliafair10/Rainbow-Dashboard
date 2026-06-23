@@ -1,0 +1,918 @@
+<script>
+  let intakeWorkspacePayload = null;
+  let activeIntakeIssueFilter = 'all';
+
+  document.addEventListener('DOMContentLoaded', function() {
+    initializeIntakeWorkspace();
+  });
+
+  function initializeIntakeWorkspace() {
+    bindIntakeWorkspaceActions_();
+    loadIntakeWorkspaceSummary_();
+  }
+
+  function bindIntakeWorkspaceActions_() {
+    const refreshButton = document.getElementById('refreshIntakeButton');
+    const openClaimsButton = document.getElementById('openClaimsWorkspaceButton');
+    const runButton = document.getElementById('runIntakeButton');
+
+    if (refreshButton) {
+      refreshButton.addEventListener('click', function() {
+        loadIntakeWorkspaceSummary_();
+      });
+    }
+
+    if (openClaimsButton) {
+      openClaimsButton.addEventListener('click', function() {
+        openIntakeClaimsLens_('needsAttention');
+      });
+    }
+
+    if (runButton) {
+      runButton.addEventListener('click', function() {
+        runIntakeProcess_();
+      });
+    }
+
+    document.querySelectorAll('[data-route]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const route = button.getAttribute('data-route');
+        if (route) {
+          openIntakeRoute_(route);
+        }
+      });
+    });
+
+    document.addEventListener('click', function(event) {
+      const routeButton = event.target.closest('[data-intake-route]');
+      if (routeButton) {
+        openIntakeRoute_(routeButton.getAttribute('data-intake-route'));
+        return;
+      }
+
+      const claimButton = event.target.closest('[data-intake-claim-id]');
+      if (claimButton) {
+        openIntakeClaim_(claimButton.getAttribute('data-intake-claim-id'));
+        return;
+      }
+
+      const lensButton = event.target.closest('[data-intake-lens]');
+      if (lensButton) {
+        openIntakeClaimsLens_(lensButton.getAttribute('data-intake-lens') || 'needsAttention');
+        return;
+      }
+
+      const auditButton = event.target.closest('[data-intake-audit-action]');
+      if (auditButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!auditButton.disabled) {
+          handleIntakeAuditAction_(auditButton);
+        }
+      }
+
+      const linkSaveButton = event.target.closest('[data-intake-link-save]');
+      if (linkSaveButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleIntakeOperationalLinkSave_(linkSaveButton);
+        return;
+      }
+
+      const linkClearButton = event.target.closest('[data-intake-link-clear]');
+      if (linkClearButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        clearIntakeOperationalLinkForm_(linkClearButton);
+      }
+    });
+
+    document.querySelectorAll('[data-intake-filter]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        activeIntakeIssueFilter = button.getAttribute('data-intake-filter') || 'all';
+        markActiveIntakeFilter_();
+        renderIntakeIssues_(intakeWorkspacePayload && intakeWorkspacePayload.unresolvedItems
+          ? intakeWorkspacePayload.unresolvedItems
+          : []);
+      });
+    });
+
+    const actionList = document.getElementById('intakeActionList');
+    if (actionList) {
+      actionList.addEventListener('click', function(event) {
+        const button = event.target.closest('[data-intake-action]');
+        if (!button || button.disabled) {
+          return;
+        }
+
+        handleIntakeAction_(button.getAttribute('data-intake-action'));
+      });
+    }
+  }
+
+  function loadIntakeWorkspaceSummary_() {
+    setIntakeLoadingState_(true, 'Refreshing intake queue health...');
+
+    google.script.run
+      .withSuccessHandler(function(payload) {
+        setIntakeLoadingState_(false, '');
+        intakeWorkspacePayload = payload;
+        renderIntakeWorkspace_(payload);
+      })
+      .withFailureHandler(function(error) {
+        setIntakeLoadingState_(false, '');
+        renderIntakeWorkspaceError_(error && error.message ? error.message : String(error || 'Intake workspace failed to load.'));
+      })
+      .getIntakeWorkspaceSummary();
+  }
+
+  function runIntakeProcess_() {
+    const confirmation = intakeWorkspacePayload
+      && intakeWorkspacePayload.availableActions
+      && intakeWorkspacePayload.availableActions.find(function(action) { return action.id === 'run-intake'; });
+    const message = confirmation && confirmation.confirmation
+      ? confirmation.confirmation
+      : 'This runs the existing insurance-intake-automation process endpoint. It may create Todoist tasks and Calendar drafts.';
+
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    setIntakeLoadingState_(true, 'Running existing intake process endpoint...');
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        const statusLine = document.getElementById('intakeStatusLine');
+        if (statusLine) {
+          statusLine.textContent = response && response.message
+            ? response.message
+            : 'Intake process completed.';
+        }
+
+        loadIntakeWorkspaceSummary_();
+      })
+      .withFailureHandler(function(error) {
+        setIntakeLoadingState_(false, '');
+        renderIntakeWorkspaceError_(error && error.message ? error.message : String(error || 'Run Intake failed.'));
+      })
+      .runIntakeWorkspaceProcess();
+  }
+
+  function handleIntakeAction_(actionId) {
+    if (actionId === 'open-claims-workspace') {
+      openIntakeClaimsLens_('needsAttention');
+      return;
+    }
+
+    if (actionId === 'refresh-queue-health') {
+      loadIntakeWorkspaceSummary_();
+      return;
+    }
+
+    if (actionId === 'run-intake') {
+      runIntakeProcess_();
+    }
+  }
+
+  function handleIntakeAuditAction_(button) {
+    const actionType = button.getAttribute('data-intake-audit-action') || '';
+    const payload = {
+      issueType: button.getAttribute('data-issue-type') || '',
+      sourceWorkflow: button.getAttribute('data-source-workflow') || '',
+      issueKey: button.getAttribute('data-issue-key') || '',
+      issueTitle: button.getAttribute('data-issue-title') || ''
+    };
+
+    if (!payload.issueKey) {
+      setText_('intakeStatusLine', 'Unable to audit item because issue key is missing.');
+      return;
+    }
+
+    button.disabled = true;
+    setText_('intakeStatusLine', actionType === 'ignored'
+      ? 'Saving ignored recommendation...'
+      : 'Saving reviewed item...');
+
+    const runner = google.script.run
+      .withSuccessHandler(function(response) {
+        setText_('intakeStatusLine', response && response.message ? response.message : 'Intake audit saved.');
+        loadIntakeWorkspaceSummary_();
+      })
+      .withFailureHandler(function(error) {
+        button.disabled = false;
+        renderIntakeWorkspaceError_(error && error.message ? error.message : String(error || 'Intake audit action failed.'));
+      });
+
+    if (actionType === 'ignored') {
+      runner.ignoreIntakeRecommendation(payload);
+      return;
+    }
+
+    runner.markIntakeIssueReviewed(payload);
+  }
+
+  function handleIntakeOperationalLinkSave_(button) {
+    const form = button.closest('[data-intake-link-form]');
+
+    if (!form || button.disabled) {
+      return;
+    }
+
+    const input = form.querySelector('[data-intake-link-url]');
+    const message = form.querySelector('[data-intake-link-message]');
+    const url = input ? String(input.value || '').trim() : '';
+    const payload = {
+      claimId: form.getAttribute('data-claim-id') || '',
+      claimNumber: form.getAttribute('data-claim-number') || '',
+      linkType: form.getAttribute('data-link-type') || '',
+      url: url
+    };
+
+    if (!payload.claimId) {
+      setIntakeLinkFormMessage_(message, 'Claim ID is required.', true);
+      return;
+    }
+
+    if (!payload.linkType) {
+      setIntakeLinkFormMessage_(message, 'Link type is required.', true);
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(url)) {
+      setIntakeLinkFormMessage_(message, 'URL must begin with https:// or http://.', true);
+      return;
+    }
+
+    button.disabled = true;
+    setIntakeLinkFormMessage_(message, 'Saving operational link...', false);
+    setText_('intakeStatusLine', 'Saving operational link...');
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        button.disabled = false;
+        const responseMessage = response && response.message ? response.message : 'Operational link save completed.';
+
+        setIntakeLinkFormMessage_(message, responseMessage, response && response.status === 'Error');
+        setText_('intakeStatusLine', responseMessage);
+
+        if (response && (response.success || response.status === 'Duplicate')) {
+          loadIntakeWorkspaceSummary_();
+        }
+      })
+      .withFailureHandler(function(error) {
+        button.disabled = false;
+        const errorMessage = error && error.message ? error.message : String(error || 'Operational link save failed.');
+        setIntakeLinkFormMessage_(message, errorMessage, true);
+        renderIntakeWorkspaceError_(errorMessage);
+      })
+      .saveIntakeOperationalLink(payload);
+  }
+
+  function clearIntakeOperationalLinkForm_(button) {
+    const form = button.closest('[data-intake-link-form]');
+
+    if (!form) {
+      return;
+    }
+
+    const input = form.querySelector('[data-intake-link-url]');
+    const message = form.querySelector('[data-intake-link-message]');
+
+    if (input) {
+      input.value = '';
+    }
+
+    setIntakeLinkFormMessage_(message, '', false);
+  }
+
+  function setIntakeLinkFormMessage_(element, value, isError) {
+    if (!element) {
+      return;
+    }
+
+    element.textContent = value || '';
+    element.classList.toggle('is-error', !!isError);
+  }
+
+  function renderIntakeWorkspace_(payload) {
+    const health = payload && payload.workspaceHealth ? payload.workspaceHealth : {};
+
+    setText_('workspaceSourceService', payload && payload.sourceService ? payload.sourceService : 'insurance-intake-automation');
+    setText_('workspaceLastChecked', formatIntakeDateTime_(health.lastCheckedAt || payload.generatedAt));
+    setText_('workspaceHealthMessage', health.message || '');
+    setText_('intakeStatusLine', health.message || 'Intake workspace loaded.');
+
+    const healthStatus = document.getElementById('workspaceHealthStatus');
+    if (healthStatus) {
+      healthStatus.textContent = health.status || 'Unavailable';
+      healthStatus.className = 'intake-health-value ' + getIntakeHealthClass_(health.status);
+    }
+
+    setIntakeKpiValue_('queueCount', health.queueCount);
+    setIntakeKpiValue_('pendingReviewCount', health.pendingReviewCount);
+    setIntakeKpiValue_('errorCount', health.errorCount);
+    setIntakeKpiValue_('duplicateCount', health.duplicateCount);
+    setIntakeKpiValue_('retryBacklogCount', health.retryBacklogCount);
+    setIntakeKpiValue_('pendingClaimFolderCount', health.pendingClaimFolderCount);
+
+    renderIntakeWorkflows_(payload && payload.workflows ? payload.workflows : {});
+    renderIntakeIssues_(payload && payload.unresolvedItems ? payload.unresolvedItems : []);
+    renderRecentlyProcessedClaims_(payload && payload.recentlyProcessed ? payload.recentlyProcessed : []);
+    renderIntakeActions_(payload && payload.availableActions ? payload.availableActions : []);
+    renderPendingClaimFolders_(payload && payload.pendingClaimFolders ? payload.pendingClaimFolders : {});
+    renderIntakeDiagnostics_(
+      payload && payload.diagnostics ? payload.diagnostics : {},
+      payload && payload.audit ? payload.audit : {},
+      payload && payload.operationalLinkEnrichment ? payload.operationalLinkEnrichment : {}
+    );
+    markActiveIntakeFilter_();
+  }
+
+  function renderRecentlyProcessedClaims_(items) {
+    const container = document.getElementById('recentlyProcessedClaimsList');
+    if (!container) {
+      return;
+    }
+
+    const claims = Array.isArray(items) ? items : [];
+
+    if (!claims.length) {
+      container.innerHTML = '<div class="intake-empty-state">No recently processed claims returned.</div>';
+      return;
+    }
+
+    container.innerHTML = claims.map(function(item) {
+      const title = item.displayName || item.customerName || item.claimId || 'Recently processed claim';
+      const meta = [
+        item.claimNumber ? 'Claim ' + item.claimNumber : '',
+        item.lifecycleState || '',
+        item.ownershipArea || '',
+        item.lastActivityAt ? formatIntakeDateTime_(item.lastActivityAt) : ''
+      ].filter(Boolean).join(' | ');
+      const missingTypes = Array.isArray(item.missingLinkTypes) ? item.missingLinkTypes : [];
+      const resolvedTypes = Array.isArray(item.resolvedLinkTypes) ? item.resolvedLinkTypes : [];
+      const linkSummary = [
+        missingTypes.length ? missingTypes.length + ' missing link(s)' : '',
+        resolvedTypes.length ? resolvedTypes.length + ' added link(s)' : ''
+      ].filter(Boolean).join(' | ');
+      const claimButton = item.claimId
+        ? '<button class="intake-inline-button" type="button" data-intake-claim-id="' + escapeHtml_(item.claimId) + '">Open Claim</button>'
+        : '';
+
+      return [
+        '<div class="intake-detail-row">',
+          '<div class="intake-detail-title">' + escapeHtml_(title) + '</div>',
+          meta ? '<div class="intake-detail-meta">' + escapeHtml_(meta) + '</div>' : '',
+          linkSummary ? '<div class="intake-detail-note">' + escapeHtml_(linkSummary) + '</div>' : '',
+          '<div class="intake-detail-actions">',
+            claimButton,
+          '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+  }
+
+  function renderIntakeWorkflows_(workflows) {
+    const container = document.getElementById('intakeWorkflowList');
+    if (!container) {
+      return;
+    }
+
+    const items = ['insuranceIntake', 'asbestos', 'itel']
+      .map(function(key) { return workflows[key]; })
+      .filter(function(item) { return !!item; });
+
+    if (!items.length) {
+      container.innerHTML = '<div class="intake-empty-state">No workflow health returned.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(function(workflow) {
+      return [
+        '<article class="intake-workflow-row">',
+          '<div>',
+            '<div class="intake-workflow-title">' + escapeHtml_(workflow.name || workflow.key || 'Workflow') + '</div>',
+            '<div class="intake-workflow-meta">Checked ' + escapeHtml_(formatIntakeDateTime_(workflow.checkedAt)) + '</div>',
+          '</div>',
+          '<div class="intake-workflow-health ' + getIntakeHealthClass_(workflow.health) + '">' + escapeHtml_(workflow.health || 'Unavailable') + '</div>',
+          '<div class="intake-workflow-metrics">',
+            renderIntakeMiniMetric_('Queue', workflow.queueCount),
+            renderIntakeMiniMetric_('Review', workflow.reviewCount),
+            renderIntakeMiniMetric_('Errors', workflow.errorCount),
+            renderIntakeMiniMetric_('Retry', workflow.retryBacklogCount),
+            renderIntakeMiniMetric_('Folders', workflow.pendingClaimFolderCount),
+          '</div>',
+        '</article>'
+      ].join('');
+    }).join('');
+  }
+
+  function renderIntakeMiniMetric_(label, value) {
+    return [
+      '<span class="intake-mini-metric">',
+        '<span>' + escapeHtml_(label) + '</span>',
+        '<strong>' + escapeHtml_(formatIntakeCount_(value)) + '</strong>',
+      '</span>'
+    ].join('');
+  }
+
+  function renderIntakeIssues_(items) {
+    const container = document.getElementById('intakeIssueList');
+    const countElement = document.getElementById('intakeIssueCount');
+    if (!container) {
+      return;
+    }
+
+    const allItems = Array.isArray(items) ? items : [];
+    const visibleItems = activeIntakeIssueFilter === 'all'
+      ? allItems
+      : allItems.filter(function(item) {
+          return item.filterType === activeIntakeIssueFilter || item.issueType === activeIntakeIssueFilter;
+        });
+
+    if (countElement) {
+      countElement.textContent = visibleItems.length + ' of ' + allItems.length + ' cards';
+    }
+
+    if (!allItems.length) {
+      container.innerHTML = '<div class="intake-empty-state intake-empty-state-healthy">No unresolved intake issues.</div>';
+      return;
+    }
+
+    if (!visibleItems.length) {
+      container.innerHTML = '<div class="intake-empty-state">No unresolved intake issues match this filter.</div>';
+      return;
+    }
+
+    container.innerHTML = visibleItems.map(function(item) {
+      const workflowText = (item.workflows || [])
+        .map(function(workflow) {
+          return workflow.name + ': ' + workflow.count;
+        })
+        .join(' | ');
+      const details = item.issueType === 'missing-operational-link'
+        ? renderIntakeOperationalLinkDetails_(item)
+        : (item.detailItems && item.detailItems.length
+        ? renderIntakeIssueDetails_(item.detailItems)
+        : '');
+      const claimAction = item.claimId
+        ? '<button class="intake-inline-button" type="button" data-intake-claim-id="' + escapeHtml_(item.claimId) + '">Open related claim</button>'
+        : '';
+      const contextHtml = renderIntakeClaimContext_(item);
+      const auditActions = renderIntakeAuditButtons_(item);
+
+      return [
+        '<article class="intake-issue-card ' + escapeHtml_(item.severity || 'warning') + '">',
+          '<div class="intake-issue-top">',
+            '<div>',
+              '<div class="intake-issue-title">' + escapeHtml_(item.title || 'Issue') + '</div>',
+              '<div class="intake-issue-source">' + escapeHtml_(item.sourceWorkflowName || item.sourceWorkflow || 'Workflow') + '</div>',
+              '<div class="intake-issue-message">' + escapeHtml_(item.message || '') + '</div>',
+            '</div>',
+            '<div class="intake-issue-count">' + escapeHtml_(formatIntakeCount_(item.count)) + '</div>',
+          '</div>',
+          workflowText ? '<div class="intake-issue-workflows">' + escapeHtml_(workflowText) + '</div>' : '',
+          contextHtml,
+          details,
+          '<div class="intake-issue-actions">',
+            '<button class="intake-inline-button" type="button" data-intake-lens="' + escapeHtml_(getIntakeIssueLensId_(item)) + '">Open Claims Lens</button>',
+            claimAction,
+            auditActions,
+          '</div>',
+        '</article>'
+      ].join('');
+    }).join('');
+  }
+
+  function markActiveIntakeFilter_() {
+    document.querySelectorAll('[data-intake-filter]').forEach(function(button) {
+      button.classList.toggle('is-active', button.getAttribute('data-intake-filter') === activeIntakeIssueFilter);
+    });
+  }
+
+  function renderIntakeClaimContext_(item) {
+    if (!item || !item.claimId) {
+      return '';
+    }
+
+    const displayName = item.displayName || item.customerName || '';
+
+    return [
+      '<div class="intake-claim-context">',
+        '<span>Claim ID</span>',
+        '<strong>' + escapeHtml_(item.claimId) + '</strong>',
+        displayName ? '<span>' + escapeHtml_(displayName) + '</span>' : '',
+      '</div>'
+    ].join('');
+  }
+
+  function renderIntakeAuditButtons_(item) {
+    if (!item) {
+      return '';
+    }
+
+    if (item.canReview === false && item.canIgnore !== true) {
+      return '';
+    }
+
+    const issueKey = getIntakeAuditIssueKey_(item);
+
+    if (!issueKey) {
+      return '';
+    }
+
+    const attrs = [
+      'data-issue-key="' + escapeHtml_(issueKey) + '"',
+      'data-issue-type="' + escapeHtml_(item.issueType || item.filterType || '') + '"',
+      'data-source-workflow="' + escapeHtml_(item.sourceWorkflow || item.workflow || item.vendor || '') + '"',
+      'data-issue-title="' + escapeHtml_(item.title || item.subject || item.customerName || item.claimId || '') + '"'
+    ].join(' ');
+    const buttons = [];
+
+    if (item.canReview !== false) {
+      buttons.push('<button class="intake-inline-button intake-audit-button" type="button" data-intake-audit-action="reviewed" aria-disabled="false" ' + attrs + '>Mark Reviewed</button>');
+    }
+
+    if (item.canIgnore || item.issueType === 'recommendation' || item.filterType === 'recommendation') {
+      buttons.push('<button class="intake-inline-button intake-audit-button" type="button" data-intake-audit-action="ignored" aria-disabled="false" ' + attrs + '>Ignore Recommendation</button>');
+    }
+
+    return buttons.join('');
+  }
+
+  function getIntakeAuditIssueKey_(item) {
+    if (!item) {
+      return '';
+    }
+
+    if (item.issueKey) {
+      return String(item.issueKey);
+    }
+
+    const keyParts = [
+      item.issueType || item.filterType || 'intake-item',
+      item.sourceWorkflow || item.workflow || item.vendor || '',
+      item.claimId || item.claimNumber || '',
+      item.threadId || item.messageId || '',
+      item.subject || item.title || item.customerName || ''
+    ].map(function(value) {
+      return String(value || '').trim();
+    }).filter(Boolean);
+
+    return keyParts.join('|');
+  }
+
+  function renderIntakeOperationalLinkDetails_(item) {
+    const missingTypes = Array.isArray(item.missingLinkTypes) ? item.missingLinkTypes : [];
+    const resolvedTypes = Array.isArray(item.resolvedLinkTypes) ? item.resolvedLinkTypes : [];
+    const meta = [
+      item.lifecycleState || '',
+      item.ownershipArea || '',
+      item.carrierName || '',
+      item.claimNumber ? 'Claim number ' + item.claimNumber : ''
+    ].filter(Boolean).join(' | ');
+
+    return [
+      '<div class="intake-issue-details intake-link-details">',
+        meta ? '<div class="intake-detail-meta">' + escapeHtml_(meta) + '</div>' : '',
+        '<div class="intake-detail-note">Operational links stabilize the claim record; they do not block intake processing.</div>',
+        // removed resolvedTypes badge rendering
+        missingTypes.map(function(linkType) {
+          return renderIntakeOperationalLinkForm_(item, linkType);
+        }).join(''),
+      '</div>'
+    ].join('');
+  }
+
+
+  function renderIntakeOperationalLinkForm_(item, linkType) {
+    return [
+      '<div class="intake-link-form" data-intake-link-form ',
+        'data-claim-id="' + escapeHtml_(item.claimId || '') + '" ',
+        'data-claim-number="' + escapeHtml_(item.claimNumber || '') + '" ',
+        'data-link-type="' + escapeHtml_(linkType.id || linkType.storageValue || '') + '">',
+        '<div class="intake-link-form-header">',
+          '<strong>' + escapeHtml_(linkType.missingLabel || 'Missing Link') + '</strong>',
+          '<span>' + escapeHtml_(item.claimId || '') + '</span>',
+        '</div>',
+        '<div class="intake-link-form-row">',
+          '<input class="intake-link-input" type="url" inputmode="url" placeholder="https://..." data-intake-link-url>',
+          '<button class="intake-inline-button" type="button" data-intake-link-save>' + escapeHtml_(linkType.actionLabel || 'Add Link') + '</button>',
+          '<button class="intake-inline-button" type="button" data-intake-link-clear>Clear</button>',
+        '</div>',
+        '<div class="intake-link-message" data-intake-link-message></div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderIntakeIssueDetails_(items) {
+    const visibleItems = items.slice(0, 5);
+    const hiddenCount = Math.max(items.length - visibleItems.length, 0);
+
+    return [
+      '<div class="intake-issue-details">',
+        visibleItems.map(function(item) {
+          const title = item.claimId || item.claimNumber || item.customerName || item.subject || 'Pending folder item';
+          const meta = [
+            item.workflow || item.vendor || '',
+            item.claimMatchStatus || '',
+            item.customerName || '',
+            item.subject || ''
+          ].filter(Boolean).join(' | ');
+          const claimButton = item.claimId
+            ? '<button class="intake-inline-button" type="button" data-intake-claim-id="' + escapeHtml_(item.claimId) + '">Open Claim</button>'
+            : '';
+
+          return [
+            '<div class="intake-detail-row">',
+              '<div class="intake-detail-title">' + escapeHtml_(title) + '</div>',
+              '<div class="intake-detail-meta">' + escapeHtml_(meta) + '</div>',
+              item.recommendedNextStep ? '<div class="intake-detail-note">' + escapeHtml_(item.recommendedNextStep) + '</div>' : '',
+              '<div class="intake-detail-actions">',
+                claimButton,
+                renderIntakeAuditButtons_(item),
+              '</div>',
+            '</div>'
+          ].join('');
+        }).join(''),
+        hiddenCount > 0 ? '<div class="intake-detail-more">+' + hiddenCount + ' more pending folder items</div>' : '',
+      '</div>'
+    ].join('');
+  }
+
+  function renderIntakeActions_(actions) {
+    const container = document.getElementById('intakeActionList');
+    if (!container) {
+      return;
+    }
+
+    if (!actions || !actions.length) {
+      container.innerHTML = '<div class="intake-empty-state">No actions returned.</div>';
+      return;
+    }
+
+    container.innerHTML = actions.map(function(action) {
+      const disabled = action.enabled === false ? ' disabled' : '';
+      const note = action.enabled === false
+        ? 'Future action'
+        : getActionNote_(action);
+
+      return [
+        '<button class="intake-action-button" type="button" data-intake-action="' + escapeHtml_(action.id || '') + '"' + disabled + '>',
+          '<span>' + escapeHtml_(action.label || action.id || 'Action') + '</span>',
+          '<small>' + escapeHtml_(note) + '</small>',
+        '</button>'
+      ].join('');
+    }).join('');
+  }
+
+  function getActionNote_(action) {
+    if (action.kind === 'navigation') {
+      return 'Open workspace';
+    }
+
+    if (action.kind === 'read') {
+      return 'Read-only refresh';
+    }
+
+    if (action.kind === 'process') {
+      return 'Existing process endpoint';
+    }
+
+    return action.kind || '';
+  }
+
+  function renderPendingClaimFolders_(inspection) {
+    const container = document.getElementById('pendingClaimFolderList');
+    if (!container) {
+      return;
+    }
+
+    const groups = inspection && Array.isArray(inspection.groups)
+      ? inspection.groups
+      : [];
+    const visibleGroups = groups.filter(function(group) {
+      return group && group.count > 0;
+    });
+
+    if (!visibleGroups.length) {
+      container.innerHTML = '<div class="intake-empty-state">No pending claim folders.</div>';
+      return;
+    }
+
+    container.innerHTML = visibleGroups.map(function(group) {
+      return [
+        '<section class="intake-pending-group">',
+          '<div class="intake-pending-group-header">',
+            '<strong>' + escapeHtml_(group.name || group.key || 'Workflow') + '</strong>',
+            '<span>' + escapeHtml_(formatIntakeCount_(group.count)) + '</span>',
+          '</div>',
+          (group.items || []).slice(0, 8).map(renderPendingClaimFolderItem_).join(''),
+        '</section>'
+      ].join('');
+    }).join('');
+  }
+
+  function renderPendingClaimFolderItem_(item) {
+    const title = item.claimId || item.claimNumber || item.customerName || item.subject || 'Pending claim folder';
+    const meta = [
+      item.workflow || '',
+      item.lastMessageDate ? formatIntakeDateTime_(item.lastMessageDate) : '',
+      item.claimMatchStatus || ''
+    ].filter(Boolean).join(' | ');
+    const claimContext = item.claimId
+      ? '<div class="intake-claim-context"><span>Claim ID</span><strong>' + escapeHtml_(item.claimId) + '</strong>' + (item.displayName ? '<span>' + escapeHtml_(item.displayName) + '</span>' : '') + '</div>'
+      : '';
+    const claimButton = item.claimId
+      ? '<button class="intake-inline-button" type="button" data-intake-claim-id="' + escapeHtml_(item.claimId) + '">Open Claim</button>'
+      : '';
+
+    return [
+      '<div class="intake-detail-row">',
+        '<div class="intake-detail-title">' + escapeHtml_(title) + '</div>',
+        '<div class="intake-detail-meta">' + escapeHtml_(meta) + '</div>',
+        '<div class="intake-detail-subject">' + escapeHtml_(item.subject || '') + '</div>',
+        item.recommendedNextStep ? '<div class="intake-detail-note">' + escapeHtml_(item.recommendedNextStep) + '</div>' : '',
+        claimContext,
+        '<div class="intake-detail-actions">',
+          claimButton,
+          renderIntakeAuditButtons_(item),
+        '</div>',
+      '</div>'
+    ].join('');
+  }
+
+  function renderIntakeDiagnostics_(diagnostics, audit, enrichment) {
+    const container = document.getElementById('intakeDiagnosticsPanel');
+    if (!container) {
+      return;
+    }
+
+    const helperFunctions = diagnostics && diagnostics.helperFunctions ? diagnostics.helperFunctions : {};
+    const helperCount = Object.keys(helperFunctions).length;
+
+    container.innerHTML = [
+      '<div class="intake-diagnostic-row"><span>Status</span><strong>' + escapeHtml_(diagnostics.status || 'Unknown') + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Phase</span><strong>' + escapeHtml_(diagnostics.phase || '-') + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Checked</span><strong>' + escapeHtml_(formatIntakeDateTime_(diagnostics.checkedAt)) + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Helpers</span><strong>' + escapeHtml_(helperCount) + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Reviewed</span><strong>' + escapeHtml_(formatIntakeCount_(audit.reviewedCount || 0)) + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Ignored</span><strong>' + escapeHtml_(formatIntakeCount_(audit.ignoredCount || 0)) + '</strong></div>',
+      '<div class="intake-diagnostic-row"><span>Missing Links</span><strong>' + escapeHtml_(formatIntakeCount_(enrichment.missingLinkCount || 0)) + '</strong></div>'
+    ].join('');
+  }
+
+  function renderIntakeWorkspaceError_(message) {
+    setText_('intakeStatusLine', message || 'Intake workspace failed to load.');
+    setText_('workspaceHealthStatus', 'Unavailable');
+    setText_('workspaceHealthMessage', 'Insurance intake service could not be reached.');
+
+    const statusElement = document.getElementById('workspaceHealthStatus');
+    if (statusElement) {
+      statusElement.className = 'intake-health-value is-unavailable';
+    }
+
+    const issueList = document.getElementById('intakeIssueList');
+    if (issueList) {
+      issueList.innerHTML = '<div class="intake-empty-state">Intake workspace data failed to load.</div>';
+    }
+  }
+
+  function setIntakeLoadingState_(isLoading, message) {
+    const refreshButton = document.getElementById('refreshIntakeButton');
+    const runButton = document.getElementById('runIntakeButton');
+
+    if (refreshButton) {
+      refreshButton.disabled = isLoading;
+    }
+
+    if (runButton) {
+      runButton.disabled = isLoading;
+    }
+
+    if (message) {
+      setText_('intakeStatusLine', message);
+    }
+  }
+
+  function setIntakeKpiValue_(kpiName, value) {
+    const element = document.querySelector('[data-intake-kpi="' + kpiName + '"]');
+    if (element) {
+      element.textContent = formatIntakeCount_(value);
+    }
+  }
+
+  function setText_(id, value) {
+    const element = document.getElementById(id);
+    if (element) {
+      element.textContent = value === undefined || value === null || value === '' ? '-' : String(value);
+    }
+  }
+
+  function openIntakeClaim_(claimId) {
+    if (!claimId) {
+      return;
+    }
+
+    openIntakeRoute_('?view=claimShell&claimId=' + encodeURIComponent(claimId));
+  }
+
+  function openIntakeClaimsLens_(lensId) {
+    const safeLensId = lensId || 'needsAttention';
+    openIntakeRoute_('?view=claimShell&lensId=' + encodeURIComponent(safeLensId));
+  }
+
+  function getIntakeIssueLensId_(item) {
+    const type = String((item && (item.filterType || item.issueType || item.title)) || '').toLowerCase();
+
+    if (type.indexOf('missing') !== -1 || type.indexOf('pending claim folder') !== -1 || type.indexOf('pending') !== -1) {
+      return 'needsAttention';
+    }
+
+    if (type.indexOf('duplicate') !== -1 || type.indexOf('review') !== -1 || type.indexOf('retry') !== -1 || type.indexOf('error') !== -1) {
+      return 'needsAttention';
+    }
+
+    return 'needsAttention';
+  }
+
+  function openIntakeRoute_(route) {
+    const normalizedRoute = route && route.charAt(0) === '?' ? route : '?' + String(route || '').replace(/^\?/, '');
+    const targetUrl = buildIntakeRouteUrl_(normalizedRoute);
+
+    try {
+      window.open(targetUrl, '_blank');
+    } catch (error) {
+      window.location.href = targetUrl;
+    }
+  }
+
+  function buildIntakeRouteUrl_(normalizedRoute) {
+    if (window.RAINBOW_DASHBOARD_WEB_APP_URL) {
+      return window.RAINBOW_DASHBOARD_WEB_APP_URL + normalizedRoute;
+    }
+
+    if (window.location && window.location.origin && window.location.pathname) {
+      return window.location.origin + window.location.pathname + normalizedRoute;
+    }
+
+    return normalizedRoute;
+  }
+
+  function getIntakeHealthClass_(health) {
+    const value = String(health || '').toLowerCase();
+
+    if (value === 'healthy') {
+      return 'is-healthy';
+    }
+
+    if (value === 'warning') {
+      return 'is-warning';
+    }
+
+    if (value === 'critical') {
+      return 'is-critical';
+    }
+
+    return 'is-unavailable';
+  }
+
+  function formatIntakeCount_(value) {
+    const numberValue = Number(value || 0);
+
+    if (isNaN(numberValue)) {
+      return '0';
+    }
+
+    return numberValue.toLocaleString();
+  }
+
+  function formatIntakeDateTime_(value) {
+    if (!value) {
+      return '-';
+    }
+
+    const date = new Date(value);
+
+    if (isNaN(date.getTime())) {
+      return String(value);
+    }
+
+    return date.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
+  function escapeHtml_(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+</script>

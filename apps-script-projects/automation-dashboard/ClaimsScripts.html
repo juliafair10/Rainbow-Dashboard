@@ -1,5 +1,9 @@
 <script>
   const claimsWorkspaceCache = {};
+  let activeClaimsWorkspacePayload = null;
+  let activeClaimsRouteContext = {};
+  let selectedClaimId = '';
+
   document.addEventListener('DOMContentLoaded', function() {
     initializeClaimsWorkspace();
   });
@@ -30,6 +34,7 @@
     markActiveLens_(routeContext.lensId);
 
     initializeLensButtons();
+    initializeClaimsSearch();
 
     loadClaimsWorkspace(routeContext);
 
@@ -56,7 +61,7 @@
       params.set('view', 'claimShell');
       params.set('claimId', routeContext.claimId);
     } else {
-      params.set('view', 'claimsShell');
+      params.set('view', 'claimShell');
       params.set('lensId', (routeContext && routeContext.lensId) || 'all');
 
       if (routeContext && routeContext.ownership) {
@@ -87,28 +92,51 @@
           lensId: lensId,
           ownership: '',
           condition: '',
-          claimId: ''
+          claimId: '',
+          compliance: ''
         };
 
+        selectedClaimId = '';
         markActiveLens_(lensId);
         updateClaimsRouteContext_(routeContext);
         window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
 
         const stream = document.getElementById('claimsStream');
         const panel = document.getElementById('claimDetailPanel');
+        const searchInput = document.getElementById('claimsSearch');
+
+        if (searchInput) {
+          searchInput.value = '';
+        }
 
         if (stream) {
           stream.innerHTML = '<div class="claims-loading">Loading ' + escapeHtml(lensId) + ' claims...</div>';
         }
 
         if (panel) {
-          panel.innerHTML = '<div class="claims-empty-state">Select a claim to view details.</div>';
+          panel.innerHTML = '<div class="claims-loading">Loading queue context...</div>';
         }
 
         loadClaimsWorkspace(routeContext);
 
         return false;
       });
+    });
+  }
+
+  function initializeClaimsSearch() {
+    const searchInput = document.getElementById('claimsSearch');
+
+    if (!searchInput) {
+      return;
+    }
+
+    searchInput.addEventListener('input', function() {
+      if (!activeClaimsWorkspacePayload) {
+        return;
+      }
+
+      renderClaimsWorkspace(activeClaimsWorkspacePayload, searchInput.value || '');
     });
   }
 
@@ -127,7 +155,7 @@
 
     const pseudoRoute = routeContext.claimId
       ? '?view=claimShell&claimId=' + encodeURIComponent(routeContext.claimId)
-      : '?view=claimsShell&lensId=' + encodeURIComponent(routeContext.lensId || 'all');
+      : '?view=claimShell&lensId=' + encodeURIComponent(routeContext.lensId || 'all');
     routeContextElement.textContent = pseudoRoute;
   }
 
@@ -141,10 +169,17 @@
   }
 
   function loadClaimsWorkspace(routeContext) {
+    routeContext = routeContext || {};
+    activeClaimsRouteContext = routeContext;
+    selectedClaimId = routeContext.claimId || '';
+
     const cacheKey = getClaimsCacheKey_(routeContext || {});
+    const searchInput = document.getElementById('claimsSearch');
+    const searchQuery = searchInput ? searchInput.value || '' : '';
 
     if (claimsWorkspaceCache[cacheKey]) {
-      renderClaimsWorkspace(claimsWorkspaceCache[cacheKey]);
+      activeClaimsWorkspacePayload = claimsWorkspaceCache[cacheKey];
+      renderClaimsWorkspace(activeClaimsWorkspacePayload, searchQuery);
 
       if (routeContext && routeContext.claimId) {
         loadClaimDetail(routeContext.claimId);
@@ -156,7 +191,8 @@
     google.script.run
       .withSuccessHandler(function(payload) {
         claimsWorkspaceCache[cacheKey] = payload;
-        renderClaimsWorkspace(payload);
+        activeClaimsWorkspacePayload = payload;
+        renderClaimsWorkspace(payload, searchQuery);
 
         if (routeContext && routeContext.claimId) {
           loadClaimDetail(routeContext.claimId);
@@ -166,61 +202,39 @@
       .getClaimsWorkspacePageData(routeContext);
   }
 
-  function renderClaimsWorkspace(payload) {
+  function renderClaimsWorkspace(payload, searchQuery) {
     const stream = document.getElementById('claimsStream');
     const claimsList = payload && payload.claimsList ? payload.claimsList : payload;
+    const normalizedSearchQuery = String(searchQuery || '').trim();
+
+    activeClaimsWorkspacePayload = payload;
 
     if (!claimsList || !Array.isArray(claimsList.groups)) {
       stream.innerHTML = '<div class="claims-empty-state">No claims returned.</div>';
       return;
     }
 
+    updateLensCounts_(payload);
+
+    const visibleClaimsList = filterClaimsListForSearch_(claimsList, normalizedSearchQuery);
+    const visibleGroups = visibleClaimsList.groups || [];
     let html = '';
 
-    claimsList.groups.forEach(function(group) {
+    if (!visibleGroups.length) {
+      stream.innerHTML = '<div class="claims-empty-state">No claims match this search.</div>';
+      renderQueueIntelligencePanel_(payload, visibleClaimsList, normalizedSearchQuery);
+      return;
+    }
+
+    visibleGroups.forEach(function(group) {
       html += '<div class="claims-group">';
+      html += '<div class="claims-group-header">';
       html += '<h3>' + escapeHtml(group.groupLabel || 'Claims') + '</h3>';
+      html += '<span class="claims-group-count">' + escapeHtml((group.claims || []).length) + '</span>';
+      html += '</div>';
 
       (group.claims || []).forEach(function(claim) {
-        html += '<div class="claim-row" data-claim-id="' + escapeHtml(claim.claimId || '') + '">';
-        const openRequirements = getClaimOpenRequirementsForDisplay_(claim);
-        const nextAction = getClaimNextActionForDisplay_(claim);
-        const attentionReason = claim.attentionReason || claim.healthReason || '';
-        html += '<div class="claim-row-identity"><strong>' + escapeHtml(claim.displayName || claim.claimId || '') + '</strong><br><span>' + escapeHtml(claim.jobNumber || '') + '</span></div>';
-        html += '<div class="claim-row-lifecycle">' + escapeHtml(claim.lifecycleState || '') + '</div>';
-        html += '<div class="claim-row-health">' + escapeHtml(claim.healthLevel || '') + ' • ' + escapeHtml(claim.ownershipArea || '') + '</div>';
-        html += '<div class="claim-row-conditions">';
-
-        if ((claim.activeConditions || []).length) {
-          html += '<div>' + escapeHtml(claim.activeConditions.join(', ')) + '</div>';
-        } else {
-          html += '<div>No active conditions</div>';
-        }
-
-        html += renderClaimOperationalAlertBadges_(claim);
-        html += '</div>';
-
-        if (openRequirements.length) {
-          html += '<div class="claim-row-requirements"><strong>Open Requirements:</strong> ' +
-            escapeHtml(openRequirements.slice(0, 2).join(' • ')) +
-            '</div>';
-        }
-
-        if (nextAction) {
-          html += '<div class="claim-row-action"><strong>Next Action:</strong> ' +
-            escapeHtml(nextAction) +
-            '</div>';
-        }
-
-        if (attentionReason) {
-          html += '<div class="claim-row-attention">' + escapeHtml(attentionReason) + '</div>';
-        }
-
-        if (claim.lastMeaningfulActivityDate) {
-          html += '<div class="claim-row-activity">Last Activity: ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
-        }
-
-        html += '</div>';
+        html += renderClaimRow_(claim);
       });
 
       html += '</div>';
@@ -241,6 +255,8 @@
             compliance: ''
           };
 
+          selectedClaimId = claimId;
+          activeClaimsRouteContext = routeContext;
           markSelectedClaim_(claimId);
           updateClaimsRouteContext_(routeContext);
           window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
@@ -248,6 +264,343 @@
         });
       }
     );
+
+    if (selectedClaimId) {
+      markSelectedClaim_(selectedClaimId);
+    } else if (!(activeClaimsRouteContext && activeClaimsRouteContext.claimId)) {
+      renderQueueIntelligencePanel_(payload, visibleClaimsList, normalizedSearchQuery);
+    }
+  }
+
+  function renderClaimRow_(claim) {
+    const openRequirements = getClaimOpenRequirementsForDisplay_(claim);
+    const nextAction = getClaimNextActionForDisplay_(claim);
+    const attentionReason = claim.attentionReason || claim.healthReason || '';
+    const rowSeverityClass = getClaimRowSeverityClass_(claim.highestAlertSeverity);
+    let html = '<div class="claim-row ' + rowSeverityClass + '" data-claim-id="' + escapeHtml(claim.claimId || '') + '">';
+
+    html += '<div class="claim-row-identity"><strong>' +
+      escapeHtml(claim.displayName || claim.claimId || '') +
+      '</strong><br><span>' +
+      escapeHtml(claim.jobNumber || '') +
+      '</span></div>';
+    html += '<div class="claim-row-health">';
+    html += '<span class="claim-row-health-pill">' + escapeHtml(claim.healthLevel || 'Unrated') + '</span>';
+    html += '<span class="claim-row-owner">' + escapeHtml(claim.ownershipArea || 'Unassigned') + '</span>';
+    html += '</div>';
+    html += '<div class="claim-row-conditions">';
+    html += renderClaimConditionPills_(claim.activeConditions || []);
+    html += renderClaimOperationalAlertBadges_(claim);
+    html += '</div>';
+
+    if (openRequirements.length) {
+      html += '<div class="claim-row-requirements">';
+      html += '<span class="claim-row-label">Open Requirements</span>';
+      html += '<strong>' + escapeHtml(openRequirements.slice(0, 2).join(' • ')) + '</strong>';
+
+      if (openRequirements.length > 2) {
+        html += '<small>+' + escapeHtml(openRequirements.length - 2) + ' more</small>';
+      }
+
+      html += '</div>';
+    }
+
+    if (nextAction) {
+      html += '<div class="claim-row-action">';
+      html += '<span class="claim-row-label">Next Action</span>';
+      html += '<strong>' + escapeHtml(nextAction) + '</strong>';
+      html += '</div>';
+    }
+
+    if (attentionReason) {
+      html += '<div class="claim-row-attention"><span>Why:</span> ' + escapeHtml(attentionReason) + '</div>';
+    }
+
+    if (claim.lastMeaningfulActivityDate) {
+      html += '<div class="claim-row-activity"><span>Last Activity</span> ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
+    }
+
+    html += '</div>';
+
+    return html;
+  }
+
+  function renderClaimConditionPills_(conditions) {
+    const labels = (conditions || []).map(getClaimConditionLabel_).filter(Boolean);
+
+    if (!labels.length) {
+      return '<div class="claim-condition-empty">No active conditions</div>';
+    }
+
+    let html = '<div class="claim-condition-pills">';
+
+    labels.slice(0, 2).forEach(function(label) {
+      html += '<span class="claim-condition-pill">' + escapeHtml(label) + '</span>';
+    });
+
+    if (labels.length > 2) {
+      html += '<span class="claim-condition-pill claim-condition-pill-overflow">+' +
+        escapeHtml(labels.length - 2) +
+        '</span>';
+    }
+
+    html += '</div>';
+
+    return html;
+  }
+
+  function getClaimConditionLabel_(condition) {
+    if (!condition || typeof condition !== 'object') {
+      return condition || '';
+    }
+
+    return condition.Condition_Type ||
+      condition.Condition_Name ||
+      condition.conditionType ||
+      condition.conditionName ||
+      condition.Name ||
+      '';
+  }
+
+  function getClaimRowSeverityClass_(severity) {
+    const normalized = String(severity || '').toLowerCase();
+
+    if (normalized === 'critical' || normalized === 'high') {
+      return 'claim-row-has-high-alert';
+    }
+
+    if (normalized === 'medium') {
+      return 'claim-row-has-medium-alert';
+    }
+
+    if (normalized === 'low' || normalized === 'info') {
+      return 'claim-row-has-low-alert';
+    }
+
+    return '';
+  }
+
+  function updateLensCounts_(payload) {
+    const counts = getLensCountsFromPayload_(payload);
+    const lenses = Array.isArray(payload && payload.availableLenses)
+      ? payload.availableLenses
+      : [];
+
+    document.querySelectorAll('[data-lens]').forEach(function(button) {
+      const lensId = button.getAttribute('data-lens') || 'all';
+      const lens = lenses.find(function(item) {
+        return item.lensId === lensId;
+      }) || {};
+      const label = lens.lensName || button.getAttribute('data-lens-label') || button.textContent.trim();
+      const count = counts[lensId];
+
+      button.setAttribute('data-lens-label', label);
+      button.innerHTML = '<span>' + escapeHtml(label) + '</span>' +
+        (count !== undefined && count !== null
+          ? '<span class="claims-lens-count">' + escapeHtml(count) + '</span>'
+          : '');
+    });
+
+    markActiveLens_((activeClaimsRouteContext && activeClaimsRouteContext.lensId) || 'all');
+  }
+
+  function getLensCountsFromPayload_(payload) {
+    const counts = Object.assign({}, payload && payload.lensCounts ? payload.lensCounts : {});
+
+    if (Array.isArray(payload && payload.availableLenses)) {
+      payload.availableLenses.forEach(function(lens) {
+        if (lens && lens.lensId && lens.count !== undefined && lens.count !== null) {
+          counts[lens.lensId] = lens.count;
+        }
+      });
+    }
+
+    return counts;
+  }
+
+  function filterClaimsListForSearch_(claimsList, searchQuery) {
+    const query = String(searchQuery || '').trim().toLowerCase();
+
+    if (!query) {
+      return claimsList;
+    }
+
+    const terms = query.split(/\s+/).filter(Boolean);
+    const filteredGroups = (claimsList.groups || []).map(function(group) {
+      const filteredClaims = (group.claims || []).filter(function(claim) {
+        return claimMatchesSearch_(claim, terms);
+      });
+
+      return Object.assign({}, group, {
+        claims: filteredClaims
+      });
+    }).filter(function(group) {
+      return (group.claims || []).length > 0;
+    });
+
+    return Object.assign({}, claimsList, {
+      groups: filteredGroups,
+      totalCount: filteredGroups.reduce(function(total, group) {
+        return total + (group.claims || []).length;
+      }, 0)
+    });
+  }
+
+  function claimMatchesSearch_(claim, terms) {
+    const searchableText = [
+      claim.displayName,
+      claim.customerName,
+      claim.claimId,
+      claim.jobNumber,
+      claim.claimNumber,
+      claim.address,
+      claim.ownershipArea,
+      claim.lifecycleState,
+      claim.healthLevel,
+      getSearchListText_(claim.activeConditions),
+      getSearchAlertText_(claim.operationalAlerts),
+      getSearchAlertText_(claim.activeAlerts),
+      getSearchListText_(claim.openRequirements),
+      claim.nextAction
+    ].join(' ').toLowerCase();
+
+    return terms.every(function(term) {
+      return searchableText.indexOf(term) !== -1;
+    });
+  }
+
+  function getSearchListText_(items) {
+    return (items || []).map(function(item) {
+      if (!item || typeof item !== 'object') {
+        return item || '';
+      }
+
+      return Object.keys(item).map(function(key) {
+        return item[key];
+      }).join(' ');
+    }).join(' ');
+  }
+
+  function getSearchAlertText_(alerts) {
+    return (alerts || []).map(function(alert) {
+      if (!alert || typeof alert !== 'object') {
+        return alert || '';
+      }
+
+      return [
+        alert.alertName,
+        alert.alertType,
+        alert.severity,
+        alert.reason,
+        alert.nextStep,
+        alert.Alert_Name,
+        alert.Alert_Type,
+        alert.Severity,
+        alert.Reason,
+        alert.Recommended_Action
+      ].filter(Boolean).join(' ');
+    }).join(' ');
+  }
+
+  function renderQueueIntelligencePanel_(payload, visibleClaimsList, searchQuery) {
+    const panel = document.getElementById('claimDetailPanel');
+
+    if (!panel) {
+      return;
+    }
+
+    const intelligence = payload && payload.queueIntelligence
+      ? payload.queueIntelligence
+      : buildClientQueueIntelligence_(visibleClaimsList || (payload && payload.claimsList));
+    const viewLogic = intelligence.viewLogic || {};
+    const stalestClaim = intelligence.stalestClaim || null;
+    const visibleClaimCount = getVisibleClaimsCount_(visibleClaimsList || (payload && payload.claimsList));
+    let html = '';
+
+    html += '<div class="claim-detail-header">';
+    html += '<h2>Queue Intelligence</h2>';
+    html += '<div class="claim-detail-subtitle">' + escapeHtml(intelligence.lensName || viewLogic.lensName || 'Claims') + '</div>';
+    html += '</div>';
+
+    html += '<div class="claim-detail-section queue-intelligence-section">';
+    html += '<h4>Queue Intelligence</h4>';
+    html += '<div class="queue-metric-grid">';
+    html += renderQueueMetric_('Needs Attention', intelligence.totalClaimsNeedingAttention || 0);
+    html += renderQueueMetric_('Operational Alerts', intelligence.totalOperationalAlerts || 0);
+    html += renderQueueMetric_('Missing Links', intelligence.missingLinkCount || 0);
+    html += renderQueueMetric_('Visible Claims', visibleClaimCount);
+    html += '</div>';
+
+    if (stalestClaim) {
+      html += '<div class="queue-stale-claim">';
+      html += '<strong>Oldest Activity:</strong> ' + escapeHtml(stalestClaim.displayName || stalestClaim.claimId || 'Claim');
+
+      if (stalestClaim.daysSinceMeaningfulActivity !== '' && stalestClaim.daysSinceMeaningfulActivity !== undefined) {
+        html += ' · ' + escapeHtml(stalestClaim.daysSinceMeaningfulActivity) + ' days';
+      }
+
+      html += '</div>';
+    }
+
+    html += '</div>';
+
+    html += '<div class="claim-detail-section">';
+    html += '<h4>View Logic</h4>';
+    html += '<div>' + escapeHtml(viewLogic.summary || ((intelligence.lensName || 'Claims') + ' lens')) + '</div>';
+
+    if (searchQuery) {
+      html += '<div class="queue-view-note">Search: ' + escapeHtml(searchQuery) + '</div>';
+    }
+
+    html += '</div>';
+
+    html += '<div class="claim-detail-section ask-rainbow-placeholder">';
+    html += '<h4>Ask Rainbow</h4>';
+    html += '<div class="ask-rainbow-actions">';
+    html += '<button type="button" disabled>Summarize Queue</button>';
+    html += '<button type="button" disabled>Find Blockers</button>';
+    html += '</div>';
+    html += '</div>';
+
+    panel.innerHTML = html;
+  }
+
+  function renderQueueMetric_(label, value) {
+    return '<div class="queue-metric">' +
+      '<strong>' + escapeHtml(value) + '</strong>' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '</div>';
+  }
+
+  function getVisibleClaimsCount_(claimsList) {
+    return ((claimsList && claimsList.groups) || []).reduce(function(total, group) {
+      return total + ((group.claims || []).length);
+    }, 0);
+  }
+
+  function buildClientQueueIntelligence_(claimsList) {
+    const claims = [];
+
+    ((claimsList && claimsList.groups) || []).forEach(function(group) {
+      claims.push.apply(claims, group.claims || []);
+    });
+
+    return {
+      lensName: claimsList && claimsList.lensName || 'Claims',
+      visibleClaimCount: claims.length,
+      totalClaimsNeedingAttention: 0,
+      totalOperationalAlerts: claims.reduce(function(total, claim) {
+        return total + getClaimOperationalAlertCount_(claim, claim.operationalAlerts || []);
+      }, 0),
+      missingLinkCount: claims.reduce(function(total, claim) {
+        return total + (claim.missingLinks || []).length;
+      }, 0),
+      stalestClaim: null,
+      viewLogic: {
+        lensName: claimsList && claimsList.lensName || 'Claims',
+        summary: (claimsList && claimsList.lensName || 'Claims') + ' lens'
+      }
+    };
   }
 
   function renderClaimOperationalAlertBadges_(claim) {
@@ -321,49 +674,12 @@
       return claim.openRequirements;
     }
 
-    const requirements = [];
-    const conditions = claim && Array.isArray(claim.activeConditions)
-      ? claim.activeConditions
-      : [];
-
-    conditions.forEach(function(condition) {
-      if (condition === 'Carrier Revision Requested') {
-        requirements.push('Respond to carrier revision');
-      }
-
-      if (condition === 'Revision Active') {
-        requirements.push('Continue revision follow-up');
-      }
-
-      if (condition === 'Coverage Pending') {
-        requirements.push('Coverage determination pending');
-      }
-
-      if (condition === 'Waiting on Payment') {
-        requirements.push('Payment follow-up may be needed');
-      }
-    });
-
-    return requirements.filter(function(item, index, array) {
-      return array.indexOf(item) === index;
-    });
+    return [];
   }
 
   function getClaimNextActionForDisplay_(claim) {
     if (claim && claim.nextAction) {
       return claim.nextAction;
-    }
-
-    if (!claim) {
-      return '';
-    }
-
-    if (claim.healthLevel === 'At Risk' || claim.healthLevel === 'Escalated') {
-      return 'Review claim and restore operational cadence';
-    }
-
-    if (Array.isArray(claim.activeConditions) && claim.activeConditions.length) {
-      return 'Review active claim conditions';
     }
 
     return '';
@@ -414,6 +730,7 @@
     const links = detail.externalLinks || [];
     const workflows = detail.relatedWorkflows || [];
     const timelineEvents = getRecentTimelineEvents_(detail);
+    const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
 
     const detailClaimSummary = {
       claimId: detail.claimId || header.claimId || '',
@@ -424,7 +741,10 @@
       activeConditions: header.activeConditions || [],
       openRequirements: header.openRequirements || operational.openRequirements || [],
       nextAction: header.nextAction || operational.nextAction || '',
-      attentionReason: header.attentionReason || operational.attentionReason || header.healthReason || operational.healthReason || ''
+      attentionReason: header.attentionReason || operational.attentionReason || header.healthReason || operational.healthReason || '',
+      operationalAlerts: detailAlerts,
+      alertCount: header.alertCount || detailAlerts.length,
+      highestAlertSeverity: header.highestAlertSeverity || ''
     };
 
     const detailOpenRequirements = getClaimOpenRequirementsForDisplay_(detailClaimSummary);
@@ -440,38 +760,79 @@
 
     html += '<div class="claim-detail-section">';
     html += '<h4>Operational Context</h4>';
-    html += '<div><strong>Health:</strong> ' + escapeHtml(header.healthLevel || '') + '</div>';
-    html += '<div><strong>Ownership:</strong> ' + escapeHtml(header.ownershipArea || '') + '</div>';
+    html += '<div class="claim-detail-key-grid">';
+    html += renderClaimDetailKeyValue_('Health', header.healthLevel || '');
+    html += renderClaimDetailKeyValue_('Ownership', header.ownershipArea || '');
+    html += renderClaimDetailKeyValue_('Lifecycle', header.lifecycleState || '');
+    html += renderClaimDetailKeyValue_('Owner', header.primaryOwner || '');
+    html += '</div>';
 
     if ((header.activeConditions || []).length) {
       html += '<div class="claim-detail-pill-row">';
       header.activeConditions.forEach(function(condition) {
-        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(condition) + '</span>';
+        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(getClaimConditionLabel_(condition)) + '</span>';
       });
       html += '</div>';
     }
 
     html += '</div>';
 
+    if (detailAlerts.length) {
+      html += '<div class="claim-detail-section">';
+      html += '<h4>Operational Alerts</h4>';
+      detailAlerts.forEach(function(alert) {
+        html += '<div class="claim-detail-alert">';
+        html += '<div class="claim-detail-alert-title">';
+        html += '<strong>' + escapeHtml(alert.alertName || alert.alertType || 'Operational Alert') + '</strong>';
+
+        if (alert.severity) {
+          html += '<span class="claim-alert-pill ' +
+            getClaimOperationalAlertSeverityClass_(alert.severity) +
+            '">' +
+            escapeHtml(alert.severity) +
+            '</span>';
+        }
+
+        html += '</div>';
+
+        if (alert.reason) {
+          html += '<div class="claim-detail-alert-reason">' + escapeHtml(alert.reason) + '</div>';
+        }
+
+        if (alert.nextStep) {
+          html += '<small>Next: ' + escapeHtml(alert.nextStep) + '</small>';
+        }
+
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
     if (detailOpenRequirements.length || detailNextAction || detailAttentionReason) {
       html += '<div class="claim-detail-section">';
       html += '<h4>Operational Next Steps</h4>';
 
       if (detailOpenRequirements.length) {
-        html += '<div><strong>Open Requirements</strong></div>';
+        html += '<div class="claim-detail-next-step">';
+        html += '<strong>Open Requirements</strong>';
         detailOpenRequirements.forEach(function(requirement) {
           html += '<div>• ' + escapeHtml(requirement) + '</div>';
         });
+        html += '</div>';
       }
 
       if (detailNextAction) {
-        html += '<div style="margin-top:10px;"><strong>Recommended Next Action</strong></div>';
+        html += '<div class="claim-detail-next-step">';
+        html += '<strong>Recommended Next Action</strong>';
         html += '<div>' + escapeHtml(detailNextAction) + '</div>';
+        html += '</div>';
       }
 
       if (detailAttentionReason) {
-        html += '<div style="margin-top:10px;"><strong>Why this is surfacing</strong></div>';
+        html += '<div class="claim-detail-next-step">';
+        html += '<strong>Why this is surfacing</strong>';
         html += '<div>' + escapeHtml(detailAttentionReason) + '</div>';
+        html += '</div>';
       }
 
       html += '</div>';
@@ -480,16 +841,18 @@
     if (links.length) {
       html += '<div class="claim-detail-section">';
       html += '<h4>External Links</h4>';
+      html += '<div class="claim-detail-link-list">';
       links.forEach(function(link) {
-        const label = link.label || link.linkType || 'Link';
+        const label = getExternalLinkDisplayLabel_(link);
         const url = link.url || '';
 
         if (url) {
-          html += '<div><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a></div>';
+          html += '<a class="claim-detail-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>';
         } else {
-          html += '<div>' + escapeHtml(label) + '</div>';
+          html += '<span class="claim-detail-link is-disabled">' + escapeHtml(label) + '</span>';
         }
       });
+      html += '</div>';
       html += '</div>';
     }
 
@@ -500,7 +863,7 @@
       timelineEvents.slice(0, 5).forEach(function(event) {
         html += '<div class="claim-detail-timeline-item">';
         html += '<div>' + escapeHtml(getTimelineEventSummary_(event)) + '</div>';
-        html += '<small>' + escapeHtml(getTimelineEventDate_(event)) + '</small>';
+        html += '<small>' + escapeHtml(getTimelineEventMeta_(event)) + '</small>';
         html += '</div>';
       });
     } else {
@@ -530,17 +893,58 @@
     panel.innerHTML = html;
   }
 
+  function renderClaimDetailKeyValue_(label, value) {
+    if (!value) {
+      return '';
+    }
+
+    return '<div class="claim-detail-key-value">' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<strong>' + escapeHtml(value) + '</strong>' +
+      '</div>';
+  }
+
+  function getClaimDetailOperationalAlerts_(detail, header) {
+    if (header && Array.isArray(header.operationalAlerts)) {
+      return header.operationalAlerts;
+    }
+
+    if (detail && Array.isArray(detail.operationalAlerts)) {
+      return detail.operationalAlerts;
+    }
+
+    return [];
+  }
+
+  function getExternalLinkDisplayLabel_(link) {
+    const linkType = String(link.linkType || '').toLowerCase();
+    const friendlyLabels = {
+      drive: 'Google Drive Folder',
+      fusion: 'Fusion File',
+      xactanalysis: 'XactAnalysis',
+      xactimate: 'Xactimate',
+      symbility: 'Symbility',
+      claimx: 'ClaimX'
+    };
+
+    if (friendlyLabels[linkType]) {
+      return friendlyLabels[linkType];
+    }
+
+    return link.label || link.linkType || 'Operational Link';
+  }
+
   function getRecentTimelineEvents_(detail) {
     if (!detail) {
       return [];
     }
 
-    if (detail.timelineSection && Array.isArray(detail.timelineSection.events)) {
-      return detail.timelineSection.events;
-    }
-
     if (detail.timelineSection && Array.isArray(detail.timelineSection.recentEvents)) {
       return detail.timelineSection.recentEvents;
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.events)) {
+      return detail.timelineSection.events;
     }
 
     if (Array.isArray(detail.recentTimelineEvents)) {
@@ -587,6 +991,14 @@
     });
   }
 
+  function getTimelineEventMeta_(event) {
+    return [
+      getTimelineEventDate_(event),
+      event.eventType || event.type || '',
+      event.source || event.sourceSystem || ''
+    ].filter(Boolean).join(' • ');
+  }
+
   function handleClaimsWorkspaceError(error) {
     const stream = document.getElementById('claimsStream');
     const panel = document.getElementById('claimDetailPanel');
@@ -607,6 +1019,8 @@
     return String(value)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 </script>

@@ -676,6 +676,37 @@ const STATUS = {
 const FETCH_TIMEOUT_MS = 30000;
 
 const CLAIMS_SERVICE_URL_FALLBACK = 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzrsk0ixP_q0jrkDtXyXeTo7NjspbQvgRVC4m7XUWTam3CIkfF0oazo5NYYRhuDw5Pr3Q/exec';
+const INTAKE_SOURCE_SERVICE_ID = 'insurance-intake-automation';
+const INTAKE_OPERATIONAL_LINK_SHEET_NAME = 'External_Links';
+const INTAKE_OPERATIONAL_LINK_RECENT_DAYS = 60;
+const INTAKE_OPERATIONAL_LINK_MAX_CLAIMS = 30;
+const INTAKE_OPERATIONAL_LINK_TYPES = [
+  {
+    id: 'fusion',
+    storageValue: 'Fusion',
+    missingLabel: 'Missing Fusion Link',
+    actionLabel: 'Add Fusion Link',
+    displayLabel: 'Fusion Link',
+    matchValues: ['fusion', 'fusionfile', 'fusionlink']
+  },
+  {
+    id: 'xact',
+    storageValue: 'XactAnalysis/Symbility',
+    missingLabel: 'Missing XA/Symbility Link',
+    actionLabel: 'Add XA/Symbility Link',
+    displayLabel: 'XA/Symbility Link',
+    matchValues: ['xact', 'xactanalysis', 'xactimate', 'symbility', 'xactsymbility', 'xactanalysissymbility']
+  },
+  {
+    id: 'claimx',
+    storageValue: 'ClaimX',
+    missingLabel: 'Missing ClaimX Link',
+    actionLabel: 'Add ClaimX Link',
+    displayLabel: 'ClaimX Link',
+    matchValues: ['claimx'],
+    allstateOnly: true
+  }
+];
 
 function include(filename) {
   return HtmlService
@@ -707,6 +738,18 @@ function doGet(e) {
     return jsonResponse_(getHomepageComplianceSummary());
   }
 
+  if (action === 'getIntakeWorkspaceSummary') {
+    return jsonResponse_(getIntakeWorkspaceSummary());
+  }
+
+  if (action === 'getIntakeAuditHistory') {
+    return jsonResponse_(getIntakeAuditHistory());
+  }
+
+  if (action === 'testIntakeOperationalLinkEnrichmentShape') {
+    return jsonResponse_(testIntakeOperationalLinkEnrichmentShape());
+  }
+
   if (view === 'homepageShell' || view === 'homepage') {
     return HtmlService
       .createTemplateFromFile('HomepageShell')
@@ -715,12 +758,16 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
-  if (view === 'claimsShell') {
+  if (view === 'claimShell') {
     return renderClaimsShell_(e, 'Rainbow Claims Workspace');
   }
 
-  if (view === 'claimShell') {
-    return renderClaimsShell_(e, 'Rainbow Claim Workspace');
+  if (view === 'intake') {
+    return HtmlService
+      .createTemplateFromFile('IntakeView')
+      .evaluate()
+      .setTitle('Rainbow Intake Workspace')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
   return HtmlService
@@ -734,7 +781,7 @@ function renderClaimsShell_(e, title) {
   const template = HtmlService.createTemplateFromFile('ClaimsShell');
 
   template.initialRouteContext = {
-    view: String(params.view || 'claimsShell'),
+    view: String(params.view || 'claimShell'),
     lensId: String(params.lensId || params.lens || 'all'),
     ownership: String(params.ownership || params.ownershipArea || ''),
     ownershipArea: String(params.ownershipArea || params.ownership || ''),
@@ -936,6 +983,1824 @@ function testClaimsWorkspaceDataBridge() {
   Logger.log(JSON.stringify(result, null, 2));
 
   return result;
+}
+
+function getIntakeWorkspaceSummary() {
+  const generatedAt = new Date().toISOString();
+  const queueHealthResponse = fetchIntakeServiceJson_('queueHealth');
+  const insuranceQueueHealthResponse = fetchIntakeServiceJson_('queueHealthInsuranceIntake');
+  const diagnosticsResponse = fetchIntakeServiceJson_('diagnostics');
+  const pendingInspectionResponse = fetchIntakeServiceJson_('inspectPendingClaimFolders');
+  const auditState = getIntakeAuditState_();
+
+  const queueResult = queueHealthResponse && queueHealthResponse.result
+    ? queueHealthResponse.result
+    : {};
+  const queueWorkflows = queueResult.workflows || {};
+  const insuranceWorkflow = queueWorkflows.insuranceIntake
+    || getWorkflowHealthFromSingleQueueResponse_(insuranceQueueHealthResponse);
+  const asbestosWorkflow = queueWorkflows.asbestos || {};
+  const itelWorkflow = queueWorkflows.itel || {};
+
+  const workflows = {
+    insuranceIntake: normalizeIntakeWorkflowHealth_('insuranceIntake', insuranceWorkflow, 'Insurance Intake'),
+    asbestos: normalizeIntakeWorkflowHealth_('asbestos', asbestosWorkflow, 'Asbestos Attachment Intake'),
+    itel: normalizeIntakeWorkflowHealth_('itel', itelWorkflow, 'Itel Attachment Intake')
+  };
+
+  const pendingClaimFolders = normalizePendingClaimFolderInspection_(pendingInspectionResponse, auditState);
+  const operationalLinkEnrichment = getIntakeOperationalLinkEnrichment_(auditState);
+  const unresolvedItems = buildIntakeUnresolvedItems_(workflows, pendingClaimFolders, auditState)
+    .concat(operationalLinkEnrichment.unresolvedItems || []);
+  const actionableWorkflows = applyIntakeActionableCountsToWorkflows_(workflows, unresolvedItems);
+  const workspaceTotals = calculateIntakeWorkspaceTotals_(actionableWorkflows, pendingClaimFolders, unresolvedItems);
+  const sourceUnavailable = !isSuccessfulIntakeResponse_(queueHealthResponse);
+  const workspaceStatus = sourceUnavailable
+    ? 'Unavailable'
+    : calculateIntakeWorkspaceHealth_(unresolvedItems);
+
+  const workspaceHealth = {
+    status: workspaceStatus,
+    message: buildIntakeWorkspaceHealthMessage_(workspaceStatus, workspaceTotals),
+    queueCount: workspaceTotals.queueCount,
+    activeQueueCount: workspaceTotals.queueCount,
+    pendingReviewCount: workspaceTotals.reviewCount,
+    reviewCount: workspaceTotals.reviewCount,
+    errorCount: workspaceTotals.errorCount,
+    duplicateCount: workspaceTotals.duplicateCount,
+    retryBacklogCount: workspaceTotals.retryBacklogCount,
+    pendingClaimFolderCount: workspaceTotals.pendingClaimFolderCount,
+    retryLimitReachedCount: workspaceTotals.retryLimitReachedCount,
+    missingOperationalLinkCount: workspaceTotals.missingOperationalLinkCount,
+    lastCheckedAt: workspaceTotals.lastCheckedAt || queueResult.finishedAt || queueResult.startedAt || generatedAt
+  };
+
+  return {
+    status: sourceUnavailable ? 'Error' : 'Success',
+    success: !sourceUnavailable,
+    generatedAt: generatedAt,
+    sourceService: INTAKE_SOURCE_SERVICE_ID,
+    sourceServiceUrlConfigured: !!getIntakeSourceServiceUrl_(),
+    workspaceHealth: workspaceHealth,
+    workflows: actionableWorkflows,
+    unresolvedItems: unresolvedItems,
+    recentlyProcessed: buildIntakeRecentlyProcessedClaims_(operationalLinkEnrichment.visibilityItems || []),
+    availableActions: buildIntakeWorkspaceActions_(),
+    diagnostics: normalizeIntakeDiagnostics_(diagnosticsResponse),
+    pendingClaimFolders: pendingClaimFolders,
+    operationalLinkEnrichment: operationalLinkEnrichment,
+    audit: {
+      reviewedCount: auditState.records.filter(function(record) {
+        return record.actionType === 'reviewed';
+      }).length,
+      ignoredCount: auditState.records.filter(function(record) {
+        return record.actionType === 'ignored';
+      }).length,
+      recentRecords: auditState.records.slice(Math.max(auditState.records.length - 8, 0))
+    },
+    sourceResponses: {
+      queueHealth: summarizeIntakeSourceResponse_(queueHealthResponse),
+      insuranceQueueHealth: summarizeIntakeSourceResponse_(insuranceQueueHealthResponse),
+      diagnostics: summarizeIntakeSourceResponse_(diagnosticsResponse),
+      pendingClaimFolders: summarizeIntakeSourceResponse_(pendingInspectionResponse)
+    }
+  };
+}
+
+function runIntakeWorkspaceProcess() {
+  try {
+    const runResult = runAutomation(INTAKE_SOURCE_SERVICE_ID);
+    const status = runResult && runResult.lastStatus ? runResult.lastStatus : STATUS.SUCCESS;
+
+    return {
+      status: status,
+      success: status !== STATUS.ERROR,
+      generatedAt: new Date().toISOString(),
+      sourceService: INTAKE_SOURCE_SERVICE_ID,
+      action: 'process',
+      message: runResult && runResult.message ? runResult.message : 'Intake process completed.',
+      result: runResult
+    };
+  } catch (err) {
+    return {
+      status: STATUS.ERROR,
+      success: false,
+      generatedAt: new Date().toISOString(),
+      sourceService: INTAKE_SOURCE_SERVICE_ID,
+      action: 'process',
+      message: err && err.message ? err.message : String(err)
+    };
+  }
+}
+
+function saveIntakeOperationalLink(payload) {
+  const linkPayload = payload || {};
+  const claimId = String(linkPayload.claimId || '').trim();
+  const linkTypeConfig = getIntakeOperationalLinkTypeConfig_(linkPayload.linkType);
+  const url = String(linkPayload.url || '').trim();
+  const timestamp = new Date().toISOString();
+  const createdBy = getIntakeAuditUser_();
+
+  if (!claimId) {
+    return {
+      status: 'Error',
+      success: false,
+      message: 'claimId is required.',
+      generatedAt: timestamp
+    };
+  }
+
+  if (!linkTypeConfig) {
+    return {
+      status: 'Error',
+      success: false,
+      message: 'Unsupported operational link type.',
+      generatedAt: timestamp
+    };
+  }
+
+  if (!/^https?:\/\//i.test(url)) {
+    return {
+      status: 'Error',
+      success: false,
+      message: 'Operational link URL must begin with https:// or http://.',
+      generatedAt: timestamp
+    };
+  }
+
+  const context = getIntakeExternalLinksContext_();
+
+  if (!context.available) {
+    return {
+      status: 'Error',
+      success: false,
+      message: context.message || 'External_Links is unavailable.',
+      generatedAt: timestamp
+    };
+  }
+
+  const existingLink = findIntakeActiveExternalLink_(context.records, {
+    claimId: claimId,
+    claimNumber: String(linkPayload.claimNumber || '').trim(),
+    jobNumber: String(linkPayload.jobNumber || '').trim()
+  }, linkTypeConfig);
+
+  if (existingLink) {
+    return {
+      status: 'Duplicate',
+      success: false,
+      message: linkTypeConfig.displayLabel + ' already exists for this claim.',
+      claimId: claimId,
+      linkType: linkTypeConfig.storageValue,
+      generatedAt: timestamp,
+      existingLink: {
+        url: existingLink.url || '',
+        linkType: existingLink.linkType || ''
+      }
+    };
+  }
+
+  const appendResult = appendIntakeExternalLink_(context, {
+    claimId: claimId,
+    claimNumber: String(linkPayload.claimNumber || '').trim(),
+    linkType: linkTypeConfig.storageValue,
+    linkTypeId: linkTypeConfig.id,
+    label: linkTypeConfig.displayLabel,
+    url: url,
+    source: 'Intake Workspace',
+    createdAt: timestamp,
+    createdBy: createdBy,
+    status: 'Active',
+    isActive: true,
+    notes: 'Operational link added from Intake Workspace.'
+  });
+
+  recordIntakeOperationalLinkAudit_({
+    claimId: claimId,
+    linkType: linkTypeConfig.storageValue,
+    url: url,
+    source: 'Intake Workspace',
+    issueKey: 'operational-link-added|' + claimId + '|' + linkTypeConfig.id + '|' + timestamp,
+    issueTitle: linkTypeConfig.displayLabel + ' added'
+  });
+
+  const alertReconciliation = reconcileClaimAlertsAfterIntakeLinkSave_(claimId);
+
+  return {
+    status: 'Success',
+    success: true,
+    message: linkTypeConfig.displayLabel + ' saved to External_Links.',
+    claimId: claimId,
+    linkType: linkTypeConfig.storageValue,
+    generatedAt: timestamp,
+    rowNumber: appendResult.rowNumber,
+    alertReconciliation: alertReconciliation
+  };
+}
+
+function reconcileClaimAlertsAfterIntakeLinkSave_(claimId) {
+  if (!claimId) {
+    return {
+      status: 'Skipped',
+      success: false,
+      message: 'No claimId was provided for alert reconciliation.'
+    };
+  }
+
+  try {
+    const response = fetchClaimsServiceJson_('reconcileClaimAlerts', {
+      claimId: claimId,
+      dryRun: 'false',
+      source: 'intake-operational-link-save'
+    });
+
+    return response || {
+      status: 'Unknown',
+      success: false,
+      message: 'Claims service did not return a reconciliation response.'
+    };
+  } catch (err) {
+    return {
+      status: 'Error',
+      success: false,
+      message: err && err.message ? err.message : String(err)
+    };
+  }
+}
+
+function buildIntakeRecentlyProcessedClaims_(visibilityItems) {
+  return (visibilityItems || [])
+    .slice(0, 8)
+    .map(function(item) {
+      return {
+        claimId: item.claimId || '',
+        claimNumber: item.claimNumber || '',
+        jobNumber: item.jobNumber || '',
+        displayName: item.displayName || item.customerName || item.claimId || '',
+        customerName: item.customerName || '',
+        lifecycleState: item.lifecycleState || '',
+        ownershipArea: item.ownershipArea || '',
+        lastActivityAt: item.lastActivityAt || '',
+        hasMissingOperationalLinks: !!item.hasMissingOperationalLinks,
+        missingLinkTypes: item.missingLinkTypes || [],
+        resolvedLinkTypes: item.resolvedLinkTypes || []
+      };
+    });
+}
+
+function fetchIntakeServiceJson_(action, params) {
+  const serviceUrl = getIntakeSourceServiceUrl_();
+
+  if (!serviceUrl) {
+    return {
+      status: 'Error',
+      success: false,
+      message: 'Insurance intake service URL is not configured.',
+      action: action,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  try {
+    validateAutomationUrl_(serviceUrl);
+
+    const url = buildAutomationUrl_(serviceUrl, Object.assign({
+      action: action,
+      source: 'automation-dashboard-intake-workspace'
+    }, params || {}));
+    const response = fetchWithRedirects_(url);
+    const responseCode = response.getResponseCode();
+    const text = response.getContentText();
+
+    if (responseCode < 200 || responseCode >= 300) {
+      return {
+        status: 'Error',
+        success: false,
+        message: 'Insurance intake service returned HTTP ' + responseCode,
+        responseCode: responseCode,
+        bodyPreview: truncate_(text, 1000),
+        action: action,
+        generatedAt: new Date().toISOString()
+      };
+    }
+
+    return JSON.parse(text);
+  } catch (err) {
+    return {
+      status: 'Error',
+      success: false,
+      message: err && err.message ? err.message : String(err),
+      action: action,
+      generatedAt: new Date().toISOString()
+    };
+  }
+}
+
+function getIntakeSourceServiceUrl_() {
+  const automation = getIntakeSourceAutomation_();
+  return automation ? automation.webAppUrl : '';
+}
+
+function getIntakeSourceAutomation_() {
+  return DASHBOARD_CONFIG.automations.find(function(automation) {
+    return automation.id === INTAKE_SOURCE_SERVICE_ID;
+  }) || null;
+}
+
+function getIntakeOperationalLinkEnrichment_(auditState) {
+  try {
+    const claims = getIntakeOperationalLinkCandidateClaims_();
+    const linksContext = getIntakeExternalLinksContext_();
+
+    if (!linksContext.available) {
+      return {
+        status: 'Unavailable',
+        success: false,
+        message: linksContext.message || 'External_Links could not be read.',
+        checkedAt: new Date().toISOString(),
+        unresolvedItems: [],
+        visibilityItems: [],
+        missingLinkCount: 0,
+        candidateCount: claims.length,
+        candidateClaimCount: claims.length,
+        missingFusionCount: 0,
+        missingXactCount: 0,
+        actualExternalLinkHeaders: linksContext.headers || [],
+        externalLinkHeaders: linksContext.headers || [],
+        resolvedHeaderMap: linksContext.resolvedHeaderMap || {}
+      };
+    }
+
+    const unresolvedItems = [];
+    const visibilityItems = [];
+    const missingCounts = {
+      fusion: 0,
+      xact: 0,
+      claimx: 0
+    };
+
+    claims.forEach(function(claim) {
+      const missingTypes = INTAKE_OPERATIONAL_LINK_TYPES.filter(function(linkTypeConfig) {
+        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim)
+          && !findIntakeActiveExternalLink_(linksContext.records, claim, linkTypeConfig);
+      });
+      const resolvedTypes = INTAKE_OPERATIONAL_LINK_TYPES.filter(function(linkTypeConfig) {
+        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim)
+          && !!findIntakeActiveExternalLink_(linksContext.records, claim, linkTypeConfig);
+      });
+
+      missingTypes.forEach(function(linkTypeConfig) {
+        if (missingCounts.hasOwnProperty(linkTypeConfig.id)) {
+          missingCounts[linkTypeConfig.id]++;
+        }
+      });
+
+      const visibilityItem = Object.assign({}, claim, {
+        missingLinkTypes: missingTypes.map(function(linkTypeConfig) {
+          return buildIntakeOperationalLinkTypePayload_(linkTypeConfig);
+        }),
+        resolvedLinkTypes: resolvedTypes.map(function(linkTypeConfig) {
+          return buildIntakeOperationalLinkTypePayload_(linkTypeConfig);
+        }),
+        hasMissingOperationalLinks: missingTypes.length > 0
+      });
+      visibilityItems.push(visibilityItem);
+
+      if (!missingTypes.length) {
+        return;
+      }
+
+      const issueKey = buildIntakeOperationalLinkIssueKey_(claim.claimId, missingTypes);
+
+      if (isIntakeIssueClearedByAudit_(auditState, issueKey)) {
+        return;
+      }
+
+      unresolvedItems.push({
+        id: issueKey,
+        issueType: 'missing-operational-link',
+        filterType: 'missing-operational-link',
+        title: missingTypes.length === 1 ? missingTypes[0].missingLabel : 'Missing Operational Links',
+        severity: 'warning',
+        count: missingTypes.length,
+        message: 'Operational links stabilize the claim record; they do not block intake processing.',
+        sourceWorkflow: 'claimFoundation',
+        sourceWorkflowName: 'Claim Foundation',
+        issueKey: issueKey,
+        claimId: claim.claimId,
+        claimNumber: claim.claimNumber,
+        jobNumber: claim.jobNumber,
+        displayName: claim.displayName,
+        customerName: claim.customerName,
+        carrierName: claim.carrierName,
+        isAllstate: claim.isAllstate,
+        lifecycleState: claim.lifecycleState,
+        ownershipArea: claim.ownershipArea,
+        lastActivityAt: claim.lastActivityAt,
+        canReview: false,
+        canIgnore: false,
+        missingLinkTypes: missingTypes.map(function(linkTypeConfig) {
+          return buildIntakeOperationalLinkTypePayload_(linkTypeConfig);
+        }),
+        resolvedLinkTypes: resolvedTypes.map(function(linkTypeConfig) {
+          return buildIntakeOperationalLinkTypePayload_(linkTypeConfig);
+        }),
+        detailItems: [],
+        workflows: [{
+          key: 'claimFoundation',
+          name: 'Claim Foundation',
+          count: missingTypes.length,
+          health: 'Warning'
+        }]
+      });
+    });
+
+    return {
+      status: 'Success',
+      success: true,
+      checkedAt: new Date().toISOString(),
+      unresolvedItems: unresolvedItems,
+      visibilityItems: visibilityItems.slice(0, 10),
+      missingLinkCount: unresolvedItems.reduce(function(total, item) {
+        return total + normalizeIntakeMetricCount_(item.count);
+      }, 0),
+      candidateCount: claims.length,
+      candidateClaimCount: claims.length,
+      missingFusionCount: missingCounts.fusion,
+      missingXactCount: missingCounts.xact,
+      missingClaimXCount: missingCounts.claimx,
+      externalLinkCount: linksContext.records.length,
+      actualExternalLinkHeaders: linksContext.headers,
+      externalLinkHeaders: linksContext.headers,
+      resolvedHeaderMap: linksContext.resolvedHeaderMap
+    };
+  } catch (err) {
+    return {
+      status: 'Error',
+      success: false,
+      message: err && err.message ? err.message : String(err),
+      checkedAt: new Date().toISOString(),
+      unresolvedItems: [],
+      visibilityItems: [],
+      missingLinkCount: 0,
+      candidateCount: 0,
+      candidateClaimCount: 0,
+      missingFusionCount: 0,
+      missingXactCount: 0
+    };
+  }
+}
+
+function testIntakeOperationalLinkEnrichmentShape() {
+  const enrichment = getIntakeOperationalLinkEnrichment_(getIntakeAuditState_());
+  const unresolvedItems = enrichment.unresolvedItems || [];
+  const visibilityItems = enrichment.visibilityItems || [];
+
+  return {
+    status: enrichment.status,
+    success: enrichment.success,
+    message: enrichment.message || '',
+    checkedAt: enrichment.checkedAt || new Date().toISOString(),
+    candidateCount: enrichment.candidateCount || enrichment.candidateClaimCount || 0,
+    missingFusionCount: enrichment.missingFusionCount || 0,
+    missingXactCount: enrichment.missingXactCount || 0,
+    missingClaimXCount: enrichment.missingClaimXCount || 0,
+    missingLinkCount: enrichment.missingLinkCount || 0,
+    actualExternalLinkHeaders: enrichment.actualExternalLinkHeaders || enrichment.externalLinkHeaders || [],
+    resolvedHeaderMap: enrichment.resolvedHeaderMap || {},
+    unresolvedItemCount: unresolvedItems.length,
+    sampleUnresolvedItems: unresolvedItems.slice(0, 5).map(function(item) {
+      return {
+        issueType: item.issueType || '',
+        claimId: item.claimId || '',
+        claimNumber: item.claimNumber || '',
+        displayName: item.displayName || '',
+        carrierName: item.carrierName || '',
+        isAllstate: !!item.isAllstate,
+        missingLinkTypes: (item.missingLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        }),
+        resolvedLinkTypes: (item.resolvedLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        })
+      };
+    }),
+    sampleVisibilityItems: visibilityItems.slice(0, 5).map(function(item) {
+      return {
+        claimId: item.claimId || '',
+        claimNumber: item.claimNumber || '',
+        displayName: item.displayName || '',
+        carrierName: item.carrierName || '',
+        isAllstate: !!item.isAllstate,
+        hasMissingOperationalLinks: !!item.hasMissingOperationalLinks,
+        missingLinkTypes: (item.missingLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        }),
+        resolvedLinkTypes: (item.resolvedLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        })
+      };
+    })
+  };
+}
+
+function isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim) {
+  if (!linkTypeConfig) {
+    return false;
+  }
+
+  if (linkTypeConfig.allstateOnly) {
+    return !!(claim && claim.isAllstate);
+  }
+
+  return true;
+}
+
+function isIntakeAllstateClaim_(claim) {
+  const carrierText = [
+    claim && claim.Intake_Carrier,
+    claim && claim.Carrier,
+    claim && claim.Insurance_Carrier,
+    claim && claim.Insurance_Company,
+    claim && claim.Company
+  ].join(' ').toLowerCase();
+
+  return carrierText.indexOf('allstate') !== -1;
+}
+
+function getIntakeOperationalLinkCandidateClaims_() {
+  const rows = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims);
+  const cutoffTime = Date.now() - (INTAKE_OPERATIONAL_LINK_RECENT_DAYS * 24 * 60 * 60 * 1000);
+
+  return rows
+    .map(function(row) {
+      const claim = normalizeHomepageClaim_(row);
+      claim.Intake_Carrier = getHomepageValue_(row, [
+        'Carrier',
+        'Insurance Carrier',
+        'Insurance_Carrier',
+        'Insurance Company',
+        'Insurance_Company',
+        'Company',
+        'Carrier_Name',
+        'Carrier Name',
+        'Insurance',
+        'Insurer'
+      ]);
+      return claim;
+    })
+    .filter(function(claim) {
+      if (!isHomepageActiveClaim_(claim)) {
+        return false;
+      }
+
+      const activityTime = getIntakeClaimActivityTime_(claim);
+      return activityTime === 0 || activityTime >= cutoffTime;
+    })
+    .map(function(claim) {
+      return {
+        claimId: claim.Claim_ID || '',
+        claimNumber: preserveIntakeClaimNumber_(claim.Claim_Number || claim.Job_Number || ''),
+        jobNumber: preserveIntakeClaimNumber_(claim.Job_Number || claim.Claim_Number || ''),
+        displayName: getHomepageClaimDisplayName_(claim),
+        customerName: claim.Customer_Name || '',
+        carrierName: claim.Intake_Carrier || '',
+        isAllstate: isIntakeAllstateClaim_(claim),
+        lifecycleState: claim.Lifecycle_State || '',
+        ownershipArea: claim.Ownership_Area || '',
+        lastActivityAt: claim.Last_Meaningful_Activity_Date || claim.Updated_At || claim.Created_At || '',
+        activityTime: getIntakeClaimActivityTime_(claim)
+      };
+    })
+    .filter(function(claim) {
+      return !!claim.claimId;
+    })
+    .sort(function(a, b) {
+      return (b.activityTime || 0) - (a.activityTime || 0);
+    })
+    .slice(0, INTAKE_OPERATIONAL_LINK_MAX_CLAIMS);
+}
+
+function preserveIntakeClaimNumber_(value) {
+  const rawValue = String(value === undefined || value === null ? '' : value).trim();
+
+  if (!rawValue) {
+    return '';
+  }
+
+  const normalizedValue = rawValue.replace(/\.0$/, '');
+
+  if (/^\d{9}$/.test(normalizedValue)) {
+    return '0' + normalizedValue;
+  }
+
+  return normalizedValue;
+}
+
+function getIntakeClaimActivityTime_(claim) {
+  const value = claim.Last_Meaningful_Activity_Date || claim.Updated_At || claim.Created_At || '';
+  const parsed = value ? new Date(value) : null;
+
+  if (parsed && !isNaN(parsed.getTime())) {
+    return parsed.getTime();
+  }
+
+  return 0;
+}
+
+function buildIntakeOperationalLinkIssueKey_(claimId, missingTypes) {
+  return [
+    'missing-operational-link',
+    claimId || '',
+    (missingTypes || []).map(function(linkTypeConfig) {
+      return linkTypeConfig.id;
+    }).sort().join('+')
+  ].join('|');
+}
+
+function buildIntakeOperationalLinkTypePayload_(linkTypeConfig) {
+  return {
+    id: linkTypeConfig.id,
+    storageValue: linkTypeConfig.storageValue,
+    missingLabel: linkTypeConfig.missingLabel,
+    actionLabel: linkTypeConfig.actionLabel,
+    displayLabel: linkTypeConfig.displayLabel
+  };
+}
+
+function getIntakeOperationalLinkTypeConfig_(linkType) {
+  const normalized = normalizeIntakeLinkTypeValue_(linkType);
+
+  return INTAKE_OPERATIONAL_LINK_TYPES.find(function(linkTypeConfig) {
+    if (normalizeIntakeLinkTypeValue_(linkTypeConfig.id) === normalized) {
+      return true;
+    }
+
+    if (normalizeIntakeLinkTypeValue_(linkTypeConfig.storageValue) === normalized) {
+      return true;
+    }
+
+    return linkTypeConfig.matchValues.indexOf(normalized) !== -1;
+  }) || null;
+}
+
+function getIntakeExternalLinksContext_() {
+  const spreadsheet = SpreadsheetApp.openById(HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = spreadsheet.getSheetByName(INTAKE_OPERATIONAL_LINK_SHEET_NAME);
+
+  if (!sheet) {
+    return {
+      available: false,
+      message: INTAKE_OPERATIONAL_LINK_SHEET_NAME + ' sheet was not found.',
+      records: [],
+      headers: []
+    };
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (!values.length) {
+    return {
+      available: false,
+      message: INTAKE_OPERATIONAL_LINK_SHEET_NAME + ' has no header row.',
+      sheet: sheet,
+      records: [],
+      headers: []
+    };
+  }
+
+  const headerRowIndex = findIntakeExternalLinksHeaderRowIndex_(values);
+  const headers = values[headerRowIndex].map(function(header) {
+    return String(header || '').trim();
+  });
+  const resolvedHeaderMap = getIntakeExternalLinkResolvedHeaderMap_(headers);
+  const wideLinkColumns = getIntakeWideExternalLinkColumnMap_(headers);
+  resolvedHeaderMap.wideLinkColumns = wideLinkColumns;
+  const wideRows = normalizeIntakeWideExternalLinkRows_(values, headerRowIndex, resolvedHeaderMap);
+  const normalizedRecords = values.slice(headerRowIndex + 1)
+    .filter(function(row) {
+      return row.some(function(value) {
+        return value !== '' && value !== null;
+      });
+    })
+    .map(function(row) {
+      return normalizeIntakeExternalLinkRecord_(headers, row, resolvedHeaderMap);
+    });
+  const usesWideSchema = isIntakeWideExternalLinksSchema_(resolvedHeaderMap, wideLinkColumns);
+  const records = usesWideSchema
+    ? buildIntakeWideExternalLinkRecords_(wideRows, wideLinkColumns)
+    : normalizedRecords;
+  const requiredFields = ['claimId', 'linkType', 'url'];
+  const missingRequiredFields = usesWideSchema ? [] : requiredFields.filter(function(fieldName) {
+    return !resolvedHeaderMap[fieldName] || resolvedHeaderMap[fieldName].index === -1;
+  });
+
+  if (missingRequiredFields.length) {
+    return {
+      available: false,
+      message: INTAKE_OPERATIONAL_LINK_SHEET_NAME + ' is missing required headers: ' + missingRequiredFields.join(', ') + '. Actual headers: ' + headers.join(', '),
+      sheet: sheet,
+      records: records,
+      headers: headers,
+      resolvedHeaderMap: resolvedHeaderMap,
+      headerRowIndex: headerRowIndex,
+      layout: usesWideSchema ? 'wide' : 'normalized',
+      wideRows: wideRows,
+      wideLinkColumns: wideLinkColumns
+    };
+  }
+
+  return {
+    available: true,
+    sheet: sheet,
+    headerRowIndex: headerRowIndex,
+    headers: headers,
+    resolvedHeaderMap: resolvedHeaderMap,
+    layout: usesWideSchema ? 'wide' : 'normalized',
+    wideRows: wideRows,
+    wideLinkColumns: wideLinkColumns,
+    records: records
+  };
+}
+
+function findIntakeExternalLinksHeaderRowIndex_(values) {
+  let bestRowIndex = 0;
+  let bestScore = -1;
+
+  for (let rowIndex = 0; rowIndex < Math.min(values.length, 10); rowIndex++) {
+    const headers = values[rowIndex].map(function(header) {
+      return String(header || '').trim();
+    });
+    const resolvedHeaderMap = getIntakeExternalLinkResolvedHeaderMap_(headers);
+    const score = ['claimId', 'linkType', 'url'].reduce(function(total, fieldName) {
+      return total + (resolvedHeaderMap[fieldName] && resolvedHeaderMap[fieldName].index !== -1 ? 1 : 0);
+    }, 0);
+
+    if (score === 3) {
+      return rowIndex;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowIndex = rowIndex;
+    }
+  }
+
+  return bestRowIndex;
+}
+
+function normalizeIntakeExternalLinkRecord_(headers, row, resolvedHeaderMap) {
+  return {
+    raw: headers.reduce(function(record, header, index) {
+      if (header) {
+        record[header] = row[index];
+      }
+      return record;
+    }, {}),
+    claimId: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'claimId'),
+    claimNumber: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'claimNumber'),
+    linkType: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'linkType'),
+    url: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'url'),
+    source: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'source'),
+    createdAt: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'createdAt'),
+    createdBy: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'createdBy'),
+    status: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'status'),
+    isActive: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'isActive')
+  };
+}
+
+function getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, fieldName) {
+  const resolvedHeader = resolvedHeaderMap && resolvedHeaderMap[fieldName];
+  const index = resolvedHeader ? resolvedHeader.index : -1;
+
+  return index === -1 || index === undefined ? '' : row[index];
+}
+
+function findIntakeExternalLinkHeaderIndex_(headers, fieldName) {
+  const resolvedHeaderMap = getIntakeExternalLinkResolvedHeaderMap_(headers);
+  return resolvedHeaderMap[fieldName] ? resolvedHeaderMap[fieldName].index : -1;
+}
+
+function getIntakeExternalLinkResolvedHeaderMap_(headers) {
+  const aliasesByField = getIntakeExternalLinkHeaderAliases_();
+  const fieldNames = Object.keys(aliasesByField);
+  const resolvedHeaderMap = {};
+
+  fieldNames.forEach(function(fieldName) {
+    const normalizedAliases = aliasesByField[fieldName].map(normalizeIntakeHeaderKey_);
+    resolvedHeaderMap[fieldName] = {
+      index: -1,
+      header: ''
+    };
+
+    for (let index = 0; index < headers.length; index++) {
+      if (normalizedAliases.indexOf(normalizeIntakeHeaderKey_(headers[index])) !== -1) {
+        resolvedHeaderMap[fieldName] = {
+          index: index,
+          header: headers[index]
+        };
+        break;
+      }
+    }
+  });
+
+  return resolvedHeaderMap;
+}
+
+function getIntakeWideExternalLinkColumnMap_(headers) {
+  const aliasesByField = getIntakeWideExternalLinkHeaderAliases_();
+  const fieldNames = Object.keys(aliasesByField);
+  const wideLinkColumns = {};
+
+  fieldNames.forEach(function(fieldName) {
+    const normalizedAliases = aliasesByField[fieldName].map(normalizeIntakeHeaderKey_);
+    wideLinkColumns[fieldName] = {
+      index: -1,
+      header: ''
+    };
+
+    for (let index = 0; index < headers.length; index++) {
+      if (normalizedAliases.indexOf(normalizeIntakeHeaderKey_(headers[index])) !== -1) {
+        wideLinkColumns[fieldName] = {
+          index: index,
+          header: headers[index]
+        };
+        break;
+      }
+    }
+  });
+
+  return wideLinkColumns;
+}
+
+function getIntakeWideExternalLinkHeaderAliases_() {
+  return {
+    fusionUrl: ['Fusion URL', 'Fusion_URL', 'Fusion Link', 'Fusion_Link', 'Fusion'],
+    fusionJobId: ['Fusion Job ID', 'Fusion_Job_ID', 'Fusion ID', 'Fusion_ID'],
+    driveFolder: ['Drive Folder', 'Drive_Folder', 'Google Drive Folder', 'Google_Drive_Folder'],
+    xactAnalysisUrl: ['XactAnalysis', 'Xact Analysis', 'XactAnalysis URL', 'XactAnalysis_URL', 'Xact URL', 'Xact_URL', 'Xact Link', 'Xact_Link'],
+    symbilityUrl: ['Symbility', 'Symbility URL', 'Symbility_URL', 'Symbility Link', 'Symbility_Link'],
+    claimXUrl: ['ClaimX', 'ClaimX URL', 'ClaimX_URL', 'ClaimX Link', 'ClaimX_Link'],
+    otherLinks: ['Other Links', 'Other_Links', 'Other Link', 'Other_Link']
+  };
+}
+
+function isIntakeWideExternalLinksSchema_(resolvedHeaderMap, wideLinkColumns) {
+  const hasClaimId = !!(resolvedHeaderMap.claimId && resolvedHeaderMap.claimId.index !== -1);
+  const hasFusionColumn = !!(wideLinkColumns.fusionUrl && wideLinkColumns.fusionUrl.index !== -1);
+  const hasXactColumn = !!(
+    wideLinkColumns.xactAnalysisUrl && wideLinkColumns.xactAnalysisUrl.index !== -1
+    || wideLinkColumns.symbilityUrl && wideLinkColumns.symbilityUrl.index !== -1
+  );
+
+  return hasClaimId && (hasFusionColumn || hasXactColumn);
+}
+
+function normalizeIntakeWideExternalLinkRows_(values, headerRowIndex, resolvedHeaderMap) {
+  return values.slice(headerRowIndex + 1)
+    .map(function(row, rowIndex) {
+      return {
+        rowNumber: headerRowIndex + rowIndex + 2,
+        row: row,
+        claimId: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'claimId'),
+        claimNumber: getIntakeExternalLinkCellValue_(row, resolvedHeaderMap, 'claimNumber')
+      };
+    })
+    .filter(function(rowRecord) {
+      return rowRecord.claimId || rowRecord.claimNumber || rowRecord.row.some(function(value) {
+        return value !== '' && value !== null;
+      });
+    });
+}
+
+function buildIntakeWideExternalLinkRecords_(wideRows, wideLinkColumns) {
+  const linkColumns = [
+    { fieldName: 'fusionUrl', linkType: 'Fusion' },
+    { fieldName: 'xactAnalysisUrl', linkType: 'XactAnalysis' },
+    { fieldName: 'symbilityUrl', linkType: 'Symbility' },
+    { fieldName: 'claimXUrl', linkType: 'ClaimX' }
+  ];
+  const records = [];
+
+  (wideRows || []).forEach(function(rowRecord) {
+    linkColumns.forEach(function(column) {
+      const resolvedColumn = wideLinkColumns[column.fieldName] || {};
+      const columnIndex = resolvedColumn.index;
+
+      if (columnIndex === -1 || columnIndex === undefined) {
+        return;
+      }
+
+      const url = rowRecord.row[columnIndex];
+
+      if (!url) {
+        return;
+      }
+
+      records.push({
+        raw: {},
+        claimId: rowRecord.claimId,
+        claimNumber: rowRecord.claimNumber,
+        linkType: column.linkType,
+        url: url,
+        source: '',
+        createdAt: '',
+        createdBy: '',
+        status: 'Active',
+        isActive: true,
+        rowNumber: rowRecord.rowNumber,
+        header: resolvedColumn.header
+      });
+    });
+  });
+
+  return records;
+}
+
+function findIntakeExternalLinkFieldForHeader_(header) {
+  const aliasesByField = getIntakeExternalLinkHeaderAliases_();
+  const normalizedHeader = normalizeIntakeHeaderKey_(header);
+  const fieldNames = Object.keys(aliasesByField);
+
+  for (let index = 0; index < fieldNames.length; index++) {
+    const fieldName = fieldNames[index];
+    const normalizedAliases = aliasesByField[fieldName].map(normalizeIntakeHeaderKey_);
+
+    if (normalizedAliases.indexOf(normalizedHeader) !== -1) {
+      return fieldName;
+    }
+  }
+
+  return '';
+}
+
+function getIntakeExternalLinkHeaderAliases_() {
+  return {
+    id: ['External_Link_ID', 'External Link ID', 'Link_ID', 'Link ID', 'ID'],
+    claimId: ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId', 'Claim', 'Claim_Key', 'Claim Key'],
+    claimNumber: ['Claim_Number', 'Claim Number', 'Job_Number', 'Job Number', 'JobNumber', 'Job Number'],
+    linkType: ['linkType', 'LinkType', 'Link_Type', 'Link Type', 'External_Link_Type', 'External Link Type', 'externalLinkType', 'ExternalLinkType', 'Type', 'System', 'External_System', 'External System', 'Link_System', 'Link System', 'Platform', 'Tool', 'Link_Category', 'Link Category'],
+    label: ['Label', 'Link_Label', 'Link Label', 'Display_Name', 'Display Name', 'Name'],
+    url: ['url', 'URL', 'Url', 'Link', 'linkUrl', 'LinkUrl', 'Link_URL', 'Link URL', 'External_URL', 'External URL', 'External_Link', 'External Link', 'External_Link_URL', 'External Link URL'],
+    source: ['Source', 'Source_System', 'Source System', 'Created_Source', 'Created Source'],
+    createdAt: ['Created_At', 'Created At', 'Timestamp', 'Added_At', 'Added At'],
+    createdBy: ['Created_By', 'Created By', 'Actor', 'Added_By', 'Added By', 'User'],
+    updatedAt: ['Updated_At', 'Updated At', 'Modified_At', 'Modified At'],
+    status: ['Status', 'Link_Status', 'Link Status', 'Active_Status', 'Active Status'],
+    isActive: ['Is_Active', 'Is Active', 'Active'],
+    notes: ['Notes', 'Note', 'Description']
+  };
+}
+
+function appendIntakeExternalLink_(context, linkRecord) {
+  if (context.layout === 'wide') {
+    return writeIntakeWideExternalLink_(context, linkRecord);
+  }
+
+  const headers = context.headers || [];
+  const row = headers.map(function(header) {
+    const fieldName = findIntakeExternalLinkFieldForHeader_(header);
+
+    if (fieldName === 'id') {
+      return Utilities.getUuid();
+    }
+
+    if (fieldName === 'claimId') {
+      return linkRecord.claimId;
+    }
+
+    if (fieldName === 'claimNumber') {
+      return linkRecord.claimNumber;
+    }
+
+    if (fieldName === 'linkType') {
+      return linkRecord.linkType;
+    }
+
+    if (fieldName === 'label') {
+      return linkRecord.label;
+    }
+
+    if (fieldName === 'url') {
+      return linkRecord.url;
+    }
+
+    if (fieldName === 'source') {
+      return linkRecord.source;
+    }
+
+    if (fieldName === 'createdAt') {
+      return linkRecord.createdAt;
+    }
+
+    if (fieldName === 'createdBy') {
+      return linkRecord.createdBy;
+    }
+
+    if (fieldName === 'updatedAt') {
+      return linkRecord.createdAt;
+    }
+
+    if (fieldName === 'status') {
+      return linkRecord.status;
+    }
+
+    if (fieldName === 'isActive') {
+      return linkRecord.isActive;
+    }
+
+    if (fieldName === 'notes') {
+      return linkRecord.notes;
+    }
+
+    return '';
+  });
+
+  context.sheet.appendRow(row);
+
+  return {
+    rowNumber: context.sheet.getLastRow()
+  };
+}
+
+function writeIntakeWideExternalLink_(context, linkRecord) {
+  const targetColumn = getIntakeWideExternalLinkTargetColumn_(context, linkRecord);
+
+  if (!targetColumn || targetColumn.index === -1 || targetColumn.index === undefined) {
+    throw new Error('External_Links does not have a writable column for ' + linkRecord.linkType + '.');
+  }
+
+  const claimIdKey = normalizeIntakeClaimKey_(linkRecord.claimId);
+  const existingRow = (context.wideRows || []).find(function(rowRecord) {
+    return normalizeIntakeClaimKey_(rowRecord.claimId) === claimIdKey;
+  });
+
+  if (existingRow) {
+    const existingValue = existingRow.row[targetColumn.index];
+
+    if (existingValue) {
+      throw new Error(linkRecord.label + ' already exists for this claim.');
+    }
+
+    context.sheet.getRange(existingRow.rowNumber, targetColumn.index + 1).setValue(linkRecord.url);
+
+    return {
+      rowNumber: existingRow.rowNumber,
+      columnNumber: targetColumn.index + 1
+    };
+  }
+
+  const headers = context.headers || [];
+  const row = headers.map(function(header, index) {
+    if (context.resolvedHeaderMap.claimId && context.resolvedHeaderMap.claimId.index === index) {
+      return linkRecord.claimId;
+    }
+
+    if (context.resolvedHeaderMap.claimNumber && context.resolvedHeaderMap.claimNumber.index === index) {
+      return linkRecord.claimNumber;
+    }
+
+    if (targetColumn.index === index) {
+      return linkRecord.url;
+    }
+
+    return '';
+  });
+
+  context.sheet.appendRow(row);
+
+  return {
+    rowNumber: context.sheet.getLastRow(),
+    columnNumber: targetColumn.index + 1
+  };
+}
+
+function getIntakeWideExternalLinkTargetColumn_(context, linkRecord) {
+  const wideLinkColumns = context.wideLinkColumns || {};
+  const linkTypeConfig = getIntakeOperationalLinkTypeConfig_(linkRecord.linkTypeId || linkRecord.linkType);
+
+  if (!linkTypeConfig) {
+    return null;
+  }
+
+  if (linkTypeConfig.id === 'fusion') {
+    return wideLinkColumns.fusionUrl || null;
+  }
+
+  if (linkTypeConfig.id === 'xact') {
+    if (wideLinkColumns.xactAnalysisUrl && wideLinkColumns.xactAnalysisUrl.index !== -1) {
+      return wideLinkColumns.xactAnalysisUrl;
+    }
+
+    return wideLinkColumns.symbilityUrl || null;
+  }
+
+  if (linkTypeConfig.id === 'claimx') {
+    return wideLinkColumns.claimXUrl || null;
+  }
+
+  return null;
+}
+
+function getIntakeExternalLinkFieldForHeader_(header) {
+  return findIntakeExternalLinkFieldForHeader_(header);
+}
+
+function findIntakeActiveExternalLink_(records, claim, linkTypeConfig) {
+  const claimKeys = buildIntakeClaimMatchKeys_(claim);
+
+  return (records || []).find(function(record) {
+    if (!intakeExternalLinkMatchesClaim_(record, claimKeys)) {
+      return false;
+    }
+
+    if (!record.url) {
+      return false;
+    }
+
+    if (!isIntakeExternalLinkActive_(record)) {
+      return false;
+    }
+
+    return isIntakeExternalLinkTypeMatch_(record.linkType, linkTypeConfig);
+  }) || null;
+}
+
+function intakeExternalLinkMatchesClaim_(record, claimKeys) {
+  const recordKeys = buildIntakeClaimMatchKeys_(record || {});
+
+  return Object.keys(recordKeys).some(function(key) {
+    return !!claimKeys[key];
+  });
+}
+
+function isIntakeExternalLinkActive_(record) {
+  const activeValue = String(record.isActive || '').trim().toLowerCase();
+  const statusValue = String(record.status || '').trim().toLowerCase();
+
+  if (activeValue === 'false' || activeValue === 'no' || activeValue === 'inactive') {
+    return false;
+  }
+
+  if (statusValue === 'inactive' || statusValue === 'deleted' || statusValue === 'archived' || statusValue === 'closed') {
+    return false;
+  }
+
+  return true;
+}
+
+function isIntakeExternalLinkTypeMatch_(linkType, linkTypeConfig) {
+  const normalizedLinkType = normalizeIntakeLinkTypeValue_(linkType);
+
+  if (!normalizedLinkType || !linkTypeConfig) {
+    return false;
+  }
+
+  if (normalizeIntakeLinkTypeValue_(linkTypeConfig.storageValue) === normalizedLinkType) {
+    return true;
+  }
+
+  return linkTypeConfig.matchValues.indexOf(normalizedLinkType) !== -1;
+}
+
+function buildIntakeClaimMatchKeys_(claim) {
+  const values = [];
+
+  if (claim && typeof claim === 'object') {
+    values.push(claim.claimId, claim.claimNumber, claim.jobNumber);
+  } else {
+    values.push(claim);
+  }
+
+  return values.reduce(function(keys, value) {
+    const normalizedValue = normalizeIntakeClaimKey_(value);
+
+    if (!normalizedValue) {
+      return keys;
+    }
+
+    keys[normalizedValue] = true;
+
+    const preservedClaimNumber = preserveIntakeClaimNumber_(normalizedValue);
+    if (preservedClaimNumber && preservedClaimNumber !== normalizedValue) {
+      keys[preservedClaimNumber] = true;
+    }
+
+    if (normalizedValue.indexOf('clm-') === 0) {
+      keys[normalizedValue.replace(/^clm-/, '')] = true;
+    } else if (/^[0-9a-z-]+$/.test(normalizedValue)) {
+      keys['clm-' + normalizedValue] = true;
+    }
+
+    return keys;
+  }, {});
+}
+
+function normalizeIntakeClaimKey_(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.0$/, '');
+}
+
+function normalizeIntakeLinkTypeValue_(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function normalizeIntakeHeaderKey_(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getWorkflowHealthFromSingleQueueResponse_(response) {
+  return response && response.result && response.result.workflowHealth
+    ? response.result.workflowHealth
+    : {};
+}
+
+function normalizeIntakeWorkflowHealth_(key, workflowHealth, fallbackName) {
+  const source = workflowHealth || {};
+  const metrics = source.metrics || {};
+
+  return {
+    key: key,
+    name: source.workflow || fallbackName || key,
+    health: normalizeIntakeHealth_(source.health || ''),
+    checkedAt: source.checkedAt || '',
+    readOnly: source.readOnly !== false,
+    queueCount: normalizeIntakeMetricCount_(metrics.activeQueueCount),
+    activeQueueCount: normalizeIntakeMetricCount_(metrics.activeQueueCount),
+    processedCount: normalizeIntakeMetricCount_(metrics.processedCount),
+    pendingReviewCount: normalizeIntakeMetricCount_(metrics.reviewCount),
+    reviewCount: normalizeIntakeMetricCount_(metrics.reviewCount),
+    errorCount: normalizeIntakeMetricCount_(metrics.errorCount),
+    duplicateCount: normalizeIntakeMetricCount_(metrics.duplicateCount),
+    retryReadyCount: normalizeIntakeMetricCount_(metrics.retryReadyCount),
+    retryInProgressCount: normalizeIntakeMetricCount_(metrics.retryInProgressCount),
+    retryBlockedCount: normalizeIntakeMetricCount_(metrics.retryBlockedCount),
+    retryRecoveredCount: normalizeIntakeMetricCount_(metrics.retryRecoveredCount),
+    retryBacklogCount: normalizeIntakeMetricCount_(metrics.retryBacklogCount),
+    retryLimitReachedCount: normalizeIntakeMetricCount_(metrics.retryLimitReachedCount),
+    pendingClaimFolderCount: normalizeIntakeMetricCount_(metrics.pendingClaimFolderCount),
+    cleanupBacklogCount: normalizeIntakeMetricCount_(metrics.cleanupBacklogCount),
+    staleThreadCount: normalizeIntakeMetricCount_(metrics.staleThreadCount),
+    queries: source.queries || {}
+  };
+}
+
+function normalizePendingClaimFolderInspection_(response, auditState) {
+  const result = response && response.result ? response.result : {};
+  const summary = result.summary || {};
+  const asbestosItems = result.asbestos && Array.isArray(result.asbestos.items)
+    ? result.asbestos.items
+    : [];
+  const itelItems = result.itel && Array.isArray(result.itel.items)
+    ? result.itel.items
+    : [];
+  const allItems = asbestosItems.concat(itelItems);
+
+  const normalizedItems = allItems.map(function(item) {
+    const sourceWorkflow = getIntakePendingFolderWorkflowKey_(item);
+    const issueKey = buildIntakePendingFolderIssueKey_(item, sourceWorkflow);
+    const disposition = getIntakeAuditDispositionForIssue_(auditState, issueKey);
+    const claimId = item.claimId || '';
+    const claimNumber = preserveIntakeClaimNumber_(item.claimNumber || '');
+
+    return {
+      issueType: 'pending-claim-folder',
+      issueKey: issueKey,
+      sourceWorkflow: sourceWorkflow,
+      workflow: item.workflow || getIntakeWorkflowDisplayName_(sourceWorkflow),
+      vendor: item.vendor || '',
+      threadId: item.threadId || '',
+      subject: item.subject || '',
+      claimId: claimId,
+      claimNumber: claimNumber,
+      displayName: item.displayName || item.customerName || claimId || claimNumber || '',
+      customerName: item.customerName || '',
+      lastMessageDate: item.lastMessageDate || '',
+      lastSender: item.lastSender || '',
+      status: item.status || '',
+      claimMatchStatus: getIntakePendingClaimMatchStatus_(item),
+      recommendedNextStep: item.recommendedNextStep || '',
+      readOnly: item.readOnly !== false,
+      canReview: true,
+      canIgnore: true,
+      auditDisposition: disposition ? disposition.actionType : '',
+      auditRecord: disposition || null,
+      isCleared: isIntakeIssueClearedByAudit_(auditState, issueKey)
+    };
+  });
+  const actionableItems = normalizedItems.filter(function(item) {
+    return !item.isCleared;
+  });
+
+  return {
+    status: response && response.status ? response.status : '',
+    message: response && response.message ? response.message : '',
+    pendingCount: actionableItems.length,
+    sourcePendingCount: normalizeIntakeMetricCount_(summary.pendingCount || allItems.length),
+    asbestosPendingCount: actionableItems.filter(function(item) {
+      return item.sourceWorkflow === 'asbestos';
+    }).length,
+    itelPendingCount: actionableItems.filter(function(item) {
+      return item.sourceWorkflow === 'itel';
+    }).length,
+    checkedAt: result.finishedAt || result.startedAt || '',
+    items: actionableItems,
+    allItems: normalizedItems,
+    groups: buildIntakePendingFolderGroups_(actionableItems)
+  };
+}
+
+function getIntakePendingFolderWorkflowKey_(item) {
+  const workflowText = String((item && item.workflow) || '').toLowerCase();
+  const vendorText = String((item && item.vendor) || '').toLowerCase();
+
+  if (workflowText.indexOf('asbestos') !== -1 || vendorText.indexOf('asbestos') !== -1) {
+    return 'asbestos';
+  }
+
+  if (workflowText.indexOf('itel') !== -1 || vendorText.indexOf('itel') !== -1) {
+    return 'itel';
+  }
+
+  return 'insuranceIntake';
+}
+
+function buildIntakePendingFolderIssueKey_(item, sourceWorkflow) {
+  return [
+    'pending-claim-folder',
+    sourceWorkflow || getIntakePendingFolderWorkflowKey_(item),
+    item && item.threadId ? item.threadId : '',
+    item && item.claimNumber ? preserveIntakeClaimNumber_(item.claimNumber) : '',
+    item && item.subject ? item.subject : ''
+  ].join('|');
+}
+
+function getIntakePendingClaimMatchStatus_(item) {
+  if (item && item.claimId) {
+    return 'Claim linked';
+  }
+
+  if (item && item.claimNumber) {
+    return 'Claim number parsed';
+  }
+
+  return 'No claim match';
+}
+
+function buildIntakePendingFolderGroups_(items) {
+  const groupKeys = ['insuranceIntake', 'asbestos', 'itel'];
+
+  return groupKeys.map(function(key) {
+    const groupItems = (items || []).filter(function(item) {
+      return item.sourceWorkflow === key;
+    });
+
+    return {
+      key: key,
+      name: getIntakeWorkflowDisplayName_(key),
+      count: groupItems.length,
+      items: groupItems
+    };
+  });
+}
+
+function getIntakeWorkflowDisplayName_(workflowKey) {
+  if (workflowKey === 'asbestos') {
+    return 'Asbestos';
+  }
+
+  if (workflowKey === 'itel') {
+    return 'Itel';
+  }
+
+  if (workflowKey === 'insuranceIntake') {
+    return 'Insurance Intake';
+  }
+
+  return workflowKey || 'Workflow';
+}
+
+function calculateIntakeWorkspaceTotals_(workflows, pendingClaimFolders, unresolvedItems) {
+  const totals = {
+    queueCount: 0,
+    reviewCount: 0,
+    errorCount: 0,
+    duplicateCount: 0,
+    retryBacklogCount: 0,
+    pendingClaimFolderCount: 0,
+    retryLimitReachedCount: 0,
+    missingOperationalLinkCount: 0,
+    lastCheckedAt: ''
+  };
+
+  Object.keys(workflows || {}).forEach(function(key) {
+    const workflow = workflows[key] || {};
+
+    totals.queueCount += normalizeIntakeMetricCount_(workflow.queueCount);
+    totals.lastCheckedAt = getLaterIntakeTimestamp_(totals.lastCheckedAt, workflow.checkedAt);
+  });
+
+  (unresolvedItems || []).forEach(function(item) {
+    if (item.issueType === 'needs-review') {
+      totals.reviewCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'error') {
+      totals.errorCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'duplicate') {
+      totals.duplicateCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'retry-backlog') {
+      totals.retryBacklogCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'pending-claim-folder') {
+      totals.pendingClaimFolderCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'retry-limit-reached') {
+      totals.retryLimitReachedCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'missing-operational-link') {
+      totals.missingOperationalLinkCount += normalizeIntakeMetricCount_(item.count);
+    }
+  });
+
+  totals.lastCheckedAt = getLaterIntakeTimestamp_(
+    totals.lastCheckedAt,
+    pendingClaimFolders ? pendingClaimFolders.checkedAt : ''
+  );
+
+  return totals;
+}
+
+function buildIntakeUnresolvedItems_(workflows, pendingClaimFolders, auditState) {
+  const definitions = [
+    {
+      id: 'needs-review',
+      title: 'Needs Review',
+      metric: 'reviewCount',
+      severity: 'warning',
+      message: 'Queue items are waiting for human review.',
+      canIgnore: true
+    },
+    {
+      id: 'error',
+      title: 'Error',
+      metric: 'errorCount',
+      severity: 'critical',
+      message: 'Queue items are labeled as errors in the source service.',
+      canIgnore: false
+    },
+    {
+      id: 'duplicate',
+      title: 'Duplicate',
+      metric: 'duplicateCount',
+      severity: 'warning',
+      message: 'Potential duplicate intake items are waiting in the source service.',
+      canIgnore: true
+    },
+    {
+      id: 'retry-backlog',
+      title: 'Retry backlog',
+      metric: 'retryBacklogCount',
+      severity: 'warning',
+      message: 'Retry-ready, retry-in-progress, or retry-blocked items are still open.',
+      canIgnore: true
+    },
+    {
+      id: 'pending-claim-folder',
+      title: 'Pending Claim Folder',
+      metric: 'pendingClaimFolderCount',
+      severity: 'warning',
+      message: 'Vendor attachment items are waiting on claim folder matching.',
+      canIgnore: true
+    },
+    {
+      id: 'retry-limit-reached',
+      title: 'Retry Limit Reached',
+      metric: 'retryLimitReachedCount',
+      severity: 'critical',
+      message: 'Retry limit reached labels are present in the source service.',
+      canIgnore: false
+    }
+  ];
+
+  const items = [];
+
+  Object.keys(workflows || {}).forEach(function(workflowKey) {
+    const workflow = workflows[workflowKey] || {};
+
+    definitions.forEach(function(definition) {
+      let count = normalizeIntakeMetricCount_(workflow[definition.metric]);
+      let detailItems = [];
+
+      if (definition.id === 'pending-claim-folder') {
+        detailItems = pendingClaimFolders && pendingClaimFolders.items
+          ? pendingClaimFolders.items.filter(function(item) {
+              return item.sourceWorkflow === workflowKey;
+            })
+          : [];
+        count = detailItems.length;
+      }
+
+      if (count <= 0) {
+        return;
+      }
+
+      const issueKey = buildIntakeMetricIssueKey_(definition.id, workflowKey, count);
+
+      if (isIntakeIssueClearedByAudit_(auditState, issueKey)) {
+        return;
+      }
+
+      items.push({
+        id: issueKey,
+        issueType: definition.id,
+        filterType: definition.id,
+        title: definition.title,
+        severity: definition.severity,
+        count: count,
+        message: definition.message,
+        sourceWorkflow: workflowKey,
+        sourceWorkflowName: workflow.name || getIntakeWorkflowDisplayName_(workflowKey),
+        issueKey: issueKey,
+        claimId: '',
+        displayName: '',
+        customerName: '',
+        canReview: true,
+        canIgnore: definition.canIgnore,
+        detailItems: detailItems,
+        workflows: [{
+          key: workflowKey,
+          name: workflow.name || getIntakeWorkflowDisplayName_(workflowKey),
+          count: count,
+          health: workflow.health || ''
+        }]
+      });
+    });
+  });
+
+  return items;
+}
+
+function buildIntakeMetricIssueKey_(issueType, sourceWorkflow, count) {
+  return [
+    issueType || '',
+    sourceWorkflow || '',
+    'count',
+    normalizeIntakeMetricCount_(count)
+  ].join('|');
+}
+
+function applyIntakeActionableCountsToWorkflows_(workflows, unresolvedItems) {
+  const workflowCopies = {};
+
+  Object.keys(workflows || {}).forEach(function(key) {
+    const workflow = workflows[key] || {};
+    workflowCopies[key] = Object.assign({}, workflow, {
+      pendingReviewCount: 0,
+      reviewCount: 0,
+      errorCount: 0,
+      duplicateCount: 0,
+      retryBacklogCount: 0,
+      pendingClaimFolderCount: 0,
+      retryLimitReachedCount: 0
+    });
+  });
+
+  (unresolvedItems || []).forEach(function(item) {
+    const workflowKey = item.sourceWorkflow || '';
+    const workflow = workflowCopies[workflowKey];
+
+    if (!workflow) {
+      return;
+    }
+
+    if (item.issueType === 'needs-review') {
+      workflow.pendingReviewCount += normalizeIntakeMetricCount_(item.count);
+      workflow.reviewCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'error') {
+      workflow.errorCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'duplicate') {
+      workflow.duplicateCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'retry-backlog') {
+      workflow.retryBacklogCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'pending-claim-folder') {
+      workflow.pendingClaimFolderCount += normalizeIntakeMetricCount_(item.count);
+    } else if (item.issueType === 'retry-limit-reached') {
+      workflow.retryLimitReachedCount += normalizeIntakeMetricCount_(item.count);
+    }
+  });
+
+  Object.keys(workflowCopies).forEach(function(key) {
+    workflowCopies[key].health = calculateIntakeWorkflowHealthFromActionableCounts_(workflowCopies[key]);
+  });
+
+  return workflowCopies;
+}
+
+function calculateIntakeWorkflowHealthFromActionableCounts_(workflow) {
+  if (
+    normalizeIntakeMetricCount_(workflow.errorCount) > 0
+    || normalizeIntakeMetricCount_(workflow.retryLimitReachedCount) > 0
+  ) {
+    return 'Critical';
+  }
+
+  if (
+    normalizeIntakeMetricCount_(workflow.reviewCount) > 0
+    || normalizeIntakeMetricCount_(workflow.duplicateCount) > 0
+    || normalizeIntakeMetricCount_(workflow.retryBacklogCount) > 0
+    || normalizeIntakeMetricCount_(workflow.pendingClaimFolderCount) > 0
+  ) {
+    return 'Warning';
+  }
+
+  return 'Healthy';
+}
+
+function buildIntakeIssueWorkflowBreakdown_(workflows, metric) {
+  return Object.keys(workflows || {})
+    .map(function(key) {
+      const workflow = workflows[key] || {};
+      const count = normalizeIntakeMetricCount_(workflow[metric]);
+
+      return {
+        key: key,
+        name: workflow.name || key,
+        count: count,
+        health: workflow.health || ''
+      };
+    })
+    .filter(function(item) {
+      return item.count > 0;
+    });
+}
+
+function buildIntakeWorkspaceActions_() {
+  return [
+    {
+      id: 'open-claims-workspace',
+      label: 'Open Claims Workspace',
+      kind: 'navigation',
+      route: '?view=claimShell&lensId=needsAttention',
+      enabled: true
+    },
+    {
+      id: 'refresh-queue-health',
+      label: 'Run Queue Health refresh',
+      kind: 'read',
+      enabled: true
+    },
+    {
+      id: 'run-intake',
+      label: 'Run Intake',
+      kind: 'process',
+      endpointAction: 'process',
+      enabled: true,
+      confirmation: 'This runs the existing insurance-intake-automation process endpoint. It may create Todoist tasks, Calendar drafts, and source-service label updates.'
+    },
+    {
+      id: 'resolve-issue',
+      label: 'Resolve',
+      kind: 'future-resolution',
+      enabled: false
+    }
+  ];
+}
+
+function normalizeIntakeDiagnostics_(response) {
+  const result = response && response.result ? response.result : {};
+
+  return {
+    status: response && response.status ? response.status : '',
+    message: response && response.message ? response.message : '',
+    automation: result.automation || '',
+    phase: result.phase || '',
+    checkedAt: result.checkedAt || '',
+    helperFunctions: result.helperFunctions || {},
+    config: result.config || {}
+  };
+}
+
+function summarizeIntakeSourceResponse_(response) {
+  return {
+    status: response && response.status ? response.status : '',
+    success: isSuccessfulIntakeResponse_(response),
+    message: response && response.message ? response.message : '',
+    action: response && response.action ? response.action : '',
+    responseCode: response && response.responseCode ? response.responseCode : ''
+  };
+}
+
+function isSuccessfulIntakeResponse_(response) {
+  const status = response && response.status ? String(response.status).toLowerCase() : '';
+  return status === 'success' || response && response.success === true;
+}
+
+function buildIntakeWorkspaceHealthMessage_(status, totals) {
+  if (status === 'Unavailable') {
+    return 'Insurance intake service could not be reached.';
+  }
+
+  const unresolvedCount = normalizeIntakeMetricCount_(totals.reviewCount)
+    + normalizeIntakeMetricCount_(totals.errorCount)
+    + normalizeIntakeMetricCount_(totals.duplicateCount)
+    + normalizeIntakeMetricCount_(totals.retryBacklogCount)
+    + normalizeIntakeMetricCount_(totals.pendingClaimFolderCount)
+    + normalizeIntakeMetricCount_(totals.retryLimitReachedCount)
+    + normalizeIntakeMetricCount_(totals.missingOperationalLinkCount);
+
+  if (unresolvedCount === 0) {
+    return 'No unresolved intake issues.';
+  }
+
+  return unresolvedCount + ' unresolved intake queue signal' + (unresolvedCount === 1 ? '' : 's') + '.';
+}
+
+function calculateIntakeWorkspaceHealth_(unresolvedItems) {
+  const healthValues = (unresolvedItems || []).map(function(item) {
+    return item && item.severity === 'critical' ? 'Critical' : 'Warning';
+  });
+
+  if (healthValues.indexOf('Critical') !== -1) {
+    return 'Critical';
+  }
+
+  if (healthValues.indexOf('Warning') !== -1) {
+    return 'Warning';
+  }
+
+  if (healthValues.indexOf('Unavailable') !== -1) {
+    return 'Unavailable';
+  }
+
+  return 'Healthy';
+}
+
+function normalizeIntakeHealth_(value) {
+  const normalized = String(value || '').toLowerCase();
+
+  if (normalized === 'critical') {
+    return 'Critical';
+  }
+
+  if (normalized === 'warning') {
+    return 'Warning';
+  }
+
+  if (normalized === 'healthy' || normalized === 'success') {
+    return 'Healthy';
+  }
+
+  return value ? String(value) : 'Unavailable';
+}
+
+function normalizeIntakeMetricCount_(value) {
+  const numberValue = Number(value || 0);
+
+  if (isNaN(numberValue) || numberValue < 0) {
+    return 0;
+  }
+
+  return numberValue;
+}
+
+function getLaterIntakeTimestamp_(firstValue, secondValue) {
+  if (!firstValue) {
+    return secondValue || '';
+  }
+
+  if (!secondValue) {
+    return firstValue || '';
+  }
+
+  const firstDate = new Date(firstValue);
+  const secondDate = new Date(secondValue);
+
+  if (isNaN(firstDate.getTime())) {
+    return secondValue;
+  }
+
+  if (isNaN(secondDate.getTime())) {
+    return firstValue;
+  }
+
+  return secondDate.getTime() > firstDate.getTime() ? secondValue : firstValue;
+}
+
+function testIntakeWorkspaceSummaryShape() {
+  const summary = getIntakeWorkspaceSummary();
+
+  return {
+    status: summary.status,
+    success: summary.success,
+    sourceService: summary.sourceService,
+    workspaceHealth: summary.workspaceHealth,
+    workflowKeys: summary.workflows ? Object.keys(summary.workflows) : [],
+    unresolvedItemCount: summary.unresolvedItems ? summary.unresolvedItems.length : 0,
+    actionCount: summary.availableActions ? summary.availableActions.length : 0,
+    generatedAt: new Date().toISOString()
+  };
 }
 
 
@@ -1856,8 +3721,8 @@ function testClaimsShellRoute() {
 
   const result = {
     status: 'Success',
-    claimsShellUrl: baseUrl + '?view=claimsShell&v=1',
-    coveragePendingUrl: baseUrl + '?view=claimsShell&condition=Coverage%20Pending&v=1',
+    claimWorkspaceUrl: baseUrl + '?view=claimShell&v=1',
+    coveragePendingUrl: baseUrl + '?view=claimShell&condition=Coverage%20Pending&v=1',
     claimShellUrl: baseUrl + '?view=claimShell&claimId=CLM-26A-0052-WTR&v=1',
     generatedAt: new Date().toISOString()
   };

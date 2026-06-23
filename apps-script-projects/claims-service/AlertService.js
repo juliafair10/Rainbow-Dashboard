@@ -616,17 +616,42 @@ function reconcileClaimAlerts(claimId, options) {
     return false;
   });
   const activeAlerts = getActiveAlertsForAlertPersistence_(claimId);
+  const staleStructuredAlerts = getStaleStructuredLinkAlerts_(activeAlerts, unsuppressedAlerts);
 
   const newAlerts = unsuppressedAlerts.filter(function(proposed) {
+    const proposedStructuredType = normalizeStructuredLinkAlertType_(proposed.Alert_Type || '');
+
     return !activeAlerts.some(function(existing) {
+      const existingStructuredType = normalizeStructuredLinkAlertType_(existing.Alert_Type || '');
+
+      if (proposedStructuredType || existingStructuredType) {
+        return proposedStructuredType && existingStructuredType && existingStructuredType === proposedStructuredType;
+      }
+
       return String(existing.Alert_Type || '') === String(proposed.Alert_Type || '');
     });
   });
 
   let alertsWritten = 0;
+  let staleStructuredAlertsResolved = 0;
   const writeResults = [];
+  const staleResolveResults = [];
 
   if (!dryRun) {
+    staleStructuredAlerts.forEach(function(alert) {
+      const alertId = getAlertPersistenceValue_(alert, ['Alert_ID', 'Alert ID']);
+      if (!alertId) {
+        return;
+      }
+
+      const resolveResult = resolveAlert(alertId, 'Structured External_Links data now satisfies this alert.');
+      staleResolveResults.push(resolveResult);
+
+      if (resolveResult && resolveResult.success) {
+        staleStructuredAlertsResolved++;
+      }
+    });
+
     newAlerts.forEach(function(alert) {
       const writeResult = addAlertForPersistence_(claimId, alert);
 
@@ -645,9 +670,12 @@ function reconcileClaimAlerts(claimId, options) {
     alertsSuppressed: suppressionResults.length,
     newAlerts: newAlerts.length,
     skippedExistingAlerts: unsuppressedAlerts.length - newAlerts.length,
+    staleStructuredAlerts: staleStructuredAlerts.length,
+    staleStructuredAlertsResolved: staleStructuredAlertsResolved,
     alertsWritten: alertsWritten,
     proposedAlerts: proposedAlerts,
     suppressionResults: suppressionResults,
+    staleResolveResults: staleResolveResults,
     writeResults: writeResults
   };
 
@@ -694,7 +722,7 @@ function buildStructuredAlertsForClaim_(claimId) {
 
   if (!hasXact && !hasSymbility) {
     proposed.push(buildStructuredAlert_(claimId, {
-      Alert_Type: 'Missing Xact/Symbility Link',
+      Alert_Type: 'Missing XA/Symbility Link',
       Severity: 'Medium',
       Source_System: 'claims-service alert persistence',
       Source_Record_ID: 'External_Links:' + claimId,
@@ -705,14 +733,14 @@ function buildStructuredAlertsForClaim_(claimId) {
     }));
   }
 
-  if (!hasClaimX) {
+  if (isAllstateAlertPersistenceClaim_(claimId) && !hasClaimX) {
     proposed.push(buildStructuredAlert_(claimId, {
       Alert_Type: 'Missing ClaimX Link/Video',
       Severity: 'Low',
       Source_System: 'claims-service alert persistence',
       Source_Record_ID: 'External_Links:' + claimId,
-      Reason: 'ClaimX link/video is not populated for this active claim.',
-      Recommended_Action: 'Add the ClaimX link/video when available, or leave unresolved if not required for this claim.',
+      Reason: 'ClaimX link/video is not populated for this active Allstate claim.',
+      Recommended_Action: 'Add the ClaimX link/video when available for this Allstate claim.',
       Owner_Area: 'Office Operations',
       Notes: 'Generated from structured External_Links data only.'
     }));
@@ -1433,4 +1461,84 @@ function getFirstAlertGovernanceTestClaimId_() {
   return activeClaim
     ? getAlertPersistenceValue_(activeClaim, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId'])
     : '';
+}
+
+function getStaleStructuredLinkAlerts_(activeAlerts, proposedAlerts) {
+  const proposedTypes = (proposedAlerts || []).reduce(function(types, alert) {
+    const normalizedType = normalizeStructuredLinkAlertType_(alert.Alert_Type || '');
+    if (normalizedType) {
+      types[normalizedType] = true;
+    }
+    return types;
+  }, {});
+
+  return (activeAlerts || []).filter(function(alert) {
+    const normalizedType = normalizeStructuredLinkAlertType_(alert.Alert_Type || '');
+    return normalizedType && !proposedTypes[normalizedType];
+  });
+}
+
+function normalizeStructuredLinkAlertType_(alertType) {
+  const normalized = String(alertType || '').trim().toLowerCase();
+
+  if (normalized === 'missing xact/symbility link' || normalized === 'missing xa/symbility link') {
+    return 'missing-xa-symbility-link';
+  }
+
+  if (normalized === 'missing claimx link/video') {
+    return 'missing-claimx-link-video';
+  }
+
+  return '';
+}
+
+function isAllstateAlertPersistenceClaim_(claimId) {
+  const claim = getAlertPersistenceClaimById_(claimId) || {};
+  const carrier = getAlertPersistenceValue_(claim, [
+    'Carrier',
+    'Insurance_Carrier',
+    'Insurance Carrier',
+    'Insurance_Company',
+    'Insurance Company',
+    'Company',
+    'Carrier_Name',
+    'Carrier Name',
+    'Insurer'
+  ]);
+
+  return String(carrier || '').toLowerCase().indexOf('allstate') !== -1;
+}
+
+function testAllstateDetection_26N0103() {
+  const claim = getAlertPersistenceClaimById_('CLM-26N-0103-WTR');
+
+  const carrier = getAlertPersistenceValue_(claim || {}, [
+    'Carrier',
+    'Insurance_Carrier',
+    'Insurance Carrier',
+    'Insurance_Company',
+    'Insurance Company',
+    'Company',
+    'Carrier_Name',
+    'Carrier Name',
+    'Insurer'
+  ]);
+
+  const result = {
+    claimId: 'CLM-26N-0103-WTR',
+    carrier: carrier,
+    isAllstate: isAllstateAlertPersistenceClaim_('CLM-26N-0103-WTR')
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testReconcileClaimAlerts_26N0103() {
+  const result = reconcileClaimAlerts('CLM-26N-0103-WTR', {
+    dryRun: false
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }

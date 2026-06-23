@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('IntakeStyles'); ?>
+</head>
+<body>
+  <script>
+    window.RAINBOW_DASHBOARD_WEB_APP_URL = <?!= JSON.stringify(ScriptApp.getService().getUrl() || '') ?>;
+  </script>
+  <div class="intake-shell">
+    <aside class="intake-sidebar">
+      <div class="intake-brand">
+        <div class="intake-brand-mark">R</div>
+        <div>
+          <div class="intake-brand-title">Rainbow</div>
+          <div class="intake-brand-subtitle">Operations</div>
+        </div>
+      </div>
+
+      <nav class="intake-nav" aria-label="Workspace navigation">
+        <button class="intake-nav-item" type="button" data-route="?view=homepage">Home</button>
+        <button class="intake-nav-item" type="button" data-route="?view=claimShell">Claims</button>
+        <button class="intake-nav-item is-active" type="button" data-route="?view=intake">Intake</button>
+        <button class="intake-nav-item" type="button" disabled>Revisions</button>
+        <button class="intake-nav-item" type="button" disabled>EOJ</button>
+      </nav>
+    </aside>
+
+    <main class="intake-main">
+      <header class="intake-header">
+        <div>
+          <div class="intake-eyebrow">Intake workspace</div>
+          <h1>Intake visibility</h1>
+          <div id="intakeStatusLine" class="intake-status-line">Loading intake workspace...</div>
+        </div>
+
+        <div class="intake-header-actions">
+          <button id="openClaimsWorkspaceButton" class="intake-button intake-button-secondary" type="button">
+            Open Claims Workspace
+          </button>
+          <button id="refreshIntakeButton" class="intake-button intake-button-primary" type="button">
+            Run Queue Health refresh
+          </button>
+          <button id="runIntakeButton" class="intake-button intake-button-danger" type="button">
+            Run Intake
+          </button>
+        </div>
+      </header>
+
+      <section class="intake-health-strip" aria-label="Intake workspace health">
+        <div class="intake-health-block">
+          <div class="intake-label">Workspace Health</div>
+          <div id="workspaceHealthStatus" class="intake-health-value is-loading">Loading</div>
+          <div id="workspaceHealthMessage" class="intake-muted">Checking source service...</div>
+        </div>
+        <div class="intake-health-meta">
+          <span class="intake-label">Source</span>
+          <span id="workspaceSourceService">insurance-intake-automation</span>
+          <span class="intake-label">Last checked</span>
+          <span id="workspaceLastChecked">-</span>
+        </div>
+      </section>
+
+      <section class="intake-kpi-grid" aria-label="Intake queue metrics">
+        <div class="intake-kpi-card">
+          <div class="intake-label">Active Queue</div>
+          <div class="intake-kpi-value" data-intake-kpi="queueCount">-</div>
+        </div>
+        <div class="intake-kpi-card">
+          <div class="intake-label">Review</div>
+          <div class="intake-kpi-value" data-intake-kpi="pendingReviewCount">-</div>
+        </div>
+        <div class="intake-kpi-card">
+          <div class="intake-label">Errors</div>
+          <div class="intake-kpi-value" data-intake-kpi="errorCount">-</div>
+        </div>
+        <div class="intake-kpi-card">
+          <div class="intake-label">Duplicates</div>
+          <div class="intake-kpi-value" data-intake-kpi="duplicateCount">-</div>
+        </div>
+        <div class="intake-kpi-card">
+          <div class="intake-label">Retry Backlog</div>
+          <div class="intake-kpi-value" data-intake-kpi="retryBacklogCount">-</div>
+        </div>
+        <div class="intake-kpi-card">
+          <div class="intake-label">Pending Folders</div>
+          <div class="intake-kpi-value" data-intake-kpi="pendingClaimFolderCount">-</div>
+        </div>
+      </section>
+
+      <section class="intake-content-grid">
+        <div class="intake-primary-column">
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Queue Health</div>
+                <h2>Workflows</h2>
+              </div>
+            </div>
+            <div id="intakeWorkflowList" class="intake-workflow-list">
+              <div class="intake-loading">Loading workflow health...</div>
+            </div>
+          </section>
+
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Unresolved Items</div>
+                <h2>Issue cards</h2>
+              </div>
+              <span id="intakeIssueCount" class="intake-muted">-</span>
+            </div>
+            <div id="intakeIssueFilters" class="intake-filter-tabs" aria-label="Intake issue filters">
+              <button class="intake-filter-button is-active" type="button" data-intake-filter="all">All</button>
+              <button class="intake-filter-button" type="button" data-intake-filter="needs-review">Needs Review</button>
+              <button class="intake-filter-button" type="button" data-intake-filter="duplicate">Duplicate</button>
+              <button class="intake-filter-button" type="button" data-intake-filter="pending-claim-folder">Pending Claim Folder</button>
+              <button class="intake-filter-button" type="button" data-intake-filter="retry-limit-reached">Retry Limit Reached</button>
+              <button class="intake-filter-button" type="button" data-intake-filter="missing-operational-link">Missing Links</button>
+            </div>
+            <div id="intakeIssueList" class="intake-issue-list">
+              <div class="intake-loading">Loading issue cards...</div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="intake-rail">
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Recently Processed</div>
+                <h2>Claims</h2>
+              </div>
+            </div>
+            <div id="recentlyProcessedClaimsList" class="intake-detail-list">
+              <div class="intake-loading">Loading recent claims...</div>
+            </div>
+          </section>
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Actions</div>
+                <h2>Available</h2>
+              </div>
+            </div>
+            <div id="intakeActionList" class="intake-action-list">
+              <div class="intake-loading">Loading actions...</div>
+            </div>
+          </section>
+
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Pending Claim Folders</div>
+                <h2>Inspection</h2>
+              </div>
+            </div>
+            <div id="pendingClaimFolderList" class="intake-detail-list">
+              <div class="intake-loading">Loading inspection...</div>
+            </div>
+          </section>
+
+          <section class="intake-panel">
+            <div class="intake-section-header">
+              <div>
+                <div class="intake-label">Diagnostics</div>
+                <h2>Source service</h2>
+              </div>
+            </div>
+            <div id="intakeDiagnosticsPanel" class="intake-diagnostics">
+              <div class="intake-loading">Loading diagnostics...</div>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <?!= include('IntakeScripts'); ?>
+</body>
+</html>

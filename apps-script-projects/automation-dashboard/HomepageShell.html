@@ -5,6 +5,9 @@
   <?!= HtmlService.createHtmlOutputFromFile('HomepageStyles').getContent(); ?>
 </head>
 <body>
+  <script>
+    window.RAINBOW_DASHBOARD_WEB_APP_URL_FROM_SERVER = <?!= JSON.stringify(ScriptApp.getService().getUrl() || '') ?>;
+  </script>
   <?!= HtmlService.createHtmlOutputFromFile('HomepageView').getContent(); ?>
   <?!= HtmlService.createHtmlOutputFromFile('HomepageScripts').getContent(); ?>
 </body>
