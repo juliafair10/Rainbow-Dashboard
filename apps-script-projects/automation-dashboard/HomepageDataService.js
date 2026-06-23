@@ -257,7 +257,14 @@ function normalizeHomepageClaim_(row) {
     Health_Reason: getHomepageValue_(row, ['Health Reason', 'Health_Reason']),
     Conditions: getHomepageValue_(row, ['Conditions']),
     Alerts: getHomepageValue_(row, ['Alerts']),
-    Last_Meaningful_Activity_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Last_Meaningful_Activity_Date', 'Last Meaningful Activity Date', 'Last Activity Date'])),
+    Last_Meaningful_Activity_Date: normalizeHomepageDateValue_(getHomepageValue_(row, [
+      'Last_Meaningful_Activity_At',
+      'Last Meaningful Activity At',
+      'Last_Meaningful_Activity_Date',
+      'Last Meaningful Activity Date',
+      'Last Activity Date',
+      'Last_Activity_Date'
+    ])),
     Days_Since_Activity: getHomepageValue_(row, ['Days_Since_Activity', 'Days Since Activity']),
     Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Created_At', 'Created At', 'Created Date'])),
     Updated_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Updated_At', 'Updated At', 'Last Updated'])),
@@ -269,19 +276,72 @@ function normalizeHomepageClaim_(row) {
 
 function normalizeHomepageTimelineEvent_(row) {
   return {
-    Timeline_Event_ID: getHomepageValue_(row, ['Timeline_Event_ID', 'Timeline Event ID', 'Event ID']),
+    Timeline_Event_ID: getHomepageValue_(row, [
+      'Timeline_Event_ID',
+      'Timeline Event ID',
+      'Event ID',
+      'Event_ID'
+    ]),
     Claim_ID: getHomepageValue_(row, ['Claim_ID', 'Claim ID']),
-    Event_Date: normalizeHomepageDateValue_(getHomepageValue_(row, ['Event_Date', 'Event Date', 'Activity Date', 'Created Date'])),
-    Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Created_At', 'Created At', 'Created Date'])),
-    Event_Type: getHomepageValue_(row, ['Event_Type', 'Event Type', 'Activity Type', 'Activity Label']),
-    Summary: getHomepageValue_(row, ['Summary', 'Activity Label', 'Description']),
-    Detail: getHomepageValue_(row, ['Detail', 'Details', 'Note', 'Notes']),
-    Source_System: getHomepageValue_(row, ['Source_System', 'Source System', 'Event_Source', 'Event Source']),
-    Event_Source: getHomepageValue_(row, ['Event_Source', 'Event Source', 'Source_System', 'Source System']),
+    Event_Date: normalizeHomepageDateValue_(getHomepageValue_(row, [
+      'Event_Date',
+      'Event Date',
+      'Date',
+      'Activity Date',
+      'Created Date',
+      'Created_At',
+      'Created At'
+    ])),
+    Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, [
+      'Created_At',
+      'Created At',
+      'Created Date'
+    ])),
+    Event_Type: getHomepageValue_(row, [
+      'Event_Type',
+      'Event Type',
+      'Activity Type',
+      'Activity Label',
+      'Type'
+    ]),
+    Summary: getHomepageValue_(row, [
+      'Summary',
+      'Activity Label',
+      'Description',
+      'Note',
+      'Notes'
+    ]),
+    Detail: getHomepageValue_(row, [
+      'Detail',
+      'Details',
+      'Note',
+      'Notes',
+      'Description'
+    ]),
+    Source_System: getHomepageValue_(row, [
+      'Source_System',
+      'Source System',
+      'Event_Source',
+      'Event Source',
+      'Source'
+    ]),
+    Event_Source: getHomepageValue_(row, [
+      'Event_Source',
+      'Event Source',
+      'Source_System',
+      'Source System',
+      'Source'
+    ]),
     Related_Workflow: getHomepageValue_(row, ['Related_Workflow', 'Related Workflow', 'Workflow']),
     Actor: getHomepageValue_(row, ['Actor', 'Owner', 'Primary Owner']),
-    Category: getHomepageValue_(row, ['Category', 'Event Category']),
-    Is_Meaningful_Activity: normalizeHomepageBoolean_(getHomepageValue_(row, ['Is_Meaningful_Activity', 'Is Meaningful Activity', 'Meaningful']))
+    Category: getHomepageValue_(row, ['Category', 'Event Category', 'Event_Category']),
+    Is_Meaningful_Activity: normalizeHomepageBoolean_(getHomepageValue_(row, [
+      'Is_Meaningful_Activity',
+      'Is Meaningful Activity',
+      'Meaningful',
+      'Updates_Last_Activity',
+      'Updates Last Activity'
+    ]))
   };
 }
 
@@ -1110,7 +1170,10 @@ function getHomepageRecentActivity_(claims, timeline) {
       detail: event.Detail || '',
       sourceSystem: event.Source_System || event.Event_Source || '',
       relatedWorkflow: event.Related_Workflow || '',
-      isMeaningful: event.Is_Meaningful_Activity === true || event.Is_Meaningful_Activity === 'TRUE',
+      isMeaningful: event.Is_Meaningful_Activity === true ||
+        event.Is_Meaningful_Activity === 'TRUE' ||
+        String(event.Event_Type || '').toLowerCase() === 'historical note' ||
+        String(event.Event_Type || '').toLowerCase() === 'removed from daily open jobs',
       targetWorkspace: 'claims',
       targetType: 'claim',
       targetId: event.Claim_ID || '',
@@ -1392,6 +1455,15 @@ function testGetHomepageClaimSummaryData() {
   Logger.log('Sample priority: ' + JSON.stringify(data.todayPriorities[0] || null, null, 2));
   Logger.log('First 5 priorities: ' + JSON.stringify(data.todayPriorities.slice(0, 5), null, 2));
   Logger.log('Sample recent activity: ' + JSON.stringify(data.recentActivity[0] || null, null, 2));
+  Logger.log('First 5 recent activity dates: ' + JSON.stringify(data.recentActivity.slice(0, 5).map(function(activity) {
+    return {
+      claimId: activity.claimId,
+      eventDate: activity.eventDate,
+      eventType: activity.eventType,
+      sourceSystem: activity.sourceSystem,
+      isMeaningful: activity.isMeaningful
+    };
+  }), null, 2));
   Logger.log('Sample recent claim summary: ' + JSON.stringify(data.recentClaimSummaries[0] || null, null, 2));
   Logger.log('Sample operational alert: ' + JSON.stringify(data.operationalAlerts[0] || null, null, 2));
 
