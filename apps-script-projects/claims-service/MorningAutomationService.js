@@ -16,6 +16,11 @@ function runRainbowMorningAutomation() {
   ));
 
   steps.push(runMorningAutomationStep_(
+    'reconcileDailyOpenJobsRemovedClaims',
+    reconcileDailyOpenJobsRemovedClaims
+  ));
+
+  steps.push(runMorningAutomationStep_(
     'processComplianceTasksEmailIntake',
     processComplianceTasksEmailIntake
   ));
@@ -32,7 +37,6 @@ function runRainbowMorningAutomation() {
 
   // Future morning workflow placeholders. Do not enable until the owning
   // import/refresh functions exist and are explicitly approved for automation.
-  // importLatestDailyOpenJobsReport();
   // importLatestComplianceTasksReport();
   // batchReconcileClaimConditions();
   // testBatchApplyClaimHealth();

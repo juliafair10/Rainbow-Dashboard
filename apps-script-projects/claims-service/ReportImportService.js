@@ -524,6 +524,299 @@ function testDryRunDailyOpenJobsImport() {
 }
 
 /**
+ * Dry-run Daily Open Jobs active reconciliation.
+ *
+ * Compares the latest Daily Open Jobs report against current non-terminal
+ * Claims rows and identifies claims that are active in Rainbow but missing
+ * from today's open jobs report.
+ *
+ * This is read-only. It does not close claims or update lifecycle state.
+ */
+function testDryRunDailyOpenJobsActiveReconciliation() {
+  let converted = null;
+
+  try {
+    const latestFileResponse = getLatestReportImportFile(
+      REPORT_IMPORT_CONFIG.dailyOpenJobsReportKey
+    );
+    const latestFile = unwrapLatestReportImportFile_(latestFileResponse);
+
+    if (!latestFile || !latestFile.fileId) {
+      throw new Error('No Daily Open Jobs report found.');
+    }
+
+    converted = convertXlsxToGoogleSheet_(latestFile.fileId, latestFile.fileName);
+    const reportData = readReportSheetRows_(converted.spreadsheetId);
+    const spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+    const claimsSheet = spreadsheet.getSheetByName('Claims');
+
+    if (!claimsSheet) {
+      throw new Error('Claims sheet not found.');
+    }
+
+    const claimValues = claimsSheet.getDataRange().getValues();
+    const claimHeaders = claimValues.length ? claimValues[0].map(function(header) {
+      return String(header || '').trim();
+    }) : [];
+    const claimHeaderMap = buildHeaderIndexMap_(claimHeaders);
+
+    const reportJobNumbers = {};
+    const reportClaimNumbers = {};
+
+    reportData.rowObjects.forEach(function(row) {
+      const jobNumber = normalizeLookupKey_(getReportValue_(row, 'job_number'));
+      const claimNumber = normalizeLookupKey_(getReportValue_(row, 'claim_number'));
+
+      if (jobNumber) {
+        reportJobNumbers[jobNumber] = true;
+      }
+
+      if (claimNumber) {
+        reportClaimNumbers[claimNumber] = true;
+      }
+    });
+
+    const missingFromOpenJobs = [];
+    const stillOpenInReport = [];
+    let skippedTerminal = 0;
+    let skippedBlank = 0;
+
+    for (var rowIndex = 1; rowIndex < claimValues.length; rowIndex++) {
+      const row = claimValues[rowIndex];
+      const claimId = getSheetCellValueByHeader_(row, claimHeaderMap, ['Claim ID', 'Claim_ID']);
+      const jobNumber = getSheetCellValueByHeader_(row, claimHeaderMap, ['Job Number', 'Job_Number']);
+      const claimNumber = getSheetCellValueByHeader_(row, claimHeaderMap, ['Claim Number', 'Claim_Number']);
+      const customerName = getSheetCellValueByHeader_(row, claimHeaderMap, ['Customer Name', 'Customer_Name']);
+      const lifecycleState = getSheetCellValueByHeader_(row, claimHeaderMap, ['Lifecycle State', 'Lifecycle_State']);
+      const lastActivityDate = getSheetCellValueByHeader_(row, claimHeaderMap, ['Last Activity Date', 'Last_Activity_Date']);
+      const lastMeaningfulActivityAt = getSheetCellValueByHeader_(row, claimHeaderMap, ['Last_Meaningful_Activity_At', 'Last Meaningful Activity At']);
+
+      if (!claimId && !jobNumber && !claimNumber) {
+        skippedBlank++;
+        continue;
+      }
+
+      if (isReportImportTerminalLifecycle_(lifecycleState)) {
+        skippedTerminal++;
+        continue;
+      }
+
+      const normalizedJobNumber = normalizeLookupKey_(jobNumber);
+      const normalizedClaimNumber = normalizeLookupKey_(claimNumber);
+      const matchedInReport = !!(
+        (normalizedJobNumber && reportJobNumbers[normalizedJobNumber]) ||
+        (normalizedClaimNumber && reportClaimNumbers[normalizedClaimNumber])
+      );
+
+      const claimSummary = {
+        rowNumber: rowIndex + 1,
+        claimId: claimId,
+        jobNumber: jobNumber,
+        claimNumber: claimNumber,
+        customerName: customerName,
+        lifecycleState: lifecycleState,
+        lastActivityDate: lastActivityDate,
+        lastMeaningfulActivityAt: lastMeaningfulActivityAt
+      };
+
+      if (matchedInReport) {
+        stillOpenInReport.push(claimSummary);
+      } else {
+        missingFromOpenJobs.push(claimSummary);
+      }
+    }
+
+    const result = {
+      status: 'Success',
+      success: true,
+      message: 'Daily Open Jobs active reconciliation dry run completed.',
+      data: {
+        sourceFileName: latestFile.fileName,
+        totalReportRows: reportData.totalDataRows,
+        activeClaimRowsChecked: stillOpenInReport.length + missingFromOpenJobs.length,
+        stillOpenInReportCount: stillOpenInReport.length,
+        missingFromOpenJobsCount: missingFromOpenJobs.length,
+        skippedTerminal: skippedTerminal,
+        skippedBlank: skippedBlank,
+        sampleMissingFromOpenJobs: missingFromOpenJobs.slice(0, 20),
+        sampleStillOpenInReport: stillOpenInReport.slice(0, 5)
+      }
+    };
+
+    Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  } finally {
+    cleanupConvertedReportSheet_(converted);
+  }
+}
+
+/**
+ * Apply Daily Open Jobs lifecycle reconciliation.
+ *
+ * Current Rainbow rule:
+ * If a claim is currently Active Work and is missing from the latest Daily Open Jobs report,
+ * it leaves the active operational workload and is marked Operationally Complete.
+ *
+ * This preserves the claim history in Rainbow while removing it from active dashboards/lenses.
+ */
+function reconcileDailyOpenJobsRemovedClaims() {
+  let converted = null;
+
+  try {
+    const latestFileResponse = getLatestReportImportFile(
+      REPORT_IMPORT_CONFIG.dailyOpenJobsReportKey
+    );
+    const latestFile = unwrapLatestReportImportFile_(latestFileResponse);
+
+    if (!latestFile || !latestFile.fileId) {
+      throw new Error('No Daily Open Jobs report found.');
+    }
+
+    converted = convertXlsxToGoogleSheet_(latestFile.fileId, latestFile.fileName);
+    const reportData = readReportSheetRows_(converted.spreadsheetId);
+    const spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+    const claimsSheet = spreadsheet.getSheetByName('Claims');
+
+    if (!claimsSheet) {
+      throw new Error('Claims sheet not found.');
+    }
+
+    const claimValues = claimsSheet.getDataRange().getValues();
+    const claimHeaders = claimValues.length ? claimValues[0].map(function(header) {
+      return String(header || '').trim();
+    }) : [];
+    const claimHeaderMap = buildHeaderIndexMap_(claimHeaders);
+
+    const reportJobNumbers = {};
+    const reportClaimNumbers = {};
+
+    reportData.rowObjects.forEach(function(row) {
+      const jobNumber = normalizeLookupKey_(getReportValue_(row, 'job_number'));
+      const claimNumber = normalizeLookupKey_(getReportValue_(row, 'claim_number'));
+
+      if (jobNumber) {
+        reportJobNumbers[jobNumber] = true;
+      }
+
+      if (claimNumber) {
+        reportClaimNumbers[claimNumber] = true;
+      }
+    });
+
+    const lifecycleCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Lifecycle State', 'Lifecycle_State']);
+    const ownershipCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Ownership Area', 'Ownership_Area']);
+    const healthStatusCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Health Status', 'Health_Status']);
+    const healthReasonCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Health Reason', 'Health_Reason']);
+    const lastUpdatedCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Last Updated', 'Last_Updated']);
+    const updatedAtCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Updated At', 'Updated_At']);
+
+    if (lifecycleCol === -1) {
+      throw new Error('Lifecycle State column not found in Claims sheet.');
+    }
+
+    const transitionedClaims = [];
+    const skippedClaims = [];
+    const now = new Date();
+
+    for (var rowIndex = 1; rowIndex < claimValues.length; rowIndex++) {
+      const row = claimValues[rowIndex];
+      const claimId = getSheetCellValueByHeader_(row, claimHeaderMap, ['Claim ID', 'Claim_ID']);
+      const jobNumber = getSheetCellValueByHeader_(row, claimHeaderMap, ['Job Number', 'Job_Number']);
+      const claimNumber = getSheetCellValueByHeader_(row, claimHeaderMap, ['Claim Number', 'Claim_Number']);
+      const customerName = getSheetCellValueByHeader_(row, claimHeaderMap, ['Customer Name', 'Customer_Name']);
+      const lifecycleState = getSheetCellValueByHeader_(row, claimHeaderMap, ['Lifecycle State', 'Lifecycle_State']);
+
+      if (!claimId && !jobNumber && !claimNumber) {
+        continue;
+      }
+
+      if (String(lifecycleState || '').trim() !== 'Active Work') {
+        skippedClaims.push({
+          claimId: claimId,
+          jobNumber: jobNumber,
+          customerName: customerName,
+          reason: 'Lifecycle is not Active Work.',
+          lifecycleState: lifecycleState
+        });
+        continue;
+      }
+
+      const normalizedJobNumber = normalizeLookupKey_(jobNumber);
+      const normalizedClaimNumber = normalizeLookupKey_(claimNumber);
+      const matchedInReport = !!(
+        (normalizedJobNumber && reportJobNumbers[normalizedJobNumber]) ||
+        (normalizedClaimNumber && reportClaimNumbers[normalizedClaimNumber])
+      );
+
+      if (matchedInReport) {
+        continue;
+      }
+
+      row[lifecycleCol] = 'Operationally Complete';
+
+      if (ownershipCol !== -1) {
+        row[ownershipCol] = '';
+      }
+
+      if (healthStatusCol !== -1) {
+        row[healthStatusCol] = 'Not Applicable';
+      }
+
+      if (healthReasonCol !== -1) {
+        row[healthReasonCol] = 'Claim removed from active workload because it is no longer present on the Daily Open Jobs report.';
+      }
+
+      if (lastUpdatedCol !== -1) {
+        row[lastUpdatedCol] = now;
+      }
+
+      if (updatedAtCol !== -1) {
+        row[updatedAtCol] = now;
+      }
+
+      transitionedClaims.push({
+        rowNumber: rowIndex + 1,
+        claimId: claimId,
+        jobNumber: jobNumber,
+        claimNumber: claimNumber,
+        customerName: customerName,
+        previousLifecycleState: lifecycleState,
+        newLifecycleState: 'Operationally Complete'
+      });
+    }
+
+    if (claimValues.length > 1) {
+      claimsSheet
+        .getRange(1, 1, claimValues.length, claimValues[0].length)
+        .setValues(claimValues);
+    }
+
+    transitionedClaims.forEach(function(claim) {
+      appendDailyOpenJobsRemovalTimelineEvent_(claim, latestFile.fileName, now);
+    });
+
+    const result = {
+      status: 'Success',
+      success: true,
+      message: 'Daily Open Jobs removed-claim reconciliation completed.',
+      data: {
+        sourceFileName: latestFile.fileName,
+        totalReportRows: reportData.totalDataRows,
+        transitionedCount: transitionedClaims.length,
+        skippedCount: skippedClaims.length,
+        transitionedClaims: transitionedClaims,
+        sampleSkippedClaims: skippedClaims.slice(0, 10)
+      }
+    };
+
+    Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  } finally {
+    cleanupConvertedReportSheet_(converted);
+  }
+}
+
+/**
  * Dry-run Compliance Tasks import matching before writing Compliance_Actions.
  */
 function testDryRunComplianceTasksImport() {
@@ -735,6 +1028,64 @@ function normalizeLookupKey_(value) {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '');
+}
+
+function getHeaderIndexByPossibleNames_(headerMap, possibleHeaders) {
+  for (var i = 0; i < possibleHeaders.length; i++) {
+    var header = possibleHeaders[i];
+    if (headerMap[header] !== undefined) {
+      return headerMap[header];
+    }
+  }
+
+  return -1;
+}
+
+function appendDailyOpenJobsRemovalTimelineEvent_(claim, sourceFileName, eventDate) {
+  if (typeof appendTimelineEvent !== 'function') {
+    return;
+  }
+
+  try {
+    appendTimelineEvent(claim.claimId, {
+      Timeline_Event_ID: 'DOJ-REMOVED-' + claim.claimId + '-' + Utilities.formatDate(eventDate, Session.getScriptTimeZone(), 'yyyyMMdd'),
+      Claim_ID: claim.claimId,
+      Job_Number: claim.jobNumber,
+      Event_Date: eventDate,
+      Event_Category: 'Lifecycle',
+      Event_Type: 'Removed from Daily Open Jobs',
+      Event_Source: 'Daily Open Jobs Reconciliation',
+      Source_System: 'Daily Open Jobs',
+      Source_Record_ID: sourceFileName || '',
+      Summary: 'Claim removed from active workload because it is no longer present on the Daily Open Jobs report.',
+      Detail: 'Daily Open Jobs reconciliation transitioned this claim from Active Work to Operationally Complete. Source file: ' + (sourceFileName || ''),
+      Actor: 'Rainbow Morning Automation',
+      Is_Meaningful_Activity: true,
+      Meaningful_Activity_Type: 'Lifecycle Transition',
+      Updates_Last_Activity: true,
+      Display_Priority: 'normal',
+      Visibility: 'Internal'
+    });
+  } catch (error) {
+    Logger.log('Unable to append Daily Open Jobs removal timeline event for ' + claim.claimId + ': ' + error.message);
+  }
+}
+
+function getSheetCellValueByHeader_(row, headerMap, possibleHeaders) {
+  for (var i = 0; i < possibleHeaders.length; i++) {
+    var header = possibleHeaders[i];
+    if (headerMap[header] !== undefined) {
+      return row[headerMap[header]];
+    }
+  }
+  return '';
+}
+
+function isReportImportTerminalLifecycle_(lifecycleState) {
+  var normalized = String(lifecycleState || '').trim().toUpperCase();
+  return normalized === 'OPERATIONALLY COMPLETE' ||
+    normalized === 'NOT SOLD' ||
+    normalized === 'CLOSED';
 }
 
 /**

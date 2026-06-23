@@ -434,6 +434,7 @@ function splitList_(value) {
     })
     .filter(Boolean);
 }
+
 function testClaimsQueryRafiLastActivity() {
   var sheet = getClaimsDatabaseSheet_();
   var values = sheet.getDataRange().getValues();
@@ -495,6 +496,66 @@ function testClaimsQueryRafiLastActivity() {
   return result;
 }
 
+function testMissingFromOpenJobsClaimDetails() {
+  var missingClaimIds = [
+    'CLM-26N-0128-CUS',
+    'CLM-26N-0096-WTR',
+    'CLM-26N-0099-WTR',
+    'CLM-26N-0100-WTR',
+    'CLM-26A-0044-WTR',
+    'CLM-26N-0115-WTR',
+    'CLM-26N-0121-WTR',
+    'CLM-26N-0013-WTR',
+    'CLM-26A-0046-CUS'
+  ];
+
+  var lookup = {};
+  missingClaimIds.forEach(function(claimId) {
+    lookup[claimId] = true;
+  });
+
+  var claims = getAllClaimSummaries({ includeTerminal: true });
+  var details = claims.filter(function(claim) {
+    return lookup[claim.claimId];
+  }).map(function(claim) {
+    return {
+      claimId: claim.claimId,
+      jobNumber: claim.jobNumber,
+      customerName: claim.customerName || claim.displayName,
+      claimNumber: claim.claimNumber,
+      lifecycleState: claim.lifecycleState,
+      ownershipArea: claim.ownershipArea,
+      healthLevel: claim.healthLevel,
+      healthReason: claim.healthReason,
+      lastActivityDate: claim.lastActivityDate,
+      lastMeaningfulActivityAt: claim.lastMeaningfulActivityAt || claim.lastMeaningfulActivityDate,
+      activeConditions: claim.activeConditions || [],
+      activeAlerts: claim.activeAlerts || [],
+      nextAction: claim.nextAction || '',
+      operationalTags: claim.operationalTags || []
+    };
+  });
+
+  var foundLookup = {};
+  details.forEach(function(detail) {
+    foundLookup[detail.claimId] = true;
+  });
+
+  var missingFromClaims = missingClaimIds.filter(function(claimId) {
+    return !foundLookup[claimId];
+  });
+
+  var result = {
+    requestedCount: missingClaimIds.length,
+    foundCount: details.length,
+    missingFromClaims: missingFromClaims,
+    claims: details
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 function testClaimsQueryHeaders() {
   var sheet = getClaimsDatabaseSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -541,5 +602,6 @@ var ClaimsQueryService = {
   testClaimsQueryIncludeTerminal: testClaimsQueryIncludeTerminal,
   testClaimsQueryConditionHydration: testClaimsQueryConditionHydration,
   testClaimsQueryAlertHydration: testClaimsQueryAlertHydration,
-  testClaimsQueryRafiLastActivity: testClaimsQueryRafiLastActivity
+  testClaimsQueryRafiLastActivity: testClaimsQueryRafiLastActivity,
+  testMissingFromOpenJobsClaimDetails: testMissingFromOpenJobsClaimDetails
 };
