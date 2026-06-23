@@ -321,11 +321,85 @@ var HistoricalNotesImportService = (function () {
     return rows.length;
   }
 
+  function diagnoseHistoricalNotesForJob(jobNumber) {
+    var normalizedJobNumber = String(jobNumber || '').trim();
+    var historicalRows = getHistoricalNoteRows_().filter(function(row) {
+      return String(getHistoricalNoteValue_(row, 'jobNumber', 'jobNumber') || '').trim() === normalizedJobNumber;
+    });
+
+    historicalRows.sort(function(a, b) {
+      var aDate = TimelineImportHelpers.normalizeImportedDate(getHistoricalNoteValue_(a, 'noteDate', 'noteDate')) || new Date(0);
+      var bDate = TimelineImportHelpers.normalizeImportedDate(getHistoricalNoteValue_(b, 'noteDate', 'noteDate')) || new Date(0);
+      return bDate.getTime() - aDate.getTime();
+    });
+
+    var ss = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
+    var timelineSheet = ss.getSheetByName('Timeline_Events');
+    var timelineRows = [];
+
+    if (timelineSheet && timelineSheet.getLastRow() > 1) {
+      var values = timelineSheet.getDataRange().getValues();
+      var headers = values[0].map(function(header) {
+        return String(header || '').trim();
+      });
+
+      var eventIdIndex = headers.indexOf('Event ID');
+      var claimIdIndex = headers.indexOf('Claim ID');
+      var jobNumberIndex = headers.indexOf('Job Number');
+      var dateIndex = headers.indexOf('Date');
+      var sourceIndex = headers.indexOf('Source');
+      var summaryIndex = headers.indexOf('Summary');
+      var detailsIndex = headers.indexOf('Details');
+
+      for (var i = 1; i < values.length; i++) {
+        var rowJobNumber = jobNumberIndex >= 0 ? String(values[i][jobNumberIndex] || '').trim() : '';
+        var rowClaimId = claimIdIndex >= 0 ? String(values[i][claimIdIndex] || '').trim() : '';
+
+        if (rowJobNumber === normalizedJobNumber || rowClaimId.indexOf(normalizedJobNumber) !== -1) {
+          timelineRows.push({
+            eventId: eventIdIndex >= 0 ? values[i][eventIdIndex] : '',
+            claimId: rowClaimId,
+            jobNumber: rowJobNumber,
+            date: dateIndex >= 0 ? values[i][dateIndex] : '',
+            source: sourceIndex >= 0 ? values[i][sourceIndex] : '',
+            summary: summaryIndex >= 0 ? values[i][summaryIndex] : '',
+            details: detailsIndex >= 0 ? values[i][detailsIndex] : ''
+          });
+        }
+      }
+    }
+
+    timelineRows.sort(function(a, b) {
+      var aDate = TimelineImportHelpers.normalizeImportedDate(a.date) || new Date(0);
+      var bDate = TimelineImportHelpers.normalizeImportedDate(b.date) || new Date(0);
+      return bDate.getTime() - aDate.getTime();
+    });
+
+    var result = {
+      jobNumber: normalizedJobNumber,
+      historicalCount: historicalRows.length,
+      timelineCount: timelineRows.length,
+      newestHistoricalNotes: historicalRows.slice(0, 10).map(function(row) {
+        return {
+          noteId: getHistoricalNoteValue_(row, 'noteId', 'noteId'),
+          noteDate: getHistoricalNoteValue_(row, 'noteDate', 'noteDate'),
+          noteAuthor: getHistoricalNoteValue_(row, 'noteAuthor', 'noteAuthor'),
+          noteText: TimelineImportHelpers.summarizeText(getHistoricalNoteValue_(row, 'noteText', 'noteText'), 180)
+        };
+      }),
+      newestTimelineEvents: timelineRows.slice(0, 10)
+    };
+
+    Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
   return {
     testDryRunHistoricalNotesImport: testDryRunHistoricalNotesImport,
     importLatestHistoricalNotes: importLatestHistoricalNotes,
     testDryRunNewHistoricalNotes: testDryRunNewHistoricalNotes,
-    importNewHistoricalNotes: importNewHistoricalNotes
+    importNewHistoricalNotes: importNewHistoricalNotes,
+    diagnoseHistoricalNotesForJob: diagnoseHistoricalNotesForJob
   };
 })();
 
@@ -365,4 +439,12 @@ function testDryRunNewHistoricalNotes() {
 
 function importNewHistoricalNotes() {
   return HistoricalNotesImportService.importNewHistoricalNotes();
+}
+
+function diagnoseHistoricalNotesForJob(jobNumber) {
+  return HistoricalNotesImportService.diagnoseHistoricalNotesForJob(jobNumber);
+}
+
+function diagnoseHistoricalNotesFor26A0034() {
+  return diagnoseHistoricalNotesForJob('26A-0034-WTR');
 }

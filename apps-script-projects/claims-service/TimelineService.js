@@ -78,8 +78,8 @@ function getTimelineForClaim(claimId) {
   }
 
   rows.sort(function(a, b) {
-    const aDate = new Date(a.Event_Date || a.Created_At || 0).getTime();
-    const bDate = new Date(b.Event_Date || b.Created_At || 0).getTime();
+    const aDate = normalizeTimelineServiceDate_(a.Event_Date || a['Event Date'] || a.Date || a.date || a.Created_At || a['Created At'] || 0).getTime();
+    const bDate = normalizeTimelineServiceDate_(b.Event_Date || b['Event Date'] || b.Date || b.date || b.Created_At || b['Created At'] || 0).getTime();
     return bDate - aDate;
   });
 
@@ -190,19 +190,36 @@ function normalizeTimelineFallbackRecord_(record) {
   return {
     Timeline_Event_ID: record.Timeline_Event_ID || record['Timeline Event ID'] || record.Event_ID || record['Event ID'] || '',
     Claim_ID: record.Claim_ID || record['Claim ID'] || '',
-    Event_Date: record.Event_Date || record['Event Date'] || record.Activity_Date || record['Activity Date'] || record.Created_At || record['Created At'] || '',
+    Event_Date: record.Event_Date || record['Event Date'] || record.Date || record.date || record.Activity_Date || record['Activity Date'] || record.Created_At || record['Created At'] || '',
     Created_At: record.Created_At || record['Created At'] || '',
     Event_Type: record.Event_Type || record['Event Type'] || record.Activity_Type || record['Activity Type'] || record.Type || '',
-    Event_Source: record.Event_Source || record['Event Source'] || record.Source_System || record['Source System'] || '',
-    Source_System: record.Source_System || record['Source System'] || record.Event_Source || record['Event Source'] || '',
-    Source_Record_ID: record.Source_Record_ID || record['Source Record ID'] || '',
+    Event_Source: record.Event_Source || record['Event Source'] || record.Source_System || record['Source System'] || record.Source || record.source || '',
+    Source_System: record.Source_System || record['Source System'] || record.Event_Source || record['Event Source'] || record.Source || record.source || '',
+    Source_Record_ID: record.Source_Record_ID || record['Source Record ID'] || record.Event_ID || record['Event ID'] || '',
     Summary: record.Summary || record.Activity_Label || record['Activity Label'] || record.Description || '',
-    Detail: record.Detail || record.Details || record.Note || record.Notes || '',
+    Detail: record.Detail || record.Details || record.details || record.Note || record.Notes || '',
     Actor: record.Actor || record.Owner || '',
     Related_Workflow: record.Related_Workflow || record['Related Workflow'] || record.Workflow || '',
     Event_Category: record.Event_Category || record['Event Category'] || record.Category || '',
     Is_Meaningful_Activity: record.Is_Meaningful_Activity || record['Is Meaningful Activity'] || record.Meaningful || false
   };
+}
+
+function normalizeTimelineServiceDate_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (!value) {
+    return new Date(0);
+  }
+
+  const parsed = new Date(value);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return new Date(0);
 }
 
 function isMeaningfulActivity(event) {
@@ -236,15 +253,15 @@ function normalizeTimelineEvent_(claimId, event) {
   const sourceSystem = normalizeString(event.Source_System || event.sourceSystem || eventSource || CLAIM_SERVICE.name);
 
   const normalizedEvent = {
-    Timeline_Event_ID: event.Timeline_Event_ID || event.timelineEventId || generateId(CLAIM_ID_PREFIXES.timelineEvent),
+    Timeline_Event_ID: event.Timeline_Event_ID || event.timelineEventId || event['Event ID'] || generateId(CLAIM_ID_PREFIXES.timelineEvent),
     Claim_ID: claimId,
-    Event_Date: event.Event_Date || event.eventDate || now,
+    Event_Date: event.Event_Date || event.eventDate || event.Date || event.date || now,
     Event_Type: eventType,
     Event_Source: eventSource,
-    Source_Record_ID: normalizeString(event.Source_Record_ID || event.sourceRecordId || ''),
+    Source_Record_ID: normalizeString(event.Source_Record_ID || event.sourceRecordId || event['Event ID'] || ''),
     Source_System: sourceSystem,
     Summary: normalizeString(event.Summary || event.summary || ''),
-    Detail: normalizeString(event.Detail || event.detail || ''),
+    Detail: normalizeString(event.Detail || event.detail || event.Details || event.details || ''),
     Actor: normalizeString(event.Actor || event.actor || ''),
     Related_Workflow: normalizeString(event.Related_Workflow || event.relatedWorkflow || ''),
     Related_Financial_Track_ID: normalizeString(event.Related_Financial_Track_ID || event.relatedFinancialTrackId || ''),

@@ -88,7 +88,9 @@ function getWorkspaceTimelineForClaim_(claimId) {
         var timelineRows = Array.isArray(timelineResponse.data.timeline)
           ? timelineResponse.data.timeline
           : [];
-        var normalizedTimelineEvents = timelineRows.map(normalizeWorkspaceTimelineEvent_);
+        var normalizedTimelineEvents = timelineRows
+          .map(normalizeWorkspaceTimelineEvent_)
+          .sort(sortWorkspaceTimelineEventsNewestFirst_);
 
         return {
           count: timelineResponse.data.count || normalizedTimelineEvents.length,
@@ -147,9 +149,7 @@ function getWorkspaceTimelineForClaim_(claimId) {
              recordJobNumber === normalizedJobNumber ||
              recordClaimNumber === normalizedClaimId ||
              recordClaimNumber === normalizedJobNumber;
-    }).map(normalizeWorkspaceTimelineEvent_).sort(function(a, b) {
-      return new Date(b.eventDate || b.createdAt || 0) - new Date(a.eventDate || a.createdAt || 0);
-    });
+    }).map(normalizeWorkspaceTimelineEvent_).sort(sortWorkspaceTimelineEventsNewestFirst_);
 
     return {
       count: events.length,
@@ -164,6 +164,30 @@ function getWorkspaceTimelineForClaim_(claimId) {
       recentEvents: []
     };
   }
+}
+
+function sortWorkspaceTimelineEventsNewestFirst_(a, b) {
+  var aDate = normalizeWorkspaceTimelineDate_(a.eventDate || a.createdAt || a.Date || a.date);
+  var bDate = normalizeWorkspaceTimelineDate_(b.eventDate || b.createdAt || b.Date || b.date);
+
+  return bDate.getTime() - aDate.getTime();
+}
+
+function normalizeWorkspaceTimelineDate_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (!value) {
+    return new Date(0);
+  }
+
+  var parsed = new Date(value);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return new Date(0);
 }
 
 function findWorkspaceTimelineHeaderRowIndex_(values) {

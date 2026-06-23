@@ -102,7 +102,9 @@ function normalizeClaimRow_(headers, row, activeConditionsByClaim, activeAlertsB
     activeConditions: activeConditions,
     activeAlerts: activeAlerts,
     financialTrackSummary: null,
-    lastMeaningfulActivityDate: pick_(raw, ['Last Activity Date', 'Last_Meaningful_Activity_Date', 'Last Meaningful Activity Date']),
+    lastMeaningfulActivityAt: pick_(raw, ['Last_Meaningful_Activity_At', 'Last Meaningful Activity At']),
+    lastMeaningfulActivityDate: pick_(raw, ['Last_Meaningful_Activity_At', 'Last Meaningful Activity At', 'Last Activity Date', 'Last_Meaningful_Activity_Date', 'Last Meaningful Activity Date']),
+    lastActivityDate: pick_(raw, ['Last_Activity_Date', 'Last Activity Date']),
     daysSinceMeaningfulActivity: pick_(raw, ['Days_Since_Meaningful_Activity', 'Days Since Meaningful Activity']),
     totalClaimAgeDays: pick_(raw, ['Total_Claim_Age_Days', 'Total Claim Age Days']),
     nextAction: pick_(raw, ['Next_Action', 'Next Action']),
@@ -432,6 +434,67 @@ function splitList_(value) {
     })
     .filter(Boolean);
 }
+function testClaimsQueryRafiLastActivity() {
+  var sheet = getClaimsDatabaseSheet_();
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function(header) {
+    return String(header || '').trim();
+  });
+
+  var targetRow = null;
+  var targetRaw = {};
+
+  for (var i = 1; i < values.length; i++) {
+    var raw = {};
+
+    headers.forEach(function(header, index) {
+      raw[header] = values[i][index];
+    });
+
+    if (raw.Claim_ID === 'CLM-26A-0034-WTR' || raw.Job_Number === '26A-0034-WTR') {
+      targetRow = values[i];
+      targetRaw = raw;
+      break;
+    }
+  }
+
+  var claims = getAllClaimSummaries({ includeTerminal: true });
+  var match = claims.filter(function(claim) {
+    return claim.claimId === 'CLM-26A-0034-WTR' || claim.jobNumber === '26A-0034-WTR';
+  })[0] || null;
+
+  var meaningfulHeaders = headers.filter(function(header) {
+    return header.toLowerCase().indexOf('meaningful') !== -1 ||
+      header.toLowerCase().indexOf('activity') !== -1 ||
+      header.toLowerCase().indexOf('updated') !== -1;
+  });
+
+  var rawMeaningfulValues = {};
+  meaningfulHeaders.forEach(function(header) {
+    rawMeaningfulValues[header] = targetRaw[header];
+  });
+
+  var result = {
+    found: !!match,
+    spreadsheetName: sheet.getParent().getName(),
+    sheetName: sheet.getName(),
+    claimId: match ? match.claimId : '',
+    jobNumber: match ? match.jobNumber : '',
+    displayName: match ? match.displayName : '',
+    normalized: {
+      lastMeaningfulActivityAt: match ? match.lastMeaningfulActivityAt : '',
+      lastMeaningfulActivityDate: match ? match.lastMeaningfulActivityDate : '',
+      lastActivityDate: match ? match.lastActivityDate : '',
+      lastUpdated: match ? match.lastUpdated : ''
+    },
+    rawMeaningfulValues: rawMeaningfulValues,
+    matchingHeaders: meaningfulHeaders
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 function testClaimsQueryHeaders() {
   var sheet = getClaimsDatabaseSheet_();
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -477,5 +540,6 @@ var ClaimsQueryService = {
   testClaimsQueryHeaders: testClaimsQueryHeaders,
   testClaimsQueryIncludeTerminal: testClaimsQueryIncludeTerminal,
   testClaimsQueryConditionHydration: testClaimsQueryConditionHydration,
-  testClaimsQueryAlertHydration: testClaimsQueryAlertHydration
+  testClaimsQueryAlertHydration: testClaimsQueryAlertHydration,
+  testClaimsQueryRafiLastActivity: testClaimsQueryRafiLastActivity
 };

@@ -157,8 +157,21 @@ function isWaitingWithHealthyCadence_(claim) {
   );
 }
 
+function getClaimDisplayLastActivity_(claim) {
+  return claim.lastMeaningfulActivityDate ||
+    claim.lastMeaningfulActivityAt ||
+    claim.Last_Meaningful_Activity_At ||
+    claim['Last Meaningful Activity At'] ||
+    claim.lastActivityDate ||
+    claim.Last_Activity_Date ||
+    claim['Last Activity Date'] ||
+    claim.lastUpdated ||
+    claim.Last_Updated ||
+    '';
+}
+
 function getComparableDate_(claim) {
-  var dateValue = claim.lastMeaningfulActivityDate || claim.createdDate || claim.lastUpdated;
+  var dateValue = getClaimDisplayLastActivity_(claim) || claim.createdDate || claim.lastUpdated;
   var date = new Date(dateValue || 0);
 
   if (isNaN(date.getTime())) {

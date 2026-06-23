@@ -316,13 +316,26 @@
       html += '<div class="claim-row-attention"><span>Why:</span> ' + escapeHtml(attentionReason) + '</div>';
     }
 
-    if (claim.lastMeaningfulActivityDate) {
-      html += '<div class="claim-row-activity"><span>Last Activity</span> ' + escapeHtml(claim.lastMeaningfulActivityDate) + '</div>';
+    const displayLastActivity = getClaimDisplayLastActivity_(claim);
+
+    if (displayLastActivity) {
+      html += '<div class="claim-row-activity"><span>Last Activity</span> ' + escapeHtml(displayLastActivity) + '</div>';
     }
 
     html += '</div>';
 
     return html;
+  }
+
+  function getClaimDisplayLastActivity_(claim) {
+    return claim.lastMeaningfulActivityAt ||
+      claim.lastMeaningfulActivityDate ||
+      claim.Last_Meaningful_Activity_At ||
+      claim['Last Meaningful Activity At'] ||
+      claim.lastActivityDate ||
+      claim.Last_Activity_Date ||
+      claim['Last Activity Date'] ||
+      '';
   }
 
   function renderClaimConditionPills_(conditions) {
@@ -860,11 +873,8 @@
     html += '<h4>Recent Activity</h4>';
 
     if (timelineEvents.length) {
-      timelineEvents.slice(0, 5).forEach(function(event) {
-        html += '<div class="claim-detail-timeline-item">';
-        html += '<div>' + escapeHtml(getTimelineEventSummary_(event)) + '</div>';
-        html += '<small>' + escapeHtml(getTimelineEventMeta_(event)) + '</small>';
-        html += '</div>';
+      timelineEvents.slice(0, 10).forEach(function(event) {
+        html += renderClaimTimelineItem_(event);
       });
     } else {
       html += '<div class="claims-empty-state">No recent activity available yet.</div>';
@@ -891,6 +901,26 @@
     }
 
     panel.innerHTML = html;
+  }
+
+  function renderClaimTimelineItem_(event) {
+    const eventType = getTimelineEventType_(event);
+    const source = getTimelineEventSource_(event);
+    const detail = getTimelineEventDetail_(event);
+    const summary = getTimelineEventSummary_(event);
+    const isHistoricalNote = eventType.toLowerCase() === 'historical note' || source.toLowerCase() === 'historical notes';
+    let html = '<div class="claim-detail-timeline-item' + (isHistoricalNote ? ' claim-detail-timeline-item-note' : '') + '">';
+
+    html += '<div>' + escapeHtml(summary) + '</div>';
+
+    if (detail && detail !== summary) {
+      html += '<div class="claim-detail-timeline-detail">' + escapeHtml(detail) + '</div>';
+    }
+
+    html += '<small>' + escapeHtml(getTimelineEventMeta_(event)) + '</small>';
+    html += '</div>';
+
+    return html;
   }
 
   function renderClaimDetailKeyValue_(label, value) {
@@ -963,16 +993,20 @@
 
   function getTimelineEventSummary_(event) {
     return event.summary ||
+      event.Summary ||
       event.title ||
       event.eventSummary ||
       event.description ||
       event.lastActivitySummary ||
       event.activitySummary ||
+      event.detail ||
+      event.details ||
+      event.Details ||
       'Timeline Event';
   }
 
   function getTimelineEventDate_(event) {
-    const rawDate = event.eventDate || event.date || event.createdAt || event.timestamp || '';
+    const rawDate = event.eventDate || event.date || event.Date || event.createdAt || event.timestamp || '';
 
     if (!rawDate) {
       return '';
@@ -994,9 +1028,22 @@
   function getTimelineEventMeta_(event) {
     return [
       getTimelineEventDate_(event),
-      event.eventType || event.type || '',
-      event.source || event.sourceSystem || ''
+      getTimelineEventType_(event),
+      getTimelineEventSource_(event),
+      event.actor || event.Actor || ''
     ].filter(Boolean).join(' • ');
+  }
+
+  function getTimelineEventType_(event) {
+    return event.eventType || event.type || event['Event Type'] || event.Event_Type || '';
+  }
+
+  function getTimelineEventSource_(event) {
+    return event.source || event.sourceSystem || event.Source || event.Source_System || '';
+  }
+
+  function getTimelineEventDetail_(event) {
+    return event.detail || event.details || event.Details || event.description || '';
   }
 
   function handleClaimsWorkspaceError(error) {

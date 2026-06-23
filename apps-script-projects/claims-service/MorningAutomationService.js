@@ -1,8 +1,9 @@
 /**
  * MorningAutomationService
  *
- * Orchestrates Rainbow's morning report intake. Historical Notes is handled
- * by its own pipeline and is intentionally not scheduled here.
+ * Orchestrates Rainbow's morning report intake and daily timeline enrichment.
+ * Historical Notes uses the incremental timeline importer so the morning run
+ * only processes notes that are newer than the last imported timeline note.
  */
 
 function runRainbowMorningAutomation() {
@@ -19,11 +20,15 @@ function runRainbowMorningAutomation() {
     processComplianceTasksEmailIntake
   ));
 
+  steps.push(runMorningAutomationStep_(
+    'importNewHistoricalNotes',
+    runMorningHistoricalNotesImport_
+  ));
+
   // Future morning workflow placeholders. Do not enable until the owning
   // import/refresh functions exist and are explicitly approved for automation.
   // importLatestDailyOpenJobsReport();
   // importLatestComplianceTasksReport();
-  // runDailyHistoricalNotesTimelineSync();
   // batchReconcileClaimConditions();
   // testBatchApplyClaimHealth();
   // refreshHomepageData();
@@ -48,6 +53,15 @@ function runRainbowMorningAutomation() {
   );
 
   return successResponse(summary, 'Rainbow morning automation completed.');
+}
+
+function runMorningHistoricalNotesImport_() {
+  const result = importNewHistoricalNotes();
+
+  return successResponse(
+    result,
+    'Historical notes incremental timeline import completed.'
+  );
 }
 
 function createRainbowMorningAutomationTrigger() {
@@ -162,4 +176,11 @@ function logRainbowMorningAutomation_(status, message, details) {
     message: message,
     details: details || {}
   }));
+}
+
+
+function testRunRainbowMorningAutomation() {
+  var result = runRainbowMorningAutomation();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }

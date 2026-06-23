@@ -32,17 +32,17 @@ function normalizeTimelineEngineEvent_(event) {
   const sourceEvent = event || {};
 
   return {
-    Timeline_Event_ID: sourceEvent.Timeline_Event_ID || sourceEvent.timelineEventId || '',
-    Claim_ID: sourceEvent.Claim_ID || sourceEvent.claimId || '',
-    Event_Date: sourceEvent.Event_Date || sourceEvent.eventDate || sourceEvent.Created_At || nowIso(),
+    Timeline_Event_ID: sourceEvent.Timeline_Event_ID || sourceEvent.timelineEventId || sourceEvent['Event ID'] || '',
+    Claim_ID: sourceEvent.Claim_ID || sourceEvent.claimId || sourceEvent['Claim ID'] || '',
+    Event_Date: sourceEvent.Event_Date || sourceEvent.eventDate || sourceEvent.Date || sourceEvent.date || sourceEvent.Created_At || nowIso(),
     Event_Category: normalizeString(sourceEvent.Event_Category || sourceEvent.eventCategory || ''),
-    Event_Type: normalizeString(sourceEvent.Event_Type || sourceEvent.eventType || 'Claim Updated'),
-    Event_Source: normalizeString(sourceEvent.Event_Source || sourceEvent.eventSource || ''),
-    Source_Record_ID: normalizeString(sourceEvent.Source_Record_ID || sourceEvent.sourceRecordId || ''),
+    Event_Type: normalizeString(sourceEvent.Event_Type || sourceEvent.eventType || sourceEvent['Event Type'] || 'Claim Updated'),
+    Event_Source: normalizeString(sourceEvent.Event_Source || sourceEvent.eventSource || sourceEvent.Source || sourceEvent.source || ''),
+    Source_Record_ID: normalizeString(sourceEvent.Source_Record_ID || sourceEvent.sourceRecordId || sourceEvent['Event ID'] || ''),
     Source_Run_ID: normalizeString(sourceEvent.Source_Run_ID || sourceEvent.sourceRunId || ''),
-    Source_System: normalizeString(sourceEvent.Source_System || sourceEvent.sourceSystem || ''),
+    Source_System: normalizeString(sourceEvent.Source_System || sourceEvent.sourceSystem || sourceEvent.Source || sourceEvent.source || ''),
     Summary: normalizeString(sourceEvent.Summary || sourceEvent.summary || ''),
-    Detail: normalizeString(sourceEvent.Detail || sourceEvent.detail || ''),
+    Detail: normalizeString(sourceEvent.Detail || sourceEvent.detail || sourceEvent.Details || sourceEvent.details || ''),
     Actor: normalizeString(sourceEvent.Actor || sourceEvent.actor || ''),
     Related_Workflow: normalizeString(sourceEvent.Related_Workflow || sourceEvent.relatedWorkflow || ''),
     Related_Financial_Track_ID: normalizeString(sourceEvent.Related_Financial_Track_ID || sourceEvent.relatedFinancialTrackId || ''),
@@ -228,7 +228,8 @@ function isMeaningfulTimelineActivity_(event) {
     'CUSTOMER CONTACTED',
     'CUSTOMER_CONTACTED',
     'CARRIER_CONTACTED',
-    'VENDOR_CONTACTED'
+    'VENDOR_CONTACTED',
+    'HISTORICAL NOTE'
   ];
 
   return meaningfulTypes.indexOf(eventType) !== -1;
@@ -270,6 +271,10 @@ function getTimelineDisplayPriority_(event) {
     return TIMELINE_ENGINE.priority.high;
   }
 
+  if (eventType === 'HISTORICAL NOTE') {
+    return TIMELINE_ENGINE.priority.normal;
+  }
+
   if (['Condition', 'Alert', 'Ownership', 'Financial Track', 'Intake'].indexOf(category) !== -1) {
     return TIMELINE_ENGINE.priority.normal;
   }
@@ -299,6 +304,10 @@ function getTimelineVisibility_(event) {
 
   if (category === 'System') {
     return TIMELINE_ENGINE.visibility.system;
+  }
+
+  if (normalizeString(event.Event_Type || '').toUpperCase() === 'HISTORICAL NOTE') {
+    return TIMELINE_ENGINE.visibility.primary;
   }
 
   if (isMeaningfulTimelineActivity_(event)) {
@@ -402,26 +411,100 @@ function deriveLastMeaningfulActivityForClaim_(claimId) {
     return null;
   }
 
-  const timelineResult = getTimelineForClaim(claimId);
-  if (!timelineResult.success) {
-    return null;
-  }
+  const timelineRows = getTimelineEngineRowsForClaim_(claimId);
 
-  const meaningfulEvents = timelineResult.data.timeline
+  const meaningfulEvents = timelineRows
+    .filter(function(event) {
+      return !!event._Timeline_Source_Date;
+    })
     .map(function(event) {
-      return classifyTimelineEngineEvent_(event);
+      const classified = classifyTimelineEngineEvent_(event);
+      classified._Timeline_Source_Date = event._Timeline_Source_Date;
+      return classified;
     })
     .filter(function(event) {
       return shouldTimelineEventUpdateLastActivity_(event);
     });
 
   meaningfulEvents.sort(function(a, b) {
-    const aDate = new Date(a.Event_Date || a.Created_At || 0).getTime();
-    const bDate = new Date(b.Event_Date || b.Created_At || 0).getTime();
+    const aDate = normalizeTimelineEngineDate_(a._Timeline_Source_Date).getTime();
+    const bDate = normalizeTimelineEngineDate_(b._Timeline_Source_Date).getTime();
     return bDate - aDate;
   });
 
+  meaningfulEvents.forEach(function(event) {
+    event.Event_Date = event._Timeline_Source_Date;
+  });
+
   return meaningfulEvents.length > 0 ? meaningfulEvents[0] : null;
+}
+
+function getTimelineEngineRowsForClaim_(claimId) {
+  const spreadsheet = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(CLAIM_SHEET_NAMES.timeline || 'Timeline_Events');
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    return [];
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(function(header) {
+    return String(header || '').trim();
+  });
+
+  const claimIdIndex = headers.indexOf('Claim ID');
+  const legacyClaimIdIndex = headers.indexOf('Claim_ID');
+  const jobNumberIndex = headers.indexOf('Job Number');
+  const dateIndex = headers.indexOf('Date');
+  const legacyDateIndex = headers.indexOf('Event_Date');
+  const eventIdIndex = headers.indexOf('Event ID');
+  const eventTypeIndex = headers.indexOf('Event Type');
+  const sourceIndex = headers.indexOf('Source');
+  const actorIndex = headers.indexOf('Actor');
+  const summaryIndex = headers.indexOf('Summary');
+  const detailsIndex = headers.indexOf('Details');
+  const visibilityIndex = headers.indexOf('Visibility');
+
+  return values.slice(1).filter(function(row) {
+    const rowClaimId = claimIdIndex >= 0 ? String(row[claimIdIndex] || '').trim() : '';
+    const legacyClaimId = legacyClaimIdIndex >= 0 ? String(row[legacyClaimIdIndex] || '').trim() : '';
+    return rowClaimId === claimId || legacyClaimId === claimId;
+  }).map(function(row) {
+    const rawEventDate = dateIndex >= 0 ? row[dateIndex] : (legacyDateIndex >= 0 ? row[legacyDateIndex] : '');
+
+    return {
+      Timeline_Event_ID: eventIdIndex >= 0 ? row[eventIdIndex] : '',
+      Claim_ID: claimId,
+      Job_Number: jobNumberIndex >= 0 ? row[jobNumberIndex] : '',
+      Event_Date: rawEventDate,
+      _Timeline_Source_Date: rawEventDate,
+      Event_Type: eventTypeIndex >= 0 ? row[eventTypeIndex] : '',
+      Event_Source: sourceIndex >= 0 ? row[sourceIndex] : '',
+      Source_System: sourceIndex >= 0 ? row[sourceIndex] : '',
+      Source_Record_ID: eventIdIndex >= 0 ? row[eventIdIndex] : '',
+      Summary: summaryIndex >= 0 ? row[summaryIndex] : '',
+      Detail: detailsIndex >= 0 ? row[detailsIndex] : '',
+      Actor: actorIndex >= 0 ? row[actorIndex] : '',
+      Visibility: visibilityIndex >= 0 ? row[visibilityIndex] : ''
+    };
+  });
+}
+
+function normalizeTimelineEngineDate_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value;
+  }
+
+  if (!value) {
+    return new Date(0);
+  }
+
+  const parsed = new Date(value);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return new Date(0);
 }
 
 function rebuildTimelineDerivedFieldsForClaim_(claimId) {
@@ -434,9 +517,40 @@ function rebuildTimelineDerivedFieldsForClaim_(claimId) {
     }, 'No meaningful timeline activity found for claim.');
   }
 
+  ensureTimelineEngineClaimsColumn_('Last_Meaningful_Activity_At');
   return updateClaim(claimId, {
     Last_Meaningful_Activity_At: lastMeaningfulActivity.Event_Date
   });
+}
+
+function ensureTimelineEngineClaimsColumn_(columnName) {
+  const spreadsheet = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(CLAIM_SHEET_NAMES.claims || 'Claims');
+
+  if (!sheet) {
+    throw new Error('Claims sheet not found.');
+  }
+
+  const lastColumn = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(header) {
+    return String(header || '').trim();
+  });
+
+  if (headers.indexOf(columnName) !== -1) {
+    return {
+      added: false,
+      columnName: columnName,
+      columnIndex: headers.indexOf(columnName) + 1
+    };
+  }
+
+  sheet.getRange(1, lastColumn + 1).setValue(columnName);
+
+  return {
+    added: true,
+    columnName: columnName,
+    columnIndex: lastColumn + 1
+  };
 }
 
 function prepareTimelineForClaimWorkspace_(claimId) {
@@ -553,16 +667,7 @@ function testTimelineGrouping_() {
 }
 
 function testLastMeaningfulActivityDerivation_() {
-  const claimLookup = lookupClaim({
-    Display_Name: 'CLAIRE JACKSON',
-    Claim_Number: '26N-0127-MLD'
-  });
-
-  if (!claimLookup.success) {
-    return claimLookup;
-  }
-
-  const lastMeaningfulActivity = deriveLastMeaningfulActivityForClaim_(claimLookup.data.claim.Claim_ID);
+  const lastMeaningfulActivity = deriveLastMeaningfulActivityForClaim_('CLM-26A-0034-WTR');
   Logger.log(JSON.stringify(lastMeaningfulActivity, null, 2));
   return lastMeaningfulActivity;
 }
@@ -579,8 +684,19 @@ function testTimelineGrouping() {
   return testTimelineGrouping_();
 }
 
+
 function testLastMeaningfulActivityDerivation() {
-  return testLastMeaningfulActivityDerivation_();
+  var result = testLastMeaningfulActivityDerivation_();
+  Logger.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testRebuildTimelineDerivedFields() {
+  var result = rebuildTimelineDerivedFieldsForClaim_('CLM-26A-0034-WTR');
+  Logger.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function testTimelineRuleDrivenFieldWork() {
