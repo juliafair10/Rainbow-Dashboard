@@ -35,10 +35,34 @@
 
     initializeLensButtons();
     initializeClaimsSearch();
+    initializeClaimsSidebarNavigation_();
 
     loadClaimsWorkspace(routeContext);
 
     window.history.replaceState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
+  }
+
+  function initializeClaimsSidebarNavigation_() {
+    document.querySelectorAll('[data-claims-route]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        navigateClaimsRoute_(button.getAttribute('data-claims-route') || '?view=claimShell');
+      });
+    });
+  }
+
+  function navigateClaimsRoute_(route) {
+    const normalizedRoute = route && route.charAt(0) === '?' ? route : '?' + String(route || '').replace(/^\?/, '');
+    const dashboardBaseUrl = 'https://script.google.com/a/macros/rbwatl.com/s/AKfycbzX9Mvyr2zk1GkBR2Nfdv9PE994onOVpxQpJj9lq3j87n2NN_iZ3eRWDFWlbfmrvpNoFw/exec';
+    const targetUrl = dashboardBaseUrl + normalizedRoute;
+
+    try {
+      window.top.location.href = targetUrl;
+    } catch (error) {
+      window.location.href = targetUrl;
+    }
   }
 
   function readClaimsRouteContextFromLocation_() {
