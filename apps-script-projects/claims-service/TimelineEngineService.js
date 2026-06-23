@@ -524,60 +524,256 @@ function rebuildTimelineDerivedFieldsForClaim_(claimId) {
   });
 }
 
-function rebuildTimelineDerivedFieldsForActiveClaims(limit) {
+
+function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
+  const startedAt = new Date();
+  const spreadsheet = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
+  const claimsSheet = spreadsheet.getSheetByName(CLAIM_SHEET_NAMES.claims || 'Claims');
+  const timelineSheet = spreadsheet.getSheetByName(CLAIM_SHEET_NAMES.timeline || 'Timeline_Events');
+
+  if (!claimsSheet) {
+    return errorResponse('Claims sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.claims || 'Claims'
+    });
+  }
+
+  if (!timelineSheet) {
+    return errorResponse('Timeline sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.timeline || 'Timeline_Events'
+    });
+  }
+
   ensureTimelineEngineClaimsColumn_('Last_Meaningful_Activity_At');
 
-  const claims = ClaimsQueryService.getAllClaimSummaries({ includeTerminal: false }) || [];
-  const maxClaims = limit || claims.length;
-  const results = [];
-  let rebuiltCount = 0;
-  let skippedCount = 0;
-  let failedCount = 0;
+  const claimsValues = claimsSheet.getDataRange().getValues();
+  if (claimsValues.length < 2) {
+    return successResponse({
+      activeClaimCount: 0,
+      updatedCount: 0,
+      timelineRowsProcessed: 0,
+      elapsedMs: new Date().getTime() - startedAt.getTime()
+    }, 'No claim rows found for bulk timeline rebuild.');
+  }
 
-  claims.slice(0, maxClaims).forEach(function(claim) {
-    const claimId = claim.claimId || claim.Claim_ID || '';
+  const claimsHeaders = claimsSheet.getRange(1, 1, 1, claimsSheet.getLastColumn()).getValues()[0].map(function(header) {
+    return String(header || '').trim();
+  });
 
-    if (!claimId) {
-      skippedCount++;
+  const claimIdIndex = getTimelineEngineHeaderIndex_(claimsHeaders, ['Claim_ID', 'Claim ID']);
+  const lifecycleIndex = getTimelineEngineHeaderIndex_(claimsHeaders, ['Lifecycle_State', 'Lifecycle State']);
+  const lastMeaningfulIndex = getTimelineEngineHeaderIndex_(claimsHeaders, [
+    'Last_Meaningful_Activity_At',
+    'Last Meaningful Activity At'
+  ]);
+
+  if (claimIdIndex === -1 || lastMeaningfulIndex === -1) {
+    return errorResponse('Required Claims columns not found for bulk timeline rebuild.', {
+      claimIdColumnFound: claimIdIndex !== -1,
+      lastMeaningfulColumnFound: lastMeaningfulIndex !== -1,
+      headers: claimsHeaders
+    });
+  }
+
+  const activeClaimLookup = {};
+  const activeClaimRows = [];
+
+  for (var claimRowIndex = 1; claimRowIndex < claimsValues.length; claimRowIndex++) {
+    const claimId = String(claimsValues[claimRowIndex][claimIdIndex] || '').trim();
+    const lifecycleState = lifecycleIndex >= 0 ? String(claimsValues[claimRowIndex][lifecycleIndex] || '').trim() : '';
+
+    if (!claimId || isTimelineEngineTerminalLifecycle_(lifecycleState)) {
+      continue;
+    }
+
+    activeClaimLookup[claimId] = true;
+    activeClaimRows.push({
+      claimId: claimId,
+      sheetRowNumber: claimRowIndex + 1,
+      valuesIndex: claimRowIndex
+    });
+  }
+
+  const latestMeaningfulByClaim = {};
+  Object.keys(activeClaimLookup).forEach(function(claimId) {
+    latestMeaningfulByClaim[claimId] = null;
+  });
+
+  const timelineValues = timelineSheet.getDataRange().getValues();
+  const timelineHeaders = timelineValues.length
+    ? timelineValues[0].map(function(header) { return String(header || '').trim(); })
+    : [];
+
+  const timelineClaimIdIndex = timelineHeaders.indexOf('Claim ID');
+  const timelineLegacyClaimIdIndex = timelineHeaders.indexOf('Claim_ID');
+  const timelineDateIndex = timelineHeaders.indexOf('Date');
+  const timelineLegacyDateIndex = timelineHeaders.indexOf('Event_Date');
+  const timelineEventIdIndex = timelineHeaders.indexOf('Event ID');
+  const timelineEventTypeIndex = timelineHeaders.indexOf('Event Type');
+  const timelineSourceIndex = timelineHeaders.indexOf('Source');
+  const timelineActorIndex = timelineHeaders.indexOf('Actor');
+  const timelineSummaryIndex = timelineHeaders.indexOf('Summary');
+  const timelineDetailsIndex = timelineHeaders.indexOf('Details');
+  const timelineVisibilityIndex = timelineHeaders.indexOf('Visibility');
+  const timelineJobNumberIndex = timelineHeaders.indexOf('Job Number');
+
+  for (var timelineRowIndex = 1; timelineRowIndex < timelineValues.length; timelineRowIndex++) {
+    const row = timelineValues[timelineRowIndex];
+    const rowClaimId = timelineClaimIdIndex >= 0 ? String(row[timelineClaimIdIndex] || '').trim() : '';
+    const legacyClaimId = timelineLegacyClaimIdIndex >= 0 ? String(row[timelineLegacyClaimIdIndex] || '').trim() : '';
+    const matchedClaimId = activeClaimLookup[rowClaimId] ? rowClaimId : (activeClaimLookup[legacyClaimId] ? legacyClaimId : '');
+
+    if (!matchedClaimId) {
+      continue;
+    }
+
+    const rawEventDate = timelineDateIndex >= 0
+      ? row[timelineDateIndex]
+      : (timelineLegacyDateIndex >= 0 ? row[timelineLegacyDateIndex] : '');
+    const eventDate = normalizeTimelineEngineDate_(rawEventDate);
+
+    if (!eventDate || eventDate.getTime() === 0) {
+      continue;
+    }
+
+    const rawEventType = timelineEventTypeIndex >= 0 ? row[timelineEventTypeIndex] : '';
+    const rawSummary = timelineSummaryIndex >= 0 ? row[timelineSummaryIndex] : '';
+
+    if (!isBulkTimelineMeaningfulActivity_(rawEventType)) {
+      continue;
+    }
+
+    const existing = latestMeaningfulByClaim[matchedClaimId];
+    if (!existing || eventDate.getTime() > existing.date.getTime()) {
+      latestMeaningfulByClaim[matchedClaimId] = {
+        date: eventDate,
+        rawDate: rawEventDate,
+        eventType: normalizeString(rawEventType || 'Timeline Event'),
+        summary: normalizeString(rawSummary || '')
+      };
+    }
+  }
+
+  const lastMeaningfulValues = claimsSheet.getRange(2, lastMeaningfulIndex + 1, claimsValues.length - 1, 1).getValues();
+  let updatedCount = 0;
+  const sampleResults = [];
+
+  activeClaimRows.forEach(function(claimRow) {
+    const latest = latestMeaningfulByClaim[claimRow.claimId];
+
+    if (!latest) {
       return;
     }
 
-    try {
-      const rebuildResult = rebuildTimelineDerivedFieldsForClaim_(claimId);
-      const success = !!(rebuildResult && rebuildResult.success);
+    const localColumnIndex = claimRow.valuesIndex - 1;
+    const currentValue = lastMeaningfulValues[localColumnIndex][0];
+    const nextValue = latest.rawDate instanceof Date ? latest.rawDate.toISOString() : latest.rawDate;
 
-      if (success) {
-        rebuiltCount++;
-      } else {
-        failedCount++;
-      }
+    if (String(currentValue || '') !== String(nextValue || '')) {
+      lastMeaningfulValues[localColumnIndex][0] = nextValue;
+      updatedCount++;
+    }
 
-      results.push({
-        claimId: claimId,
-        success: success,
-        message: rebuildResult && rebuildResult.message ? rebuildResult.message : '',
-        lastMeaningfulActivityAt: rebuildResult && rebuildResult.data && rebuildResult.data.row
-          ? rebuildResult.data.row.Last_Meaningful_Activity_At || ''
-          : ''
-      });
-    } catch (error) {
-      failedCount++;
-      results.push({
-        claimId: claimId,
-        success: false,
-        message: error && error.message ? error.message : String(error)
+    if (sampleResults.length < 10) {
+      sampleResults.push({
+        claimId: claimRow.claimId,
+        lastMeaningfulActivityAt: nextValue,
+        eventType: latest.eventType,
+        summary: latest.summary
       });
     }
   });
 
+  claimsSheet.getRange(2, lastMeaningfulIndex + 1, claimsValues.length - 1, 1).setValues(lastMeaningfulValues);
+
   return successResponse({
-    totalActiveClaims: claims.length,
-    processedClaims: Math.min(maxClaims, claims.length),
-    rebuiltCount: rebuiltCount,
-    skippedCount: skippedCount,
-    failedCount: failedCount,
-    sampleResults: results.slice(0, 10)
-  }, 'Timeline derived fields rebuilt for active claims.');
+    activeClaimCount: activeClaimRows.length,
+    updatedCount: updatedCount,
+    timelineRowsProcessed: Math.max(timelineValues.length - 1, 0),
+    elapsedMs: new Date().getTime() - startedAt.getTime(),
+    sampleResults: sampleResults
+  }, 'Timeline derived fields rebuilt in bulk for active claims.');
+}
+
+function isBulkTimelineMeaningfulActivity_(eventType) {
+  const normalizedEventType = normalizeString(eventType || '').toUpperCase();
+
+  if (!normalizedEventType) {
+    return false;
+  }
+
+  const meaningfulTypes = {
+    'CLAIM_CREATED': true,
+    'CLAIM UPDATED': true,
+    'CLAIM_UPDATED': true,
+    'INTAKE CREATED': true,
+    'INTAKE_CREATED': true,
+    'INTAKE_PROCESSED': true,
+    'CLAIM FOLDER CREATED': true,
+    'CLAIM_FOLDER_CREATED': true,
+    'CLAIM FOLDER MATCHED': true,
+    'CLAIM_FOLDER_MATCHED': true,
+    'INSPECTION COMPLETED': true,
+    'INSPECTION_COMPLETED': true,
+    'DEMO COMPLETED': true,
+    'DEMO_COMPLETED': true,
+    'FIELD_WORK_COMPLETED': true,
+    'EOJ SUBMITTED': true,
+    'EOJ_SUBMITTED': true,
+    'EOJ_PROCESSED': true,
+    'MONITORING VISIT COMPLETED': true,
+    'MONITORING_VISIT_RECORDED': true,
+    'MONITORING_COMPLETED': true,
+    'CONDITION_ADDED': true,
+    'CONDITION_RESOLVED': true,
+    'ALERT_RESOLVED': true,
+    'OWNERSHIP_TRANSFERRED': true,
+    'FINANCIAL_TRACK_CREATED': true,
+    'FINANCIAL_TRACK_APPROVED': true,
+    'FINANCIAL_TRACK_CLOSED': true,
+    'REVISION REQUESTED': true,
+    'REVISION_REQUESTED': true,
+    'REVISION SUBMITTED': true,
+    'REVISION_SUBMITTED': true,
+    'REVISION_RESPONSE_RECEIVED': true,
+    'REVISION_APPROVED': true,
+    'REVISION_CLOSED': true,
+    'PAYMENT RECEIVED': true,
+    'PAYMENT_RECEIVED': true,
+    'PAYMENT_POSTED': true,
+    'EXTERNAL_LINK_ADDED': true,
+    'DOCUMENT_ADDED': true,
+    'ATTACHMENT_ROUTED': true,
+    'CARRIER RESPONSE': true,
+    'CUSTOMER CONTACTED': true,
+    'CUSTOMER_CONTACTED': true,
+    'CARRIER_CONTACTED': true,
+    'VENDOR_CONTACTED': true,
+    'HISTORICAL NOTE': true
+  };
+
+  return !!meaningfulTypes[normalizedEventType];
+}
+
+function rebuildTimelineDerivedFieldsForActiveClaims(limit) {
+  return bulkRebuildTimelineDerivedFieldsForActiveClaims();
+}
+
+function getTimelineEngineHeaderIndex_(headers, possibleNames) {
+  for (var i = 0; i < possibleNames.length; i++) {
+    var index = headers.indexOf(possibleNames[i]);
+    if (index !== -1) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function isTimelineEngineTerminalLifecycle_(lifecycleState) {
+  const normalized = normalizeString(lifecycleState || '').toUpperCase();
+  return normalized === 'OPERATIONALLY COMPLETE' ||
+    normalized === 'NOT SOLD' ||
+    normalized === 'CLOSED';
 }
 
 function ensureTimelineEngineClaimsColumn_(columnName) {
@@ -771,6 +967,13 @@ function testTimelineRuleDrivenFieldWork() {
 
 function testRebuildTimelineDerivedFieldsForActiveClaims() {
   var result = rebuildTimelineDerivedFieldsForActiveClaims();
+  Logger.log(JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testBulkRebuildTimelineDerivedFieldsForActiveClaims() {
+  var result = bulkRebuildTimelineDerivedFieldsForActiveClaims();
   Logger.log(JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   return result;

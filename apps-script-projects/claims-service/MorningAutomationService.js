@@ -70,7 +70,7 @@ function runMorningHistoricalNotesImport_() {
 }
 
 function runMorningTimelineRebuild_() {
-  return rebuildTimelineDerivedFieldsForActiveClaims(10);
+  return bulkRebuildTimelineDerivedFieldsForActiveClaims();
 }
 
 function createRainbowMorningAutomationTrigger() {
