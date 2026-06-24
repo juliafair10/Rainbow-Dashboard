@@ -704,9 +704,21 @@ function buildStructuredAlertsForClaim_(claimId) {
     'Xactimate Link',
     'Xact URL',
     'XactAnalysis URL'
+  ]) || hasExternalLinkType_(externalLinks, [
+    'XactAnalysis',
+    'Xact Analysis',
+    'Xactimate',
+    'Xactimate Link',
+    'Xact URL',
+    'XactAnalysis URL',
+    'XA'
   ]);
 
   const hasSymbility = hasExternalLinkValue_(externalLinks, [
+    'Symbility',
+    'Symbility Link',
+    'Symbility URL'
+  ]) || hasExternalLinkType_(externalLinks, [
     'Symbility',
     'Symbility Link',
     'Symbility URL'
@@ -718,6 +730,13 @@ function buildStructuredAlertsForClaim_(claimId) {
     'ClaimX URL',
     'ClaimX Video',
     'ClaimX Video Link'
+  ]) || hasExternalLinkType_(externalLinks, [
+    'ClaimX',
+    'ClaimX Link',
+    'ClaimX URL',
+    'ClaimX Video',
+    'ClaimX Video Link',
+    'Claim X'
   ]);
 
   if (!hasXact && !hasSymbility) {
@@ -1536,6 +1555,15 @@ function testAllstateDetection_26N0103() {
 
 function testReconcileClaimAlerts_26N0103() {
   const result = reconcileClaimAlerts('CLM-26N-0103-WTR', {
+    dryRun: false
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testReconcileRafiAlerts() {
+  const result = reconcileClaimAlerts('CLM-26A-0052-WTR', {
     dryRun: false
   });
 
