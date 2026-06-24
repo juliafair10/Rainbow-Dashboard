@@ -793,6 +793,7 @@
     html += '<div class="claim-detail-header">';
     html += '<h2>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h2>';
     html += '<div class="claim-detail-subtitle">' + escapeHtml(header.jobNumber || detail.claimId || '') + '</div>';
+    html += '<button type="button" class="claim-open-full-button" data-open-full-claim="' + escapeHtml(detail.claimId || header.claimId || '') + '">Open Full Claim</button>';
     html += '</div>';
 
     html += '<div class="claim-detail-section">';
@@ -925,6 +926,290 @@
     }
 
     panel.innerHTML = html;
+
+    initializeOpenFullClaimButton_(detail);
+  }
+
+  function initializeOpenFullClaimButton_(detail) {
+    const button = document.querySelector('[data-open-full-claim]');
+
+    if (!button) {
+      return;
+    }
+
+    button.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      renderFullClaimWorkspace_(detail);
+    });
+  }
+
+  function renderFullClaimWorkspace_(detail) {
+    const shell = document.querySelector('.claims-shell');
+
+    if (!shell) {
+      return;
+    }
+
+    const header = detail.claimHeader || {};
+    const operational = detail.operationalContext || {};
+    const links = detail.externalLinks || [];
+    const timelineEvents = getRecentTimelineEvents_(detail);
+    const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
+    const activeConditions = header.activeConditions || [];
+    const nextAction = header.nextAction || operational.nextAction || '';
+    const lastMeaningfulActivity = header.lastMeaningfulActivityAt || header.lastMeaningfulActivityDate || operational.lastMeaningfulActivityAt || operational.lastMeaningfulActivityDate || '';
+    let html = '';
+
+    html += '<section class="full-claim-workspace">';
+    html += '<div class="full-claim-topbar">';
+    html += '<button type="button" class="full-claim-back-button" data-full-claim-back>← Back to Claims</button>';
+    html += '</div>';
+
+    html += '<header class="full-claim-header">';
+    html += '<div>';
+    html += '<p class="full-claim-eyebrow">Full Claim Workspace</p>';
+    html += '<h1>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h1>';
+    html += '<div class="full-claim-meta">';
+    html += renderFullClaimMetaItem_('Job', header.jobNumber || '');
+    html += renderFullClaimMetaItem_('Claim', header.claimNumber || detail.claimNumber || '');
+    html += renderFullClaimMetaItem_('Loss', header.lossType || '');
+    html += renderFullClaimMetaItem_('Address', header.propertyAddress || header.address || '');
+    html += renderFullClaimMetaItem_('Carrier', header.carrier || '');
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="full-claim-status-stack">';
+    html += '<span class="full-claim-status-pill">' + escapeHtml(header.lifecycleState || 'Lifecycle Unknown') + '</span>';
+    html += '<span class="full-claim-status-pill">' + escapeHtml(header.healthLevel || 'Unrated') + '</span>';
+    html += '<span class="full-claim-status-pill">' + escapeHtml(header.ownershipArea || 'Unassigned') + '</span>';
+    html += '</div>';
+    html += '</header>';
+
+    if (activeConditions.length) {
+      html += '<div class="full-claim-condition-row">';
+      activeConditions.forEach(function(condition) {
+        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(getClaimConditionLabel_(condition)) + '</span>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="full-claim-layout">';
+    html += '<main class="full-claim-main">';
+    html += '<section class="full-claim-card full-claim-timeline-card">';
+    html += '<div class="full-claim-card-header">';
+    html += '<h2>Operational Timeline</h2>';
+    html += '<p>Meaningful claim history grouped for active management.</p>';
+    html += '</div>';
+
+    if (timelineEvents.length) {
+      html += '<div class="full-claim-timeline-list">';
+      timelineEvents.forEach(function(event) {
+        html += renderFullClaimTimelineItem_(event);
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="claims-empty-state">No timeline activity available yet.</div>';
+    }
+
+    html += '</section>';
+    html += '</main>';
+
+    html += '<aside class="full-claim-rail">';
+    html += renderFullClaimCurrentStateCard_(header, lastMeaningfulActivity);
+    html += renderFullClaimConditionsCard_(activeConditions);
+    html += renderFullClaimAlertsCard_(detailAlerts);
+    html += renderFullClaimNextActionCard_(nextAction);
+    html += renderFullClaimQuickActionsCard_(links);
+    html += renderFullClaimFinancialsCard_(detail);
+    html += renderFullClaimAiCard_();
+    html += '</aside>';
+    html += '</div>';
+    html += '</section>';
+
+    shell.innerHTML = html;
+
+    const backButton = shell.querySelector('[data-full-claim-back]');
+    if (backButton) {
+      backButton.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.location.reload();
+      });
+    }
+  }
+
+  function renderFullClaimTimelineItem_(event) {
+    const eventType = getTimelineEventType_(event) || 'Activity';
+    const source = getTimelineEventSource_(event);
+    const detail = getTimelineEventDetail_(event);
+    const rawSummary = getTimelineEventSummary_(event);
+    const summary = normalizeTimelineTitle_(rawSummary);
+    const date = getTimelineEventDate_(event);
+    const actor = event.actor || event.Actor || '';
+    const metaItems = [eventType, source, actor].filter(Boolean);
+    let html = '<article class="full-claim-timeline-item">';
+
+    html += '<div class="full-claim-timeline-marker"></div>';
+    html += '<div class="full-claim-timeline-body">';
+    html += '<div class="full-claim-timeline-topline">';
+    html += '<span>' + escapeHtml(date || 'Undated') + '</span>';
+    html += '<span>' + escapeHtml(metaItems.join(' • ')) + '</span>';
+    html += '</div>';
+    html += '<h3>' + escapeHtml(summary) + '</h3>';
+
+    if (detail && detail !== rawSummary) {
+      html += '<p>' + escapeHtml(detail) + '</p>';
+    }
+
+    html += '</div>';
+    html += '</article>';
+
+    return html;
+  }
+
+  function normalizeTimelineTitle_(value) {
+    const text = String(value || '').trim();
+
+    if (!text) {
+      return 'Timeline Event';
+    }
+
+    const letters = text.replace(/[^A-Za-z]/g, '');
+    const uppercaseLetters = text.replace(/[^A-Z]/g, '');
+    const isMostlyUppercase = letters.length > 12 && uppercaseLetters.length / letters.length > 0.72;
+
+    if (!isMostlyUppercase) {
+      return text;
+    }
+
+    return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+  }
+
+  function renderFullClaimMetaItem_(label, value) {
+    if (!value) {
+      return '';
+    }
+
+    return '<span><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(value) + '</span>';
+  }
+
+  function renderFullClaimCurrentStateCard_(header, lastMeaningfulActivity) {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Current State</h3>';
+    html += '<div class="full-claim-key-list">';
+    html += renderClaimDetailKeyValue_('Lifecycle', header.lifecycleState || '');
+    html += renderClaimDetailKeyValue_('Health', header.healthLevel || '');
+    html += renderClaimDetailKeyValue_('Owner', header.ownershipArea || header.primaryOwner || '');
+    html += renderClaimDetailKeyValue_('Last Meaningful Activity', lastMeaningfulActivity || '');
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimConditionsCard_(conditions) {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Active Conditions</h3>';
+
+    if (conditions.length) {
+      html += '<div class="full-claim-chip-list">';
+      conditions.forEach(function(condition) {
+        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(getClaimConditionLabel_(condition)) + '</span>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="full-claim-muted">No active conditions.</div>';
+    }
+
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimAlertsCard_(alerts) {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Active Alerts</h3>';
+
+    if (alerts.length) {
+      alerts.forEach(function(alert) {
+        html += '<div class="claim-detail-alert">';
+        html += '<strong>' + escapeHtml(alert.alertName || alert.alertType || 'Operational Alert') + '</strong>';
+        if (alert.reason) {
+          html += '<div class="claim-detail-alert-reason">' + escapeHtml(alert.reason) + '</div>';
+        }
+        html += '</div>';
+      });
+    } else {
+      html += '<div class="full-claim-muted">No active alerts.</div>';
+    }
+
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimNextActionCard_(nextAction) {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Next Action</h3>';
+    html += nextAction
+      ? '<div class="full-claim-next-action">' + escapeHtml(nextAction) + '</div>'
+      : '<div class="full-claim-muted">No immediate action detected.</div>';
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimQuickActionsCard_(links) {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Quick Actions</h3>';
+    html += '<div class="full-claim-action-list">';
+
+    if (links.length) {
+      links.forEach(function(link) {
+        const label = getExternalLinkDisplayLabel_(link);
+        const url = link.url || '';
+
+        if (url) {
+          html += '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>';
+        }
+      });
+    }
+
+    html += '<button type="button" disabled>Create Todoist Task</button>';
+    html += '<button type="button" disabled>Add Note</button>';
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimFinancialsCard_(detail) {
+    const financialTracks = detail.financialTracks || detail.financialSummary || [];
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Compact Financials</h3>';
+
+    if (Array.isArray(financialTracks) && financialTracks.length) {
+      financialTracks.slice(0, 3).forEach(function(track) {
+        html += '<div class="full-claim-financial-row">';
+        html += '<strong>' + escapeHtml(track.name || track.trackName || track.type || 'Financial Track') + '</strong>';
+        html += '<span>' + escapeHtml(track.status || track.approvalStatus || track.paymentStatus || '') + '</span>';
+        html += '</div>';
+      });
+    } else {
+      html += '<div class="full-claim-muted">Financial tracks will appear here when available.</div>';
+    }
+
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimAiCard_() {
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Ask Rainbow</h3>';
+    html += '<div class="full-claim-ai-prompts">';
+    html += '<button type="button" disabled>What is blocking this claim?</button>';
+    html += '<button type="button" disabled>Summarize recent activity</button>';
+    html += '<button type="button" disabled>Explain revision status</button>';
+    html += '<button type="button" disabled>Draft follow-up email</button>';
+    html += '</div>';
+    html += '</section>'; 
+    return html;
   }
 
   function renderClaimTimelineItem_(event) {
