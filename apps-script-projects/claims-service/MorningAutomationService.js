@@ -35,6 +35,11 @@ function runRainbowMorningAutomation() {
     runMorningTimelineRebuild_
   ));
 
+  steps.push(runMorningAutomationStep_(
+    'refreshHomepageData',
+    runMorningHomepageRefresh_
+  ));
+
   // Future morning workflow placeholders. Do not enable until the owning
   // import/refresh functions exist and are explicitly approved for automation.
   // importLatestComplianceTasksReport();
@@ -75,6 +80,45 @@ function runMorningHistoricalNotesImport_() {
 
 function runMorningTimelineRebuild_() {
   return bulkRebuildTimelineDerivedFieldsForActiveClaims();
+}
+
+function runMorningHomepageRefresh_() {
+  const dashboardUrl = 'https://script.google.com/macros/s/AKfycbzX9Mvyr2zk1GkBR2Nfdv9PE994onOVpxQpJj9lq3j87n2NN_iZ3eRWDFWlbfmrvpNoFw/exec';
+  const url = dashboardUrl + '?action=getHomepageData&source=claims-service-morning-automation&cacheBust=' + encodeURIComponent(nowIso());
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+
+  const responseCode = response.getResponseCode();
+  const text = response.getContentText();
+
+  if (responseCode < 200 || responseCode >= 300) {
+    return {
+      success: false,
+      status: 'Error',
+      message: 'Dashboard homepage refresh returned HTTP ' + responseCode + '.',
+      data: {
+        responseCode: responseCode,
+        bodyPreview: String(text || '').slice(0, 1000)
+      }
+    };
+  }
+
+  const payload = JSON.parse(text || '{}');
+
+  return successResponse(
+    {
+      refreshedVia: 'automation-dashboard-web-app',
+      responseCode: responseCode,
+      payloadStatus: payload.status || '',
+      payloadSuccess: payload.success,
+      generatedAt: payload.data && payload.data.generatedAt ? payload.data.generatedAt : nowIso()
+    },
+    'Homepage data refreshed through automation-dashboard web app.'
+  );
 }
 
 function createRainbowMorningAutomationTrigger() {
@@ -192,8 +236,15 @@ function logRainbowMorningAutomation_(status, message, details) {
 }
 
 
+
 function testRunRainbowMorningAutomation() {
   var result = runRainbowMorningAutomation();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testMorningHomepageRefresh() {
+  var result = runMorningHomepageRefresh_();
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }
