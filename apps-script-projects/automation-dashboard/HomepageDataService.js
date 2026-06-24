@@ -18,6 +18,9 @@ function getHomepageClaimSummaryData() {
   const claimAlerts = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.alerts).map(normalizeHomepageAlert_);
   const complianceActions = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.complianceActions).map(normalizeHomepageComplianceAction_);
   const claimSummaries = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claimSummaries).map(normalizeHomepageClaimSummary_);
+  const intakeAuditState = typeof getIntakeAuditState_ === 'function'
+    ? getIntakeAuditState_()
+    : { records: [], dispositionByIssueKey: {} };
 
   const activeClaims = claims.filter(function(claim) {
     return isHomepageActiveClaim_(claim);
@@ -45,7 +48,9 @@ function getHomepageClaimSummaryData() {
   const activeAlerts = claimAlerts.filter(function(alert) {
     return homepageRecordMatchesActiveClaim_(alert, activeClaimIds) &&
       isHomepageOpenStatus_(alert.Alert_Status || alert.Status || alert.Action_Status);
-  }).concat(getHomepageAlertsFromClaims_(activeClaims));
+  }).concat(getHomepageAlertsFromClaims_(activeClaims)).filter(function(alert) {
+    return !isHomepageAlertClearedByIntakeAudit_(alert, intakeAuditState);
+  });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -393,6 +398,44 @@ function normalizeHomepageAlert_(row) {
     Created_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Created_At', 'Created At', 'Created Date'])),
     Updated_At: normalizeHomepageDateValue_(getHomepageValue_(row, ['Updated_At', 'Updated At', 'Last Updated']))
   };
+}
+
+function isHomepageAlertClearedByIntakeAudit_(alert, auditState) {
+  if (!alert || !auditState || !Array.isArray(auditState.records)) {
+    return false;
+  }
+
+  const alertType = String(alert.Alert_Type || alert.Type || '').trim().toLowerCase();
+
+  if (alertType !== 'missing xact/symbility link') {
+    return false;
+  }
+
+  const alertClaimId = String(alert.Claim_ID || '').trim();
+  const alertClaimNumber = String(alert.Claim_Number || '').trim();
+  const alertJobNumber = String(alert.Job_Number || '').trim();
+
+  return auditState.records.some(function(record) {
+    if (!record || record.actionType !== 'link-added' || !record.url) {
+      return false;
+    }
+
+    const linkType = String(record.linkType || '').trim().toLowerCase();
+    const isXactOrSymbilityLink = linkType.indexOf('xact') !== -1 || linkType.indexOf('symbility') !== -1 || linkType.indexOf('xa') !== -1;
+
+    if (!isXactOrSymbilityLink) {
+      return false;
+    }
+
+    const recordClaimId = String(record.claimId || '').trim();
+
+    return !!recordClaimId && (
+      recordClaimId === alertClaimId ||
+      recordClaimId === alertClaimNumber ||
+      recordClaimId === alertJobNumber ||
+      recordClaimId === String(alertClaimId || '').replace(/^CLM-/, '')
+    );
+  });
 }
 
 function normalizeHomepageComplianceAction_(row) {
@@ -1416,6 +1459,23 @@ function buildHomepageTargetRoute_(targetType, targetId) {
   }
 
   return '?view=claimShell';
+}
+
+function testHomepageAlertDistribution() {
+  const alerts = getHomepageSheetRows_('Claim_Alerts')
+    .map(normalizeHomepageAlert_);
+
+  const result = alerts.reduce(function(map, alert) {
+    const type = alert.Alert_Type || 'Unknown';
+    const status = alert.Alert_Status || alert.Status || 'Unknown';
+    const key = type + ' | ' + status;
+
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function testHomepageClaimsTargetRoutes() {
