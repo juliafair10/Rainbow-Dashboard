@@ -89,7 +89,8 @@ function getHomepageClaimSummaryData() {
     operationalAlerts: getHomepageOperationalAlerts_(activeClaims, activeAlerts),
     ownershipVisibility: getHomepageOwnershipVisibility_(activeClaims),
     conditionsVisibility: getHomepageConditionsVisibility_(activeConditions),
-    complianceVisibility: getHomepageComplianceVisibility_(openComplianceActions)
+    complianceVisibility: getHomepageComplianceVisibility_(openComplianceActions),
+    claimsOperationalAwareness: buildHomepageClaimsOperationalAwareness_(activeClaims, activeConditions, activeAlerts)
   };
 }
 
@@ -1661,6 +1662,583 @@ function buildHomepageTargetRoute_(targetType, targetId) {
   }
 
   return '?view=claimShell';
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 Homepage Intelligence: claimsOperationalAwareness
+//
+// Builds a lightweight claimsOperationalAwareness object from data already
+// fetched by getHomepageClaimSummaryData(). Zero additional Sheets reads.
+//
+// Mirrors the shape of ClaimsOperationalAwarenessService.buildClaimsOperationalAwareness_()
+// but works from normalized homepage claim rows rather than enriched workspace
+// stream objects. The counts and card logic are intentionally equivalent.
+// ---------------------------------------------------------------------------
+
+function buildHomepageClaimsOperationalAwareness_(activeClaims, activeConditions, activeAlerts) {
+  activeClaims = activeClaims || [];
+  activeConditions = activeConditions || [];
+  activeAlerts = activeAlerts || [];
+
+  var generatedAt = new Date().toISOString();
+
+  // --- Build per-claim summary objects from in-memory homepage data ---
+  var conditionsByClaim = {};
+  activeConditions.forEach(function(condition) {
+    var claimId = String(condition.Claim_ID || '');
+    if (!claimId) {
+      return;
+    }
+    if (!conditionsByClaim[claimId]) {
+      conditionsByClaim[claimId] = [];
+    }
+    conditionsByClaim[claimId].push(condition.Condition_Type || '');
+  });
+
+  var alertsByClaim = {};
+  activeAlerts.forEach(function(alert) {
+    var claimId = String(alert.Claim_ID || '');
+    if (!claimId) {
+      return;
+    }
+    if (!alertsByClaim[claimId]) {
+      alertsByClaim[claimId] = [];
+    }
+    alertsByClaim[claimId].push({
+      alertType: String(alert.Alert_Type || ''),
+      severity: String(alert.Severity || alert.Priority || '')
+    });
+  });
+
+  var lightweightClaims = activeClaims.map(function(claim) {
+    return buildHomepageLightweightClaimSummary_(claim, conditionsByClaim, alertsByClaim);
+  });
+
+  var summary = buildHomepageAwarenessSummary_(lightweightClaims);
+  var priorityCards = buildHomepageAwarenessPriorityCards_(lightweightClaims);
+  var priorityClaims = buildHomepageAwarenessPriorityClaims_(lightweightClaims);
+  var followUps = buildHomepageAwarenessFollowUps_(lightweightClaims);
+  var waitingOn = buildHomepageAwarenessWaitingOn_(lightweightClaims);
+  var alerts = buildHomepageAwarenessAlerts_(lightweightClaims);
+
+  return {
+    generatedAt: generatedAt,
+    summary: summary,
+    priorityCards: priorityCards,
+    priorityClaims: priorityClaims,
+    followUps: followUps,
+    waitingOn: waitingOn,
+    alerts: alerts
+  };
+}
+
+function buildHomepageLightweightClaimSummary_(claim, conditionsByClaim, alertsByClaim) {
+  var claimId = String(claim.Claim_ID || '');
+  var displayName = claim.Customer_Name || claim.Display_Name || claimId;
+  var claimNumber = String(claim.Claim_Number || '');
+  var jobNumber = String(claim.Job_Number || '');
+  var lifecycleState = String(claim.Lifecycle_State || '');
+  var ownershipArea = String(claim.Ownership_Area || '');
+  var healthLevel = getHomepageClaimHealthLevel_(claim, 'Healthy');
+
+  var claimConditionTypes = conditionsByClaim[claimId] || [];
+  var claimAlerts = alertsByClaim[claimId] || [];
+
+  var primaryCondition = buildHomepageAwarenessPrimaryCondition_(claimConditionTypes);
+  var waitingOn = buildHomepageAwarenessWaitingOnForClaim_(claimConditionTypes, primaryCondition, ownershipArea);
+
+  var lastActivityRaw = claim.Last_Meaningful_Activity_Date || claim.Updated_At || '';
+  var daysSinceMeaningfulActivity = 0;
+  if (lastActivityRaw) {
+    var lastActivityTime = new Date(lastActivityRaw).getTime();
+    if (!isNaN(lastActivityTime)) {
+      daysSinceMeaningfulActivity = Math.floor((new Date().getTime() - lastActivityTime) / (1000 * 60 * 60 * 24));
+    }
+  }
+
+  var staleRisk = daysSinceMeaningfulActivity > 14;
+  var alertCount = claimAlerts.length;
+  var highestAlertSeverity = '';
+
+  if (claimAlerts.length > 0) {
+    var severityRanks = { critical: 4, high: 3, medium: 2, low: 1 };
+    var highestRank = 0;
+    claimAlerts.forEach(function(a) {
+      var sev = String(a.severity || '').toLowerCase();
+      var rank = severityRanks[sev] || 0;
+      if (rank > highestRank) {
+        highestRank = rank;
+        highestAlertSeverity = a.severity || '';
+      }
+    });
+  }
+
+  var isMissingEoj = claimAlerts.some(function(a) {
+    return String(a.alertType || '').toLowerCase().indexOf('eoj') !== -1;
+  });
+
+  return {
+    claimId: claimId,
+    displayName: displayName,
+    claimNumber: claimNumber,
+    jobNumber: jobNumber,
+    lifecycleState: lifecycleState,
+    ownershipArea: ownershipArea,
+    healthLevel: healthLevel,
+    primaryCondition: primaryCondition,
+    activeConditions: claimConditionTypes,
+    waitingOn: waitingOn,
+    operationalPriority: buildHomepageAwarenessOperationalPriority_(healthLevel),
+    staleRisk: staleRisk,
+    lastMeaningfulActivity: lastActivityRaw,
+    daysSinceMeaningfulActivity: daysSinceMeaningfulActivity,
+    alertCount: alertCount,
+    highestAlertSeverity: highestAlertSeverity,
+    isMissingEoj: isMissingEoj,
+    operationalAlerts: claimAlerts
+  };
+}
+
+function buildHomepageAwarenessPrimaryCondition_(conditionTypes) {
+  var priorityOrder = [
+    'Carrier Revision Requested',
+    'Positive Asbestos Result',
+    'Abatement Required',
+    'Coverage Pending',
+    'Estimate Under Review',
+    'Supplement Under Review',
+    'Revision Active',
+    'Monitoring Active',
+    'Waiting on Payment',
+    'Asbestos Testing Pending',
+    'Waiting on Lab Results',
+    'Source of Loss Unresolved',
+    'Waiting on Customer Decision'
+  ];
+
+  for (var i = 0; i < priorityOrder.length; i++) {
+    if (conditionTypes.indexOf(priorityOrder[i]) !== -1) {
+      return priorityOrder[i];
+    }
+  }
+
+  return conditionTypes.length > 0 ? conditionTypes[0] : '';
+}
+
+function buildHomepageAwarenessWaitingOnForClaim_(conditionTypes, primaryCondition, ownershipArea) {
+  var conditionText = conditionTypes.join(' | ').toLowerCase();
+  var primaryLower = String(primaryCondition || '').toLowerCase();
+  var combined = conditionText + ' | ' + primaryLower;
+
+  if (combined.indexOf('coverage pending') !== -1 ||
+      combined.indexOf('carrier revision') !== -1 ||
+      combined.indexOf('estimate under review') !== -1 ||
+      combined.indexOf('supplement under review') !== -1) {
+    return 'Carrier';
+  }
+
+  if (combined.indexOf('asbestos') !== -1 ||
+      combined.indexOf('lab results') !== -1) {
+    return 'Lab';
+  }
+
+  if (combined.indexOf('waiting on customer') !== -1 ||
+      combined.indexOf('customer decision') !== -1) {
+    return 'Customer';
+  }
+
+  if (combined.indexOf('waiting on payment') !== -1) {
+    return 'Accounting';
+  }
+
+  if (combined.indexOf('revision active') !== -1) {
+    return 'Rainbow';
+  }
+
+  if (String(ownershipArea || '').toLowerCase().indexOf('field operations') !== -1 && conditionTypes.length === 0) {
+    return 'Technician';
+  }
+
+  if (conditionTypes.length === 0) {
+    return 'Nobody';
+  }
+
+  return 'Unknown';
+}
+
+function buildHomepageAwarenessOperationalPriority_(healthLevel) {
+  if (healthLevel === 'Critical') {
+    return 'Immediate';
+  }
+  if (healthLevel === 'Escalated') {
+    return 'High';
+  }
+  if (healthLevel === 'At Risk') {
+    return 'Normal';
+  }
+  if (healthLevel === 'Attention Soon') {
+    return 'Low';
+  }
+  return 'Normal';
+}
+
+function buildHomepageAwarenessSummary_(claims) {
+  claims = claims || [];
+
+  var totalActiveClaims = 0;
+  var needsAttentionCount = 0;
+  var atRiskCount = 0;
+  var escalatedCount = 0;
+  var criticalCount = 0;
+  var missingEojCount = 0;
+  var waitingOnInsuranceCount = 0;
+  var monitoringCount = 0;
+  var openRequirementCount = 0;
+  var operationalAlertCount = 0;
+
+  claims.forEach(function(c) {
+    totalActiveClaims++;
+    var health = String(c.healthLevel || '').toLowerCase();
+
+    if (health === 'attention soon' || health === 'at risk' || health === 'escalated' || health === 'critical') {
+      needsAttentionCount++;
+    }
+    if (health === 'at risk') {
+      atRiskCount++;
+    }
+    if (health === 'escalated') {
+      escalatedCount++;
+    }
+    if (health === 'critical') {
+      criticalCount++;
+    }
+    if (c.isMissingEoj) {
+      missingEojCount++;
+    }
+    if (c.waitingOn === 'Carrier') {
+      waitingOnInsuranceCount++;
+    }
+    if (String(c.primaryCondition || '').toLowerCase().indexOf('monitoring') !== -1) {
+      monitoringCount++;
+    }
+    if ((c.alertCount || 0) > 0) {
+      operationalAlertCount++;
+    }
+  });
+
+  return {
+    totalActiveClaims: totalActiveClaims,
+    needsAttentionCount: needsAttentionCount,
+    atRiskCount: atRiskCount,
+    escalatedCount: escalatedCount,
+    criticalCount: criticalCount,
+    missingEojCount: missingEojCount,
+    waitingOnInsuranceCount: waitingOnInsuranceCount,
+    monitoringCount: monitoringCount,
+    openRequirementCount: openRequirementCount,
+    operationalAlertCount: operationalAlertCount
+  };
+}
+
+function buildHomepageAwarenessPriorityCards_(claims) {
+  claims = claims || [];
+
+  return [
+    buildHomepageAwarenessCard_(
+      'critical-escalated',
+      'Critical / Escalated',
+      'critical',
+      'Claims requiring immediate or escalated attention.',
+      'needsAttention',
+      '?view=claimShell&lensId=needsAttention',
+      claims,
+      function(c) {
+        var h = String(c.healthLevel || '').toLowerCase();
+        return h === 'critical' || h === 'escalated';
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'needs-attention',
+      'Needs Attention',
+      'high',
+      'Claims with degraded health or immediate operational priority.',
+      'needsAttention',
+      '?view=claimShell&lensId=needsAttention',
+      claims,
+      function(c) {
+        var h = String(c.healthLevel || '').toLowerCase();
+        return h === 'attention soon' || h === 'at risk' || h === 'escalated' || h === 'critical';
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'follow-ups-due',
+      'Follow-Ups Due',
+      'medium',
+      'Claims that are stale or have exceeded the 14-day follow-up threshold.',
+      '',
+      '?view=claimShell',
+      claims,
+      function(c) {
+        return c.staleRisk === true || (c.daysSinceMeaningfulActivity || 0) > 14;
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'waiting-on-insurance',
+      'Waiting on Insurance',
+      'high',
+      'Claims waiting on carrier coverage, estimates, supplements, or payment.',
+      'waitingOnInsurance',
+      '?view=claimShell&lensId=waitingOnInsurance',
+      claims,
+      function(c) {
+        if (c.waitingOn === 'Carrier') {
+          return true;
+        }
+        var cond = String(c.primaryCondition || '').toLowerCase();
+        return cond.indexOf('coverage') !== -1 ||
+               cond.indexOf('supplement') !== -1 ||
+               cond.indexOf('estimate') !== -1;
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'missing-eoj',
+      'Missing EOJ',
+      'high',
+      'Claims with a missing EOJ alert.',
+      'missingEoj',
+      '?view=claimShell&lensId=missingEoj',
+      claims,
+      function(c) {
+        return c.isMissingEoj === true;
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'monitoring-paid',
+      'Monitoring / Paid',
+      'info',
+      'Claims in monitoring status or operationally complete.',
+      'paidMonitoring',
+      '?view=claimShell&lensId=paidMonitoring',
+      claims,
+      function(c) {
+        var cond = String(c.primaryCondition || '').toLowerCase();
+        var state = String(c.lifecycleState || '').toLowerCase();
+        return cond.indexOf('monitoring active') !== -1 || state === 'operationally complete';
+      }
+    ),
+    buildHomepageAwarenessCard_(
+      'operational-alerts',
+      'Operational Alerts',
+      'medium',
+      'Claims with one or more active operational alerts.',
+      '',
+      '?view=claimShell',
+      claims,
+      function(c) {
+        return (c.alertCount || 0) > 0;
+      }
+    )
+  ];
+}
+
+function buildHomepageAwarenessCard_(id, label, severity, description, lensId, route, claims, filterFn) {
+  var matched = claims.filter(filterFn);
+  var preview = matched.slice(0, 3).map(function(c) {
+    return {
+      claimId: String(c.claimId || ''),
+      displayName: String(c.displayName || ''),
+      claimNumber: String(c.claimNumber || '')
+    };
+  });
+
+  return {
+    id: String(id || ''),
+    label: String(label || ''),
+    count: matched.length,
+    severity: String(severity || 'info'),
+    description: String(description || ''),
+    lensId: String(lensId || ''),
+    route: String(route || ''),
+    itemsPreview: preview
+  };
+}
+
+function buildHomepageAwarenessPriorityClaims_(claims) {
+  claims = claims || [];
+
+  var prioritized = claims.filter(function(c) {
+    var h = String(c.healthLevel || '').toLowerCase();
+    return h === 'critical' || h === 'escalated' || h === 'at risk' || h === 'attention soon' ||
+           c.staleRisk === true ||
+           (c.alertCount || 0) > 0;
+  });
+
+  prioritized.sort(function(a, b) {
+    var rankA = buildHomepageAwarenessHealthRank_(a.healthLevel);
+    var rankB = buildHomepageAwarenessHealthRank_(b.healthLevel);
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+    return (b.daysSinceMeaningfulActivity || 0) - (a.daysSinceMeaningfulActivity || 0);
+  });
+
+  return prioritized.slice(0, 20).map(function(c) {
+    return {
+      claimId: String(c.claimId || ''),
+      displayName: String(c.displayName || ''),
+      claimNumber: String(c.claimNumber || ''),
+      jobNumber: String(c.jobNumber || ''),
+      lifecycleState: String(c.lifecycleState || ''),
+      healthLevel: String(c.healthLevel || ''),
+      ownershipArea: String(c.ownershipArea || ''),
+      primaryCondition: String(c.primaryCondition || ''),
+      waitingOn: String(c.waitingOn || 'Unknown'),
+      operationalPriority: String(c.operationalPriority || 'Normal'),
+      staleRisk: c.staleRisk === true,
+      lastMeaningfulActivity: String(c.lastMeaningfulActivity || ''),
+      daysSinceMeaningfulActivity: Number(c.daysSinceMeaningfulActivity || 0),
+      nextAction: '',
+      alertCount: Number(c.alertCount || 0),
+      highestAlertSeverity: String(c.highestAlertSeverity || ''),
+      route: c.claimId ? buildHomepageTargetRoute_('claim', c.claimId) : ''
+    };
+  });
+}
+
+function buildHomepageAwarenessFollowUps_(claims) {
+  claims = claims || [];
+  var dueToday = [];
+  var overdue = [];
+  var attentionSoon = [];
+
+  claims.forEach(function(c) {
+    if (!c.staleRisk && (c.daysSinceMeaningfulActivity || 0) <= 14) {
+      return;
+    }
+
+    var days = c.daysSinceMeaningfulActivity || 0;
+    var item = {
+      claimId: String(c.claimId || ''),
+      displayName: String(c.displayName || ''),
+      claimNumber: String(c.claimNumber || ''),
+      healthLevel: String(c.healthLevel || ''),
+      daysSinceMeaningfulActivity: days,
+      waitingOn: String(c.waitingOn || 'Unknown'),
+      nextAction: ''
+    };
+
+    if (days > 21) {
+      overdue.push(item);
+    } else if (days > 14) {
+      attentionSoon.push(item);
+    } else {
+      dueToday.push(item);
+    }
+  });
+
+  return {
+    dueToday: dueToday,
+    overdue: overdue,
+    attentionSoon: attentionSoon
+  };
+}
+
+function buildHomepageAwarenessWaitingOn_(claims) {
+  claims = claims || [];
+
+  var groups = {
+    carrier: [],
+    customer: [],
+    technician: [],
+    accounting: [],
+    lab: [],
+    rainbow: [],
+    unknown: []
+  };
+
+  claims.forEach(function(c) {
+    var waitingOn = String(c.waitingOn || 'Unknown');
+    var item = {
+      claimId: String(c.claimId || ''),
+      displayName: String(c.displayName || ''),
+      claimNumber: String(c.claimNumber || ''),
+      primaryCondition: String(c.primaryCondition || ''),
+      healthLevel: String(c.healthLevel || '')
+    };
+
+    if (waitingOn === 'Carrier') {
+      groups.carrier.push(item);
+    } else if (waitingOn === 'Customer') {
+      groups.customer.push(item);
+    } else if (waitingOn === 'Technician') {
+      groups.technician.push(item);
+    } else if (waitingOn === 'Accounting') {
+      groups.accounting.push(item);
+    } else if (waitingOn === 'Lab') {
+      groups.lab.push(item);
+    } else if (waitingOn === 'Rainbow') {
+      groups.rainbow.push(item);
+    } else {
+      groups.unknown.push(item);
+    }
+  });
+
+  return groups;
+}
+
+function buildHomepageAwarenessAlerts_(claims) {
+  claims = claims || [];
+
+  var groups = {
+    missingEoj: [],
+    missingLinks: [],
+    claimReviewNeeded: [],
+    duplicateReviewNeeded: [],
+    other: []
+  };
+
+  claims.forEach(function(c) {
+    var alerts = Array.isArray(c.operationalAlerts) ? c.operationalAlerts : [];
+
+    alerts.forEach(function(alert) {
+      var alertType = String(alert.alertType || alert.Alert_Type || '').toLowerCase();
+      var combined = alertType;
+      var item = {
+        claimId: String(c.claimId || ''),
+        displayName: String(c.displayName || ''),
+        claimNumber: String(c.claimNumber || ''),
+        alertType: String(alert.alertType || alert.Alert_Type || ''),
+        severity: String(alert.severity || alert.Severity || 'Medium')
+      };
+
+      if (combined.indexOf('eoj') !== -1) {
+        groups.missingEoj.push(item);
+      } else if (combined.indexOf('missing link') !== -1 || combined.indexOf('missing xa') !== -1 ||
+                 combined.indexOf('missing fusion') !== -1 || combined.indexOf('missing claimx') !== -1) {
+        groups.missingLinks.push(item);
+      } else if (combined.indexOf('claim review') !== -1 || combined.indexOf('review needed') !== -1) {
+        groups.claimReviewNeeded.push(item);
+      } else if (combined.indexOf('duplicate') !== -1) {
+        groups.duplicateReviewNeeded.push(item);
+      } else {
+        groups.other.push(item);
+      }
+    });
+  });
+
+  return groups;
+}
+
+function buildHomepageAwarenessHealthRank_(healthLevel) {
+  var ranks = {
+    'Critical': 1,
+    'Escalated': 2,
+    'At Risk': 3,
+    'Attention Soon': 4,
+    'Healthy': 5
+  };
+
+  return ranks[String(healthLevel || '')] || 5;
 }
 
 function testHomepageAlertDistribution() {
