@@ -296,6 +296,16 @@
     }
   }
 
+  function getClaimPreferredNumberFromListItem_(claim) {
+    return claim.claimNumber ||
+      claim.Claim_Number ||
+      claim['Claim Number'] ||
+      claim.jobNumber ||
+      claim.Job_Number ||
+      claim['Job Number'] ||
+      '';
+  }
+
   function renderClaimRow_(claim) {
     const openRequirements = getClaimOpenRequirementsForDisplay_(claim);
     const nextAction = getClaimNextActionForDisplay_(claim);
@@ -306,7 +316,7 @@
     html += '<div class="claim-row-identity"><strong>' +
       escapeHtml(claim.displayName || claim.claimId || '') +
       '</strong><br><span>' +
-      escapeHtml(claim.jobNumber || '') +
+      escapeHtml(getClaimPreferredNumberFromListItem_(claim)) +
       '</span></div>';
     html += '<div class="claim-row-health">';
     html += '<span class="claim-row-health-pill">' + escapeHtml(claim.healthLevel || 'Unrated') + '</span>';
@@ -754,6 +764,25 @@
       .getClaimDetailPageData(claimId);
   }
 
+  function getClaimPreferredNumberFromDetail_(detail) {
+    const header = detail && detail.claimHeader ? detail.claimHeader : {};
+
+    return header.claimNumber ||
+      header.Claim_Number ||
+      header['Claim Number'] ||
+      detail.claimNumber ||
+      detail.Claim_Number ||
+      detail['Claim Number'] ||
+      header.jobNumber ||
+      header.Job_Number ||
+      header['Job Number'] ||
+      detail.jobNumber ||
+      detail.Job_Number ||
+      detail['Job Number'] ||
+      detail.claimId ||
+      '';
+  }
+
   function renderClaimDetail(detail) {
     const panel = document.getElementById('claimDetailPanel');
 
@@ -768,6 +797,7 @@
     const workflows = detail.relatedWorkflows || [];
     const timelineEvents = getRecentTimelineEvents_(detail);
     const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
+    const operationalLinkState = getClaimOperationalLinkState_(links);
 
     const detailClaimSummary = {
       claimId: detail.claimId || header.claimId || '',
@@ -792,7 +822,7 @@
 
     html += '<div class="claim-detail-header">';
     html += '<h2>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h2>';
-    html += '<div class="claim-detail-subtitle">' + escapeHtml(header.jobNumber || detail.claimId || '') + '</div>';
+    html += '<div class="claim-detail-subtitle">' + escapeHtml(getClaimPreferredNumberFromDetail_(detail)) + '</div>';
     html += '<button type="button" class="claim-open-full-button" data-open-full-claim="' + escapeHtml(detail.claimId || header.claimId || '') + '">Open Full Claim</button>';
     html += '</div>';
 
@@ -876,23 +906,7 @@
       html += '</div>';
     }
 
-    if (links.length) {
-      html += '<div class="claim-detail-section">';
-      html += '<h4>External Links</h4>';
-      html += '<div class="claim-detail-link-list">';
-      links.forEach(function(link) {
-        const label = getExternalLinkDisplayLabel_(link);
-        const url = link.url || '';
-
-        if (url) {
-          html += '<a class="claim-detail-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>';
-        } else {
-          html += '<span class="claim-detail-link is-disabled">' + escapeHtml(label) + '</span>';
-        }
-      });
-      html += '</div>';
-      html += '</div>';
-    }
+    html += renderClaimOperationalLinksSection_(detail, operationalLinkState);
 
     html += '<div class="claim-detail-section">';
     html += '<h4>Recent Activity</h4>';
@@ -928,6 +942,8 @@
     panel.innerHTML = html;
 
     initializeOpenFullClaimButton_(detail);
+    initializeClaimLinkRequirementButtons_();
+    initializeClaimOperationalLinkButtons_(detail);
   }
 
   function initializeOpenFullClaimButton_(detail) {
@@ -957,9 +973,13 @@
     const links = detail.externalLinks || [];
     const timelineEvents = getRecentTimelineEvents_(detail);
     const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
+    const operationalLinkState = getClaimOperationalLinkState_(links);
     const activeConditions = header.activeConditions || [];
     const nextAction = header.nextAction || operational.nextAction || '';
+    const detailOpenRequirements = header.openRequirements || operational.openRequirements || [];
+    const detailAttentionReason = header.attentionReason || operational.attentionReason || header.healthReason || operational.healthReason || '';
     const lastMeaningfulActivity = header.lastMeaningfulActivityAt || header.lastMeaningfulActivityDate || operational.lastMeaningfulActivityAt || operational.lastMeaningfulActivityDate || '';
+    const fullClaimStatusLine = [header.lifecycleState, header.healthLevel, header.ownershipArea].filter(Boolean).join(' • ');
     let html = '';
 
     html += '<section class="full-claim-workspace">';
@@ -971,6 +991,17 @@
     html += '<div>';
     html += '<p class="full-claim-eyebrow">Full Claim Workspace</p>';
     html += '<h1>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h1>';
+    html += '<div class="full-claim-jobline">' + escapeHtml(getClaimPreferredNumberFromDetail_(detail)) + '</div>';
+
+    if (fullClaimStatusLine) {
+      html += '<div class="full-claim-state-line">' + escapeHtml(fullClaimStatusLine) + '</div>';
+    }
+
+    html += '<div class="full-claim-header-intel">';
+    html += renderFullClaimHeaderIntelItem_('Last meaningful activity', lastMeaningfulActivity || 'Not yet available');
+    html += renderFullClaimHeaderIntelItem_('Next action', nextAction || 'No immediate action detected');
+    html += '</div>';
+
     html += '<div class="full-claim-meta">';
     html += renderFullClaimMetaItem_('Job', header.jobNumber || '');
     html += renderFullClaimMetaItem_('Claim', header.claimNumber || detail.claimNumber || '');
@@ -996,6 +1027,38 @@
 
     html += '<div class="full-claim-layout">';
     html += '<main class="full-claim-main">';
+
+    html += '<section class="full-claim-card">';
+    html += '<div class="full-claim-card-header">';
+    html += '<h2>Operational Snapshot</h2>';
+    html += '<p>Current operational context and why this claim is surfacing.</p>';
+    html += '</div>';
+
+    if (detailAttentionReason) {
+      html += '<div class="full-claim-next-step">';
+      html += '<strong>Why this claim needs attention</strong>';
+      html += '<div>' + escapeHtml(detailAttentionReason) + '</div>';
+      html += '</div>';
+    }
+
+    if (detailOpenRequirements.length) {
+      html += '<div class="full-claim-next-step">';
+      html += '<strong>Open Requirements</strong>';
+      detailOpenRequirements.forEach(function(requirement) {
+        html += '<div>• ' + escapeHtml(requirement) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (nextAction) {
+      html += '<div class="full-claim-next-step">';
+      html += '<strong>Recommended Next Action</strong>';
+      html += '<div>' + escapeHtml(nextAction) + '</div>';
+      html += '</div>';
+    }
+
+    html += '</section>';
+
     html += '<section class="full-claim-card full-claim-timeline-card">';
     html += '<div class="full-claim-card-header">';
     html += '<h2>Operational Timeline</h2>';
@@ -1003,11 +1066,7 @@
     html += '</div>';
 
     if (timelineEvents.length) {
-      html += '<div class="full-claim-timeline-list">';
-      timelineEvents.forEach(function(event) {
-        html += renderFullClaimTimelineItem_(event);
-      });
-      html += '</div>';
+      html += renderFullClaimTimelineGroups_(timelineEvents);
     } else {
       html += '<div class="claims-empty-state">No timeline activity available yet.</div>';
     }
@@ -1020,6 +1079,7 @@
     html += renderFullClaimConditionsCard_(activeConditions);
     html += renderFullClaimAlertsCard_(detailAlerts);
     html += renderFullClaimNextActionCard_(nextAction);
+    html += renderFullClaimOperationalLinksCard_(detail, operationalLinkState);
     html += renderFullClaimQuickActionsCard_(links);
     html += renderFullClaimFinancialsCard_(detail);
     html += renderFullClaimAiCard_();
@@ -1037,7 +1097,333 @@
         window.location.reload();
       });
     }
+    initializeClaimLinkRequirementButtons_();
+    initializeClaimOperationalLinkButtons_(detail);
   }
+  function getClaimOperationalLinkState_(links) {
+    const state = {
+      fusion: { label: 'Fusion', url: '', status: 'Missing' },
+      estimate: { label: 'XA / Symbility', url: '', status: 'Missing' },
+      claimx: { label: 'ClaimX', url: '', status: 'Missing' },
+      drive: { label: 'Drive Folder', url: '', status: 'Missing' }
+    };
+
+    (links || []).forEach(function(link) {
+      const linkType = String(link.linkType || link.Link_Type || link.type || '').toLowerCase();
+      const label = String(link.label || link.Label || '').toLowerCase();
+      const combined = linkType + ' ' + label;
+      const url = getExternalLinkUrl_(link);
+      const fusionUrl = link.Fusion_URL || link.fusionUrl || link['Fusion URL'] || '';
+      const driveUrl = link.Drive_Folder || link.driveFolder || link['Drive Folder'] || '';
+      const xactUrl = link.XactAnalysis || link.XactAnalysis_URL || link.xactAnalysisUrl || link.Xactimate_URL || link.xactimateUrl || '';
+      const symbilityUrl = link.Symbility || link.Symbility_URL || link.symbilityUrl || '';
+      const claimXUrl = link.ClaimX || link.ClaimX_URL || link.claimXUrl || '';
+
+      if (fusionUrl) {
+        state.fusion.url = fusionUrl;
+        state.fusion.status = 'Linked';
+      }
+
+      if (driveUrl) {
+        state.drive.url = driveUrl;
+        state.drive.status = 'Linked';
+      }
+
+      if (xactUrl || symbilityUrl) {
+        state.estimate.url = xactUrl || symbilityUrl;
+        state.estimate.status = 'Linked';
+      }
+
+      if (claimXUrl) {
+        state.claimx.url = claimXUrl;
+        state.claimx.status = 'Linked';
+      }
+
+      if (!url) {
+        return;
+      }
+
+      if (combined.indexOf('fusion') !== -1) {
+        state.fusion.url = url;
+        state.fusion.status = 'Linked';
+      } else if (combined.indexOf('xact') !== -1 || combined.indexOf('symbility') !== -1 || combined === 'xa') {
+        state.estimate.url = url;
+        state.estimate.status = 'Linked';
+      } else if (combined.indexOf('claimx') !== -1 || combined.indexOf('claim x') !== -1) {
+        state.claimx.url = url;
+        state.claimx.status = 'Linked';
+      } else if (combined.indexOf('drive') !== -1 || combined.indexOf('folder') !== -1) {
+        state.drive.url = url;
+        state.drive.status = 'Linked';
+      }
+    });
+
+    return state;
+  }
+
+  function getExternalLinkUrl_(link) {
+    return link.url ||
+      link.URL ||
+      link.Link_URL ||
+      link['Link URL'] ||
+      link.Fusion_URL ||
+      link.fusionUrl ||
+      link.XactAnalysis ||
+      link.XactAnalysis_URL ||
+      link.xactAnalysisUrl ||
+      link.Xactimate_URL ||
+      link.xactimateUrl ||
+      link.Symbility ||
+      link.Symbility_URL ||
+      link.symbilityUrl ||
+      link.ClaimX ||
+      link.ClaimX_URL ||
+      link.claimXUrl ||
+      link.Drive_Folder ||
+      link.driveFolder ||
+      link['Drive Folder'] ||
+      link['Fusion URL'] ||
+      '';
+  }
+
+  function renderClaimOperationalLinksSection_(detail, state) {
+    const claimId = detail.claimId || (detail.claimHeader && detail.claimHeader.claimId) || '';
+    let html = '<div class="claim-detail-section">';
+    html += '<h4>Operational Links</h4>';
+    html += '<div class="claim-detail-link-list">';
+    html += renderClaimOperationalLinkChip_(state.fusion);
+    html += renderClaimOperationalLinkChip_(state.drive);
+    html += renderClaimOperationalLinkChip_(state.estimate);
+    html += renderClaimOperationalLinkChip_(state.claimx);
+    html += '</div>';
+    html += '<div class="claim-detail-next-step">';
+    html += '<strong>Link Controls</strong>';
+    html += '<div class="claim-detail-link-list">';
+    html += '<button type="button" class="claim-detail-link" data-add-claim-operational-link="' + escapeHtml(claimId) + '">Add / update link</button>';
+    html += '<button type="button" class="claim-detail-link" data-claim-estimate-not-required="' + escapeHtml(claimId) + '">XA/Symbility Not Required</button>';
+    html += '</div>';
+    html += '<small>Use Not Required for out-of-pocket or non-insurance jobs that will not have an estimate-platform link.</small>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function renderClaimOperationalLinkChip_(link) {
+    const statusClass = link.status === 'Linked' ? '' : ' is-disabled';
+
+    if (link.url) {
+      return '<a class="claim-detail-link" href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer">' +
+        escapeHtml(link.label + ' ✓') +
+        '</a>';
+    }
+
+    return '<span class="claim-detail-link' + statusClass + '">' + escapeHtml(link.label + ' — ' + link.status) + '</span>';
+  }
+
+  function renderFullClaimOperationalLinksCard_(detail, state) {
+    const claimId = detail.claimId || (detail.claimHeader && detail.claimHeader.claimId) || '';
+    let html = '<section class="full-claim-card">';
+    html += '<h3>Operational Links</h3>';
+    html += '<div class="full-claim-action-list">';
+    html += renderFullClaimOperationalLinkAction_(state.fusion);
+    html += renderFullClaimOperationalLinkAction_(state.drive);
+    html += renderFullClaimOperationalLinkAction_(state.estimate);
+    html += renderFullClaimOperationalLinkAction_(state.claimx);
+    html += '<button type="button" data-add-claim-operational-link="' + escapeHtml(claimId) + '">Add / update link</button>';
+    html += '<button type="button" data-claim-estimate-not-required="' + escapeHtml(claimId) + '">XA/Symbility Not Required</button>';
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimOperationalLinkAction_(link) {
+    if (link.url) {
+      return '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(link.label + ' ✓') + '</a>';
+    }
+
+    return '<button type="button" disabled>' + escapeHtml(link.label + ' — ' + link.status) + '</button>';
+  }
+  function initializeClaimOperationalLinkButtons_(detail) {
+    document.querySelectorAll('[data-add-claim-operational-link]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const claimId = button.getAttribute('data-add-claim-operational-link') || '';
+        const header = detail && detail.claimHeader ? detail.claimHeader : {};
+        const jobNumber = header.jobNumber || detail.jobNumber || '';
+        const claimNumber = header.claimNumber || detail.claimNumber || '';
+        const linkType = window.prompt('Link type: Fusion, XactAnalysis, Symbility, ClaimX, or Drive Folder', 'XactAnalysis');
+
+        if (!claimId || !linkType) {
+          return;
+        }
+
+        const url = window.prompt('Paste URL');
+
+        if (!url) {
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Saving...';
+
+        google.script.run
+          .withSuccessHandler(function() {
+            button.textContent = 'Saved ✓';
+            loadClaimDetail(claimId);
+          })
+          .withFailureHandler(function(error) {
+            button.disabled = false;
+            button.textContent = 'Add / update link';
+            alert('Unable to save operational link: ' + (error && error.message ? error.message : String(error)));
+          })
+          .saveIntakeOperationalLink({
+            claimId: claimId,
+            claimNumber: claimNumber,
+            jobNumber: jobNumber,
+            linkType: linkType,
+            url: url,
+            source: 'Claim Workspace'
+          });
+      });
+    });
+  }
+
+  function initializeClaimLinkRequirementButtons_() {
+    document.querySelectorAll('[data-claim-estimate-not-required]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const claimId = button.getAttribute('data-claim-estimate-not-required') || '';
+
+        if (!claimId) {
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Saving...';
+
+        google.script.run
+          .withSuccessHandler(function() {
+            button.textContent = 'XA/Symbility Not Required ✓';
+          })
+          .withFailureHandler(function(error) {
+            button.disabled = false;
+            button.textContent = 'XA/Symbility Not Required';
+            alert('Unable to save link requirement: ' + (error && error.message ? error.message : String(error)));
+          })
+          .markClaimEstimatePlatformNotRequired(claimId);
+      });
+    });
+  }
+
+  function renderFullClaimTimelineGroups_(events) {
+    const groups = groupFullClaimTimelineEvents_(events || []);
+    let html = '<div class="full-claim-timeline-groups">';
+
+    groups.forEach(function(group) {
+      html += '<section class="full-claim-timeline-group">';
+      html += '<div class="full-claim-timeline-group-header">';
+      html += '<h3>' + escapeHtml(group.label) + '</h3>';
+      html += '<span>' + escapeHtml(group.events.length) + '</span>';
+      html += '</div>';
+      html += '<div class="full-claim-timeline-list">';
+      group.events.forEach(function(event) {
+        html += renderFullClaimTimelineItem_(event);
+      });
+      html += '</div>';
+      html += '</section>';
+    });
+
+    html += '</div>';
+    return html;
+  }
+
+  function groupFullClaimTimelineEvents_(events) {
+    const groupOrder = [
+      'Revision / Insurance Activity',
+      'Field / EOJ Activity',
+      'Notes & Communication',
+      'Accounting / Payment Activity',
+      'System Activity',
+      'Other Activity'
+    ];
+    const grouped = {};
+
+    events.forEach(function(event) {
+      const groupLabel = getFullClaimTimelineGroupLabel_(event);
+
+      if (!grouped[groupLabel]) {
+        grouped[groupLabel] = [];
+      }
+
+      grouped[groupLabel].push(event);
+    });
+
+    return groupOrder
+      .filter(function(label) {
+        return grouped[label] && grouped[label].length;
+      })
+      .map(function(label) {
+        return {
+          label: label,
+          events: grouped[label]
+        };
+      });
+  }
+
+  function getFullClaimTimelineGroupLabel_(event) {
+    const eventType = String(getTimelineEventType_(event) || '').toLowerCase();
+    const source = String(getTimelineEventSource_(event) || '').toLowerCase();
+    const summary = String(getTimelineEventSummary_(event) || '').toLowerCase();
+    const combined = [eventType, source, summary].join(' ');
+
+    if (combined.indexOf('revision') !== -1 ||
+        combined.indexOf('estimate') !== -1 ||
+        combined.indexOf('carrier') !== -1 ||
+        combined.indexOf('xact') !== -1 ||
+        combined.indexOf('symbility') !== -1 ||
+        combined.indexOf('insurance') !== -1) {
+      return 'Revision / Insurance Activity';
+    }
+
+    if (combined.indexOf('eoj') !== -1 ||
+        combined.indexOf('field') !== -1 ||
+        combined.indexOf('monitor') !== -1 ||
+        combined.indexOf('inspection') !== -1 ||
+        combined.indexOf('technician') !== -1 ||
+        combined.indexOf('calendar') !== -1) {
+      return 'Field / EOJ Activity';
+    }
+
+    if (combined.indexOf('payment') !== -1 ||
+        combined.indexOf('remittance') !== -1 ||
+        combined.indexOf('accounting') !== -1 ||
+        combined.indexOf('invoice') !== -1 ||
+        combined.indexOf('paid') !== -1) {
+      return 'Accounting / Payment Activity';
+    }
+
+    if (combined.indexOf('system') !== -1 ||
+        combined.indexOf('health') !== -1 ||
+        combined.indexOf('condition') !== -1 ||
+        combined.indexOf('alert') !== -1 ||
+        combined.indexOf('intelligence') !== -1) {
+      return 'System Activity';
+    }
+
+    if (combined.indexOf('note') !== -1 ||
+        combined.indexOf('email') !== -1 ||
+        combined.indexOf('historical') !== -1 ||
+        combined.indexOf('communication') !== -1) {
+      return 'Notes & Communication';
+    }
+
+    return 'Other Activity';
+  }
+
 
   function renderFullClaimTimelineItem_(event) {
     const eventType = getTimelineEventType_(event) || 'Activity';
@@ -1084,6 +1470,13 @@
     }
 
     return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+  }
+
+  function renderFullClaimHeaderIntelItem_(label, value) {
+    return '<div class="full-claim-header-intel-item">' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<strong>' + escapeHtml(value || '') + '</strong>' +
+      '</div>';
   }
 
   function renderFullClaimMetaItem_(label, value) {

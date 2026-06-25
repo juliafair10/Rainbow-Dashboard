@@ -156,7 +156,12 @@ function getInsuranceIntakeDiagnostics() {
         findHeaderIndex_: typeof findHeaderIndex_,
         isCopyEligibleInsuranceAttachment_: typeof isCopyEligibleInsuranceAttachment_,
         normalizeInsuranceIntakeText_: typeof normalizeInsuranceIntakeText_,
-        extractInsuranceClaimNumber_: typeof extractInsuranceClaimNumber_
+        extractInsuranceClaimNumber_: typeof extractInsuranceClaimNumber_,
+        extractInsurancePlatformLinks_: typeof extractInsurancePlatformLinks_,
+        saveInsuranceIntakeExternalLinks_: typeof saveInsuranceIntakeExternalLinks_,
+        buildInsuranceIntakeExternalLinks_: typeof buildInsuranceIntakeExternalLinks_,
+        upsertInsuranceIntakeWideExternalLinks_: typeof upsertInsuranceIntakeWideExternalLinks_,
+        getInsuranceIntakeClaimFoundationSpreadsheetId_: typeof getInsuranceIntakeClaimFoundationSpreadsheetId_
       },
       config: {
         gmailQuery: CONFIG.gmailQuery,
@@ -164,10 +169,18 @@ function getInsuranceIntakeDiagnostics() {
         processedLabel: CONFIG.processedLabel,
         errorLabel: CONFIG.errorLabel,
         needsReviewLabel: CONFIG.needsReviewLabel,
-        duplicateLabel: CONFIG.duplicateLabel
+        duplicateLabel: CONFIG.duplicateLabel,
+        claimFoundationSpreadsheetId: getInsuranceIntakeClaimFoundationSpreadsheetId_(),
+        hasClaimFoundationSpreadsheetId: !!getInsuranceIntakeClaimFoundationSpreadsheetId_()
       }
     }
   };
+}
+
+function testLogInsuranceIntakeDiagnostics() {
+  const result = getInsuranceIntakeDiagnostics();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function processInsuranceIntake() {
@@ -350,6 +363,14 @@ function processInsuranceIntake() {
         itemResult.sheetResult = sheetResult;
         itemResult.sheetUpdated = sheetResult.sheetUpdated;
 
+        const externalLinkResult = saveInsuranceIntakeExternalLinks_(claimData, folderResult);
+        itemResult.externalLinkResult = externalLinkResult;
+
+        if (externalLinkResult.warning) {
+          itemResult.warnings.push(externalLinkResult.warning);
+          summary.warnings++;
+        }
+
         if (!sheetResult.success) {
           itemResult.status = 'sheet_update_failed';
           itemResult.errors.push(sheetResult.error);
@@ -451,6 +472,273 @@ function processInsuranceIntake() {
       }
     };
   }
+}
+
+function saveInsuranceIntakeExternalLinks_(claimData, folderResult) {
+  const linksToSave = buildInsuranceIntakeExternalLinks_(claimData, folderResult);
+
+  if (!linksToSave.length) {
+    return {
+      status: 'Skipped',
+      success: true,
+      savedCount: 0,
+      message: 'No intake external links found to save.'
+    };
+  }
+
+  const spreadsheetId = getInsuranceIntakeClaimFoundationSpreadsheetId_();
+
+  if (!spreadsheetId) {
+    return {
+      status: 'Skipped',
+      success: true,
+      savedCount: 0,
+      warning: 'External_Links not saved because claim foundation spreadsheet ID is not configured.',
+      linksFound: linksToSave
+    };
+  }
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    const sheet = spreadsheet.getSheetByName('External_Links');
+
+    if (!sheet) {
+      return {
+        status: 'Skipped',
+        success: true,
+        savedCount: 0,
+        warning: 'External_Links sheet was not found in configured claim foundation spreadsheet.',
+        linksFound: linksToSave
+      };
+    }
+
+    const result = upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave);
+
+    return {
+      status: 'Success',
+      success: true,
+      savedCount: result.savedCount,
+      rowNumber: result.rowNumber,
+      linksSaved: result.linksSaved
+    };
+  } catch (err) {
+    return {
+      status: 'Skipped',
+      success: true,
+      savedCount: 0,
+      warning: 'External_Links save failed: ' + err.message,
+      linksFound: linksToSave
+    };
+  }
+}
+
+function buildInsuranceIntakeExternalLinks_(claimData, folderResult) {
+  const links = [];
+  const platformLinks = claimData && Array.isArray(claimData.platformLinks) ? claimData.platformLinks : [];
+
+  platformLinks.forEach(function(link) {
+    if (!link || !link.url || !link.linkType) {
+      return;
+    }
+
+    links.push({
+      linkType: link.linkType,
+      url: link.url
+    });
+  });
+
+  const folderUrl = getInsuranceIntakeFolderUrl_(folderResult);
+
+  if (folderUrl) {
+    links.push({
+      linkType: 'Drive Folder',
+      url: folderUrl
+    });
+  }
+
+  return links;
+}
+
+function getInsuranceIntakeFolderUrl_(folderResult) {
+  if (!folderResult) {
+    return '';
+  }
+
+  if (folderResult.folderUrl) return folderResult.folderUrl;
+  if (folderResult.url) return folderResult.url;
+  if (folderResult.claimFolderUrl) return folderResult.claimFolderUrl;
+
+  const folderId = folderResult.folderId || folderResult.claimFolderId || folderResult.id || '';
+
+  if (folderId) {
+    return 'https://drive.google.com/drive/folders/' + folderId;
+  }
+
+  return '';
+}
+
+function getInsuranceIntakeClaimFoundationSpreadsheetId_() {
+  const props = PropertiesService.getScriptProperties();
+
+  return props.getProperty('RAINBOW_CLAIM_FOUNDATION_SPREADSHEET_ID') ||
+    props.getProperty('CLAIM_FOUNDATION_SPREADSHEET_ID') ||
+    props.getProperty('RAINBOW_CLAIMS_DATABASE_SPREADSHEET_ID') ||
+    (typeof CONFIG !== 'undefined' && CONFIG.claimFoundationSpreadsheetId ? CONFIG.claimFoundationSpreadsheetId : '') ||
+    '1LWUazEVzAbA5H0TDfvRJT0XZRJVN2ueZLfNJ_H-zj7c';
+}
+
+function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) {
+  const values = sheet.getDataRange().getValues();
+
+  if (!values.length) {
+    throw new Error('External_Links sheet has no header row.');
+  }
+
+  const headers = values[0].map(function(header) {
+    return String(header || '').trim();
+  });
+  const columnMap = buildInsuranceIntakeExternalLinkColumnMap_(headers);
+  const jobNumber = String(claimData.rainbowJobNumber || '').trim();
+  const claimId = String(claimData.claimId || '').trim();
+  const claimNumber = String(claimData.claimNumber || '').trim();
+  let rowNumber = findInsuranceIntakeExternalLinkRow_(values, columnMap, {
+    claimId: claimId,
+    jobNumber: jobNumber,
+    claimNumber: claimNumber
+  });
+
+  if (!rowNumber) {
+    const newRow = headers.map(function(header, index) {
+      if (index === columnMap.claimId) return claimId;
+      if (index === columnMap.jobNumber) return jobNumber || claimNumber;
+      return '';
+    });
+
+    sheet.appendRow(newRow);
+    rowNumber = sheet.getLastRow();
+  }
+
+  const saved = [];
+
+  linksToSave.forEach(function(link) {
+    const columnIndex = getInsuranceIntakeExternalLinkColumnIndex_(columnMap, link.linkType);
+
+    if (columnIndex === -1 || !link.url) {
+      return;
+    }
+
+    const range = sheet.getRange(rowNumber, columnIndex + 1);
+    const existingValue = String(range.getValue() || '').trim();
+
+    if (!existingValue) {
+      range.setValue(link.url);
+      saved.push(link);
+    }
+  });
+
+  return {
+    rowNumber: rowNumber,
+    savedCount: saved.length,
+    linksSaved: saved
+  };
+}
+
+function buildInsuranceIntakeExternalLinkColumnMap_(headers) {
+  const normalized = headers.map(function(header) {
+    return String(header || '').trim().toLowerCase();
+  });
+
+  return {
+    claimId: normalized.indexOf('claim id'),
+    jobNumber: normalized.indexOf('job number'),
+    fusionUrl: normalized.indexOf('fusion url'),
+    driveFolder: normalized.indexOf('drive folder'),
+    xactAnalysis: normalized.indexOf('xactanalysis'),
+    symbility: normalized.indexOf('symbility'),
+    claimX: normalized.indexOf('claimx')
+  };
+}
+
+function findInsuranceIntakeExternalLinkRow_(values, columnMap, identity) {
+  const claimIdKey = normalizeInsuranceIntakeLinkKey_(identity.claimId);
+  const jobNumberKey = normalizeInsuranceIntakeLinkKey_(identity.jobNumber);
+  const claimNumberKey = normalizeInsuranceIntakeLinkKey_(identity.claimNumber);
+
+  for (let rowIndex = 1; rowIndex < values.length; rowIndex++) {
+    const row = values[rowIndex];
+    const rowClaimId = columnMap.claimId !== -1 ? normalizeInsuranceIntakeLinkKey_(row[columnMap.claimId]) : '';
+    const rowJobNumber = columnMap.jobNumber !== -1 ? normalizeInsuranceIntakeLinkKey_(row[columnMap.jobNumber]) : '';
+
+    if ((claimIdKey && rowClaimId === claimIdKey) ||
+        (jobNumberKey && rowJobNumber === jobNumberKey) ||
+        (claimNumberKey && rowJobNumber === claimNumberKey)) {
+      return rowIndex + 1;
+    }
+  }
+
+  return 0;
+}
+
+function getInsuranceIntakeExternalLinkColumnIndex_(columnMap, linkType) {
+  const normalized = String(linkType || '').trim().toLowerCase();
+
+  if (normalized.indexOf('symbility') !== -1) return columnMap.symbility;
+  if (normalized.indexOf('xact') !== -1 || normalized === 'xa') return columnMap.xactAnalysis;
+  if (normalized.indexOf('claimx') !== -1 || normalized.indexOf('claim x') !== -1) return columnMap.claimX;
+  if (normalized.indexOf('drive') !== -1 || normalized.indexOf('folder') !== -1) return columnMap.driveFolder;
+  if (normalized.indexOf('fusion') !== -1) return columnMap.fusionUrl;
+
+  return -1;
+}
+
+function normalizeInsuranceIntakeLinkKey_(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^clm-/, '')
+    .replace(/\.0$/, '');
+}
+
+function testParseInsurancePlatformLinks() {
+  const sample = 'Click here to view the claim latest activity: https://www.symbility.net/Claims/JournalEntryList.aspx?r=abc123\nView detailed information for this assignment in XactAnalysis. https://www.xactanalysis.com/apps/assignment?id=123';
+  const result = extractInsurancePlatformLinks_(sample);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveInsuranceIntakeExternalLinks() {
+  const claimData = {
+    claimId: 'TEST-INSURANCE-INTAKE-LINKS',
+    rainbowJobNumber: 'TEST-INSURANCE-INTAKE-LINKS',
+    claimNumber: 'TEST-INSURANCE-INTAKE-LINKS',
+    platformLinks: [
+      {
+        linkType: 'Symbility',
+        url: 'https://www.symbility.net/Claims/JournalEntryList.aspx?r=test-insurance-intake-links'
+      },
+      {
+        linkType: 'XactAnalysis',
+        url: 'https://www.xactanalysis.com/apps/assignment?id=test-insurance-intake-links'
+      }
+    ]
+  };
+
+  const folderResult = {
+    success: true,
+    folderId: 'test-folder-id-insurance-intake-links'
+  };
+
+  const result = saveInsuranceIntakeExternalLinks_(claimData, folderResult);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testLogProcessInsuranceIntake() {
+  const result = processInsuranceIntake();
+  Logger.log('PROCESS_INSURANCE_INTAKE_START');
+  Logger.log(JSON.stringify(result, null, 2));
+  Logger.log('PROCESS_INSURANCE_INTAKE_END');
+  return result;
 }
 
 function buildPhase4CMessage_(summary) {

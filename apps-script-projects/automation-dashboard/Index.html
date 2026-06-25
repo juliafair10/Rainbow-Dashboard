@@ -577,6 +577,71 @@
       line-height: 1.4;
     }
 
+    .homepage-priority-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 8px 0 8px 0;
+    }
+
+    .homepage-priority-tag {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #e5e7eb;
+      background: #f8fafc;
+      color: #475569;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .homepage-priority-tag.workspace {
+      background: #fef2f8;
+      border-color: #fbcfe8;
+      color: #9d174d;
+    }
+
+    .homepage-priority-tag.health {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      color: #9a3412;
+    }
+
+    .homepage-priority-tag.condition {
+      background: #eff6ff;
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+    }
+
+    .homepage-priority-tag.alert {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #991b1b;
+    }
+
+    .homepage-priority-action-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .homepage-priority-action-link {
+      color: var(--button);
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .homepage-priority-action-link:hover {
+      text-decoration: underline;
+    }
+
     .homepage-priority-empty {
       color: var(--muted);
       font-size: 13px;
@@ -1646,30 +1711,130 @@
         return;
       }
 
-      container.innerHTML = priorities.map(function(priority) {
-        const meta = [
-          priority.healthLevel || '',
-          priority.primaryOwner || '',
-          priority.ownershipArea || ''
-        ].filter(Boolean).join(' • ');
+      const groupedPriorities = groupHomepagePrioritiesByClaim(priorities);
+
+      container.innerHTML = groupedPriorities.map(function(priority) {
+        const tags = buildHomepagePriorityTags(priority);
+        const reason = priority.reason || priority.primaryReason || priority.conditionType || priority.alertType || priority.title || '';
+        const route = priority.targetRoute || '';
 
         return `
           <div class="homepage-priority-item">
             <div class="homepage-priority-top">
               <div class="homepage-priority-title">
-                ${escapeHtml(priority.title || 'Operational priority')}
+                ${escapeHtml(priority.claimDisplayName || priority.claimId || 'Operational priority')}
               </div>
               <div class="homepage-priority-meta">
-                ${escapeHtml(meta)}
+                ${escapeHtml(priority.dueLabel || priority.followUpDate || '')}
               </div>
             </div>
+
+            <div class="homepage-priority-tags">
+              ${tags.map(function(tag) {
+                return `<span class="homepage-priority-tag ${escapeHtml(tag.type)}">${escapeHtml(tag.label)}</span>`;
+              }).join('')}
+            </div>
+
             <div class="homepage-priority-reason">
-              ${escapeHtml(priority.claimDisplayName || '')}
-              ${priority.reason ? ' — ' + escapeHtml(priority.reason) : ''}
+              ${escapeHtml(reason || 'Review this operational focus item.')}
+            </div>
+
+            <div class="homepage-priority-action-row">
+              <span class="homepage-priority-meta">${escapeHtml(priority.title || priority.type || '')}</span>
+              ${route ? `<a class="homepage-priority-action-link" href="${escapeHtml(route)}">Open Claim →</a>` : ''}
             </div>
           </div>
         `;
       }).join('');
+    }
+
+    function groupHomepagePrioritiesByClaim(priorities) {
+      const grouped = {};
+      const order = [];
+
+      (priorities || []).forEach(function(priority) {
+        const key = priority.claimId || priority.targetId || priority.claimDisplayName || priority.title || 'priority';
+
+        if (!grouped[key]) {
+          grouped[key] = Object.assign({}, priority, {
+            _priorityTitles: [],
+            _conditionTypes: [],
+            _alertTypes: []
+          });
+          order.push(key);
+        }
+
+        if (priority.title && grouped[key]._priorityTitles.indexOf(priority.title) === -1) {
+          grouped[key]._priorityTitles.push(priority.title);
+        }
+
+        if (priority.conditionType && grouped[key]._conditionTypes.indexOf(priority.conditionType) === -1) {
+          grouped[key]._conditionTypes.push(priority.conditionType);
+        }
+
+        if (priority.alertType && grouped[key]._alertTypes.indexOf(priority.alertType) === -1) {
+          grouped[key]._alertTypes.push(priority.alertType);
+        }
+
+        if (!grouped[key].reason && priority.reason) {
+          grouped[key].reason = priority.reason;
+        }
+
+        if (!grouped[key].healthLevel && priority.healthLevel) {
+          grouped[key].healthLevel = priority.healthLevel;
+        }
+
+        if (!grouped[key].ownershipArea && priority.ownershipArea) {
+          grouped[key].ownershipArea = priority.ownershipArea;
+        }
+      });
+
+      return order.map(function(key) {
+        return grouped[key];
+      });
+    }
+
+    function buildHomepagePriorityTags(priority) {
+      const tags = [];
+      const seen = {};
+
+      function addTag(label, type) {
+        const normalizedLabel = String(label || '').trim();
+        if (!normalizedLabel || seen[normalizedLabel]) {
+          return;
+        }
+        seen[normalizedLabel] = true;
+        tags.push({
+          label: normalizedLabel,
+          type: type || ''
+        });
+      }
+
+      addTag(priority.ownershipArea || priority.primaryOwner, 'workspace');
+
+      (priority._conditionTypes || []).forEach(function(conditionType) {
+        addTag(conditionType, 'condition');
+      });
+
+      if (priority.conditionType) {
+        addTag(priority.conditionType, 'condition');
+      }
+
+      (priority._alertTypes || []).forEach(function(alertType) {
+        addTag(alertType, 'alert');
+      });
+
+      if (priority.alertType) {
+        addTag(priority.alertType, 'alert');
+      }
+
+      addTag(priority.healthLevel, 'health');
+
+      if (tags.length === 1 && priority.type) {
+        addTag(priority.type, 'condition');
+      }
+
+      return tags.slice(0, 4);
     }
 
 
@@ -3292,7 +3457,6 @@
         <a
           class="inspection-gmail-link"
           href="${gmailUrl}"
-          target="_blank"
           rel="noopener noreferrer">
           Open Gmail
         </a>
@@ -3390,7 +3554,7 @@
     function openRunLog() {
       google.script.run
         .withSuccessHandler(function (url) {
-          window.open(url, '_blank');
+          window.location.href = url;
         })
         .getRunLogUrl();
     }

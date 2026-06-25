@@ -392,33 +392,307 @@
 
 
   function renderBecomingStale(items) {
-    renderSimpleList('becomingStaleList', items, function(item) {
-      return item.claimDisplayName || 'Claim';
-    });
+    renderBecomingStaleList_('becomingStaleList', items || []);
+  }
+
+  function renderBecomingStaleList_(containerId, items) {
+    const container = document.getElementById(containerId);
+
+    if (!container) return;
+
+    const normalizedItems = Array.isArray(items) ? items : [];
+
+    if (normalizedItems.length === 0) {
+      container.innerHTML = '<div class="rainbow-empty-state">No claims are becoming stale right now.</div>';
+      return;
+    }
+
+    container.innerHTML = normalizedItems.map(function(item, index) {
+      const isNavigable = !!(item && item.targetRoute);
+      const href = isNavigable ? buildRainbowAbsoluteUrl_(item.targetRoute) : '';
+      const rowClass = isNavigable ? 'rainbow-stale-row rainbow-stale-row--clickable' : 'rainbow-stale-row';
+      const openTag = isNavigable
+        ? '<a class="' + rowClass + '" data-homepage-item-index="' + index + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '">'
+        : '<div class="' + rowClass + '" data-homepage-item-index="' + index + '">';
+      const closeTag = isNavigable ? '</a>' : '</div>';
+      const tags = buildHomepageStaleTags_(item);
+      const daysText = item.daysSinceActivity !== undefined && item.daysSinceActivity !== ''
+        ? item.daysSinceActivity + ' days quiet'
+        : 'Needs review';
+      const reasonText = item.staleReason || item.healthReason || 'Activity may be drifting.';
+      const summaryText = item.lastActivitySummary || item.lastActivityType || '';
+
+      return [
+        openTag,
+        '<div class="rainbow-stale-main">',
+        '<div class="rainbow-stale-title">' + escapeHtml(item.claimDisplayName || item.customerName || item.claimId || 'Claim') + '</div>',
+        '<div class="rainbow-stale-tags">' + tags.map(function(tag) {
+          return '<span class="rainbow-stale-tag rainbow-stale-tag--' + escapeHtml(tag.type) + '">' + escapeHtml(tag.label) + '</span>';
+        }).join('') + '</div>',
+        '<div class="rainbow-stale-meta">' + escapeHtml(reasonText) + '</div>',
+        summaryText ? '<div class="rainbow-stale-summary">' + escapeHtml(summaryText) + '</div>' : '',
+        '</div>',
+        '<div class="rainbow-stale-side">',
+        '<div class="rainbow-stale-days">' + escapeHtml(daysText) + '</div>',
+        isNavigable ? '<span class="rainbow-stale-open">Open Claim →</span>' : '',
+        '</div>',
+        closeTag
+      ].join('');
+    }).join('');
+
+    attachHomepageListNavigation_(container, normalizedItems);
+  }
+
+  function buildHomepageStaleTags_(item) {
+    const tags = [];
+    const seen = {};
+
+    function addTag(label, type) {
+      const normalizedLabel = String(label || '').trim();
+      if (!normalizedLabel || seen[normalizedLabel]) return;
+      seen[normalizedLabel] = true;
+      tags.push({ label: normalizedLabel, type: type || 'default' });
+    }
+
+    addTag(item.ownershipArea || item.primaryOwner, 'owner');
+    addTag(item.healthLevel, 'health');
+    addTag(item.lastActivityType, 'default');
+
+    return tags.slice(0, 3);
   }
 
   function renderOperationalAlerts(items) {
     const alertItems = Array.isArray(items)
       ? items
       : (items && Array.isArray(items.topAlerts) ? items.topAlerts : []);
+    const container = document.getElementById('operationalAlertsList');
 
-    const visibleItems = alertItems.slice(0, 5);
-    const hiddenCount = Math.max(alertItems.length - visibleItems.length, 0);
+    if (!container) return;
 
-    renderSimpleList('operationalAlertsList', visibleItems, function(item) {
-      return item.alertType || item.alertCategory || 'Alert';
-    }, function(item) {
-      const claimText = item.claimDisplayName || item.claimId || '';
-      const severityText = item.severity ? 'Severity: ' + item.severity : '';
-      return [claimText, severityText].filter(Boolean).join(' • ');
+    if (alertItems.length === 0) {
+      container.innerHTML = '<div class="rainbow-empty-state">No open operational alerts.</div>';
+      return;
+    }
+
+    const groupedAlerts = buildHomepageOperationalAlertGroups_(alertItems);
+
+    container.innerHTML = groupedAlerts.map(function(group, groupIndex) {
+      const visibleItems = group.items.slice(0, 3);
+      const hiddenCount = Math.max(group.items.length - visibleItems.length, 0);
+
+      return [
+        '<div class="rainbow-alert-group rainbow-alert-group--' + escapeHtml(group.groupId) + '">',
+        '<div class="rainbow-alert-group-header">',
+        '<div>',
+        '<div class="rainbow-alert-group-label">' + escapeHtml(group.label) + '</div>',
+        '<div class="rainbow-alert-group-title">' + escapeHtml(group.title) + '</div>',
+        '<div class="rainbow-alert-group-subtitle">' + group.items.length + ' alerts across ' + group.claimCount + ' claims</div>',
+        '</div>',
+        '<div class="rainbow-alert-group-count">' + group.items.length + '</div>',
+        '</div>',
+        '<div class="rainbow-alert-chip-row">',
+        group.alertTypes.slice(0, 4).map(function(alertType) {
+          return '<span class="rainbow-alert-chip">' + escapeHtml(alertType) + '</span>';
+        }).join(''),
+        '</div>',
+        '<div class="rainbow-alert-group-items">',
+        visibleItems.map(function(item, itemIndex) {
+          const navigationIndex = groupIndex + '-' + itemIndex;
+          const isNavigable = !!(item && item.targetRoute);
+          const title = item.claimDisplayName || item.customerName || item.claimId || 'Claim';
+          const alertType = item.alertType || item.alertCategory || 'Alert';
+          const reason = item.reason || item.recommendedAction || alertType;
+          const action = getHomepageAlertActionText_(item);
+          const rowClass = isNavigable
+            ? 'rainbow-alert-mini-row rainbow-alert-mini-row--clickable'
+            : 'rainbow-alert-mini-row';
+          const href = isNavigable ? buildRainbowAbsoluteUrl_(item.targetRoute) : '';
+          const openTag = isNavigable
+            ? '<a class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '">'
+            : '<div class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '">';
+          const closeTag = isNavigable ? '</a>' : '</div>';
+
+          return [
+            openTag,
+            '<div>',
+            '<div class="rainbow-alert-mini-title">' + escapeHtml(title) + '</div>',
+            '<div class="rainbow-alert-mini-meta">' + escapeHtml(reason) + '</div>',
+            '</div>',
+            '<div class="rainbow-alert-mini-action">' + escapeHtml(action) + ' →</div>',
+            closeTag
+          ].join('');
+        }).join(''),
+        hiddenCount > 0 ? '<div class="rainbow-alert-group-more">+' + hiddenCount + ' more in this group</div>' : '',
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    attachHomepageGroupedAlertNavigation_(container, groupedAlerts);
+  }
+
+  function buildHomepageOperationalAlertGroups_(items) {
+    const groupConfig = [
+      {
+        groupId: 'missing-intake-data',
+        title: 'Missing Intake Data',
+        label: 'Links & setup gaps',
+        matchers: ['fusion', 'xact', 'symbility', 'claimx', 'operational link']
+      },
+      {
+        groupId: 'claims-needing-review',
+        title: 'Claims Needing Review',
+        label: 'Human review needed',
+        matchers: ['claim review', 'duplicate review', 'vendor review', 'review needed']
+      },
+      {
+        groupId: 'workflow-blockers',
+        title: 'Workflow Blockers',
+        label: 'Operational movement blocked',
+        matchers: ['missing eoj', 'carrier revision', 'revision active', 'eoj']
+      },
+      {
+        groupId: 'compliance-administrative',
+        title: 'Compliance & Administrative',
+        label: 'Admin cleanup',
+        matchers: ['compliance', 'documentation', 'document', 'administrative']
+      },
+      {
+        groupId: 'other-alerts',
+        title: 'Other Alerts',
+        label: 'Additional awareness',
+        matchers: []
+      }
+    ];
+
+    const groups = groupConfig.map(function(config) {
+      return Object.assign({}, config, {
+        items: [],
+        alertTypes: [],
+        claimIds: {}
+      });
     });
 
-    if (hiddenCount > 0) {
-      const container = document.getElementById('operationalAlertsList');
-      if (container) {
-        container.innerHTML += '<div class="rainbow-list-more">+' + hiddenCount + ' more alerts</div>';
+    (items || []).forEach(function(item) {
+      const group = findHomepageOperationalAlertGroup_(groups, item);
+      const alertType = item.alertType || item.alertCategory || 'Alert';
+      const claimKey = item.claimId || item.claimDisplayName || item.customerName || item.targetId || '';
+
+      group.items.push(item);
+
+      if (alertType && group.alertTypes.indexOf(alertType) === -1) {
+        group.alertTypes.push(alertType);
+      }
+
+      if (claimKey) {
+        group.claimIds[claimKey] = true;
+      }
+    });
+
+    return groups.filter(function(group) {
+      return group.items.length > 0;
+    }).map(function(group) {
+      return {
+        groupId: group.groupId,
+        title: group.title,
+        label: group.label,
+        items: group.items,
+        alertTypes: group.alertTypes,
+        claimCount: Object.keys(group.claimIds).length || group.items.length
+      };
+    });
+  }
+
+  function findHomepageOperationalAlertGroup_(groups, item) {
+    const haystack = [
+      item.alertType,
+      item.alertCategory,
+      item.title,
+      item.reason,
+      item.recommendedAction,
+      item.sourceSection
+    ].join(' ').toLowerCase();
+
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
+
+      if (!group.matchers || group.matchers.length === 0) {
+        continue;
+      }
+
+      for (let j = 0; j < group.matchers.length; j++) {
+        if (haystack.indexOf(group.matchers[j]) !== -1) {
+          return group;
+        }
       }
     }
+
+    return groups[groups.length - 1];
+  }
+
+  function attachHomepageGroupedAlertNavigation_(container, groupedAlerts) {
+    if (!container || !Array.isArray(groupedAlerts)) return;
+
+    const alertLookup = {};
+
+    groupedAlerts.forEach(function(group, groupIndex) {
+      group.items.slice(0, 3).forEach(function(item, itemIndex) {
+        alertLookup[groupIndex + '-' + itemIndex] = item;
+      });
+    });
+
+    const elements = container.querySelectorAll('[data-homepage-alert-index]');
+
+    elements.forEach(function(element) {
+      const index = element.getAttribute('data-homepage-alert-index');
+      const item = alertLookup[index];
+
+      if (!item || !item.targetRoute) {
+        return;
+      }
+
+      element.setAttribute('role', 'button');
+      element.setAttribute('tabindex', '0');
+      element.setAttribute('title', 'Open related Rainbow view');
+
+      element.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleHomepageNavigation_(item);
+        return false;
+      });
+
+      element.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleHomepageNavigation_(item);
+        }
+      });
+    });
+  }
+  function getHomepageAlertActionText_(item) {
+    const alertType = String(item.alertType || item.alertCategory || '').toLowerCase();
+    const recommended = String(item.recommendedAction || '').toLowerCase();
+    const reason = String(item.reason || '').toLowerCase();
+    const combined = alertType + ' ' + recommended + ' ' + reason;
+
+    if (combined.indexOf('fusion') !== -1 || combined.indexOf('xact') !== -1 || combined.indexOf('symbility') !== -1 || combined.indexOf('claimx') !== -1 || combined.indexOf('link') !== -1) {
+      return 'Add link';
+    }
+
+    if (combined.indexOf('eoj') !== -1) {
+      return 'Review EOJ';
+    }
+
+    if (combined.indexOf('duplicate') !== -1 || combined.indexOf('claim review') !== -1 || combined.indexOf('review needed') !== -1) {
+      return 'Review claim';
+    }
+
+    if (combined.indexOf('revision') !== -1) {
+      return 'Open revision';
+    }
+
+    return 'Review alert';
   }
 
   function renderRecentActivity(items) {
@@ -620,7 +894,7 @@
     const targetUrl = buildRainbowAbsoluteUrl_(targetRoute);
 
     try {
-      window.open(targetUrl, '_blank');
+      window.top.location.href = targetUrl;
     } catch (error) {
       window.location.href = targetUrl;
     }

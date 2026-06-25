@@ -841,7 +841,7 @@
     const targetUrl = buildIntakeRouteUrl_(normalizedRoute);
 
     try {
-      window.open(targetUrl, '_blank');
+      window.top.location.href = targetUrl;
     } catch (error) {
       window.location.href = targetUrl;
     }

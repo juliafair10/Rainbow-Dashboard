@@ -679,7 +679,7 @@ const CLAIMS_SERVICE_URL_FALLBACK = 'https://script.google.com/a/macros/rbwatl.c
 const INTAKE_SOURCE_SERVICE_ID = 'insurance-intake-automation';
 const INTAKE_OPERATIONAL_LINK_SHEET_NAME = 'External_Links';
 const INTAKE_OPERATIONAL_LINK_RECENT_DAYS = 60;
-const INTAKE_OPERATIONAL_LINK_MAX_CLAIMS = 30;
+const INTAKE_OPERATIONAL_LINK_MAX_CLAIMS = 200;
 const INTAKE_OPERATIONAL_LINK_TYPES = [
   {
     id: 'fusion',
@@ -889,9 +889,89 @@ function getClaimsWorkspacePageData(options) {
 }
 
 function getClaimDetailPageData(claimId) {
-  return fetchClaimsServiceJson_('getClaimDetail', {
+  const response = fetchClaimsServiceJson_('getClaimDetail', {
     claimId: claimId || ''
   });
+
+  return mergeDashboardExternalLinksIntoClaimDetail_(response, claimId || '');
+}
+
+function mergeDashboardExternalLinksIntoClaimDetail_(response, claimId) {
+  if (!response || typeof response !== 'object') {
+    return response;
+  }
+
+  const detail = response.data && typeof response.data === 'object'
+    ? response.data
+    : response;
+  const header = detail.claimHeader || {};
+  const matchingLinks = getDashboardExternalLinksForClaim_({
+    claimId: claimId || detail.claimId || header.claimId || header.Claim_ID || '',
+    claimNumber: detail.claimNumber || header.claimNumber || header.Claim_Number || '',
+    jobNumber: detail.jobNumber || header.jobNumber || header.Job_Number || ''
+  });
+
+  if (!matchingLinks.length) {
+    return response;
+  }
+
+  const existingLinks = Array.isArray(detail.externalLinks) ? detail.externalLinks : [];
+  const mergedLinks = existingLinks.concat(matchingLinks).filter(function(link, index, links) {
+    const key = [
+      String(link.linkType || link.Link_Type || link.type || '').trim().toLowerCase(),
+      String(link.url || link.URL || link.Link_URL || link['Link URL'] || '').trim().toLowerCase()
+    ].join('|');
+
+    if (!key || key === '|') {
+      return true;
+    }
+
+    return links.findIndex(function(candidate) {
+      return [
+        String(candidate.linkType || candidate.Link_Type || candidate.type || '').trim().toLowerCase(),
+        String(candidate.url || candidate.URL || candidate.Link_URL || candidate['Link URL'] || '').trim().toLowerCase()
+      ].join('|') === key;
+    }) === index;
+  });
+
+  detail.externalLinks = mergedLinks;
+
+  if (response.data && typeof response.data === 'object') {
+    response.data = detail;
+  }
+
+  return response;
+}
+
+function getDashboardExternalLinksForClaim_(claim) {
+  try {
+    const context = getIntakeExternalLinksContext_();
+
+    if (!context || !context.available) {
+      return [];
+    }
+
+    const claimKeys = buildIntakeClaimMatchKeys_(claim || {});
+
+    return (context.records || [])
+      .filter(function(record) {
+        return intakeExternalLinkMatchesClaim_(record, claimKeys)
+          && record.url
+          && isIntakeExternalLinkActive_(record);
+      })
+      .map(function(record) {
+        return {
+          linkType: record.linkType || '',
+          label: record.linkType || '',
+          url: record.url || '',
+          source: record.source || 'External_Links',
+          createdAt: record.createdAt || '',
+          status: record.status || 'Active'
+        };
+      });
+  } catch (err) {
+    return [];
+  }
 }
 
 function fetchClaimsServiceJson_(action, params) {
@@ -1163,6 +1243,7 @@ function saveIntakeOperationalLink(payload) {
   const appendResult = appendIntakeExternalLink_(context, {
     claimId: claimId,
     claimNumber: String(linkPayload.claimNumber || '').trim(),
+    jobNumber: String(linkPayload.jobNumber || '').trim(),
     linkType: linkTypeConfig.storageValue,
     linkTypeId: linkTypeConfig.id,
     label: linkTypeConfig.displayLabel,
@@ -1341,11 +1422,11 @@ function getIntakeOperationalLinkEnrichment_(auditState) {
 
     claims.forEach(function(claim) {
       const missingTypes = INTAKE_OPERATIONAL_LINK_TYPES.filter(function(linkTypeConfig) {
-        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim)
+        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim, auditState)
           && !findIntakeActiveExternalLink_(linksContext.records, claim, linkTypeConfig);
       });
       const resolvedTypes = INTAKE_OPERATIONAL_LINK_TYPES.filter(function(linkTypeConfig) {
-        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim)
+        return isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim, auditState)
           && !!findIntakeActiveExternalLink_(linksContext.records, claim, linkTypeConfig);
       });
 
@@ -1372,10 +1453,9 @@ function getIntakeOperationalLinkEnrichment_(auditState) {
 
       const issueKey = buildIntakeOperationalLinkIssueKey_(claim.claimId, missingTypes);
 
-      if (isIntakeIssueClearedByAudit_(auditState, issueKey)) {
-        return;
-      }
-
+      // Missing operational link issues should only clear when External_Links
+      // actually contains the required link. Audit records are visibility history,
+      // not source-of-truth link data.
       unresolvedItems.push({
         id: issueKey,
         issueType: 'missing-operational-link',
@@ -1504,8 +1584,61 @@ function testIntakeOperationalLinkEnrichmentShape() {
   };
 }
 
-function isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim) {
+
+function testLogIntakeOperationalLinkEnrichmentShape() {
+  const result = testIntakeOperationalLinkEnrichmentShape();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testLogIntakeOperationalLinkUnresolvedItems() {
+  const enrichment = getIntakeOperationalLinkEnrichment_(getIntakeAuditState_());
+  const unresolvedItems = enrichment.unresolvedItems || [];
+  const result = {
+    status: enrichment.status,
+    success: enrichment.success,
+    checkedAt: enrichment.checkedAt || new Date().toISOString(),
+    candidateCount: enrichment.candidateCount || enrichment.candidateClaimCount || 0,
+    unresolvedItemCount: unresolvedItems.length,
+    missingLinkCount: enrichment.missingLinkCount || 0,
+    missingFusionCount: enrichment.missingFusionCount || 0,
+    missingXactCount: enrichment.missingXactCount || 0,
+    missingClaimXCount: enrichment.missingClaimXCount || 0,
+    unresolvedItems: unresolvedItems.map(function(item) {
+      return {
+        claimId: item.claimId || '',
+        claimNumber: item.claimNumber || '',
+        jobNumber: item.jobNumber || '',
+        displayName: item.displayName || '',
+        customerName: item.customerName || '',
+        missingLinkTypes: (item.missingLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        }),
+        resolvedLinkTypes: (item.resolvedLinkTypes || []).map(function(linkType) {
+          return linkType.id || linkType.storageValue || '';
+        })
+      };
+    })
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testLogIntakeOperationalLinks() {
+  const result = testLogIntakeOperationalLinkUnresolvedItems();
+  Logger.log('INTAKE_OPERATIONAL_LINKS_START');
+  Logger.log(JSON.stringify(result, null, 2));
+  Logger.log('INTAKE_OPERATIONAL_LINKS_END');
+  return result;
+}
+
+function isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim, auditState) {
   if (!linkTypeConfig) {
+    return false;
+  }
+
+  if (linkTypeConfig.id === 'xact' && isClaimEstimatePlatformNotRequired_(claim, auditState)) {
     return false;
   }
 
@@ -1514,6 +1647,168 @@ function isIntakeOperationalLinkTypeRequiredForClaim_(linkTypeConfig, claim) {
   }
 
   return true;
+}
+
+function isClaimEstimatePlatformNotRequired_(claim, auditState) {
+  if (!claim || !auditState || !Array.isArray(auditState.records)) {
+    return false;
+  }
+
+  const claimKeys = buildIntakeClaimMatchKeys_(claim);
+  const storedNotRequiredClaims = getEstimatePlatformNotRequiredClaimKeys_();
+
+  if (Object.keys(claimKeys).some(function(key) {
+    return !!storedNotRequiredClaims[key];
+  })) {
+    return true;
+  }
+
+  return auditState.records.some(function(record) {
+    if (!record || record.actionType !== 'estimate-platform-not-required') {
+      return false;
+    }
+
+    const recordKeys = buildIntakeClaimMatchKeys_({
+      claimId: record.claimId || '',
+      claimNumber: record.claimNumber || '',
+      jobNumber: record.jobNumber || ''
+    });
+
+    return Object.keys(recordKeys).some(function(key) {
+      return !!claimKeys[key];
+    });
+  });
+}
+
+function markClaimEstimatePlatformNotRequired(claimId) {
+  const normalizedClaimId = String(claimId || '').trim();
+  const timestamp = new Date().toISOString();
+
+  if (!normalizedClaimId) {
+    return {
+      status: 'Error',
+      success: false,
+      message: 'claimId is required.',
+      generatedAt: timestamp
+    };
+  }
+
+  const auditPayload = {
+    claimId: normalizedClaimId,
+    issueKey: 'estimate-platform-not-required|' + normalizedClaimId,
+    issueTitle: 'XA/Symbility not required',
+    source: 'Claim Workspace',
+    linkType: 'XactAnalysis/Symbility',
+    note: 'Estimate platform marked not required for this claim.'
+  };
+
+  saveEstimatePlatformNotRequiredClaim_(normalizedClaimId);
+  recordIntakeAuditAction_('estimate-platform-not-required', auditPayload);
+
+  return {
+    status: 'Success',
+    success: true,
+    message: 'XA/Symbility marked not required for this claim.',
+    claimId: normalizedClaimId,
+    generatedAt: timestamp
+  };
+}
+
+
+function saveEstimatePlatformNotRequiredClaim_(claimId) {
+  const properties = PropertiesService.getScriptProperties();
+  const propertyName = 'RAINBOW_ESTIMATE_PLATFORM_NOT_REQUIRED_CLAIMS';
+  const existingValue = properties.getProperty(propertyName) || '[]';
+  let claims = [];
+
+  try {
+    claims = JSON.parse(existingValue);
+  } catch (err) {
+    claims = [];
+  }
+
+  if (!Array.isArray(claims)) {
+    claims = [];
+  }
+
+  const normalizedClaimId = String(claimId || '').trim();
+
+  if (normalizedClaimId && claims.indexOf(normalizedClaimId) === -1) {
+    claims.push(normalizedClaimId);
+  }
+
+  properties.setProperty(propertyName, JSON.stringify(claims));
+
+  return claims;
+}
+
+function getEstimatePlatformNotRequiredClaimKeys_() {
+  const properties = PropertiesService.getScriptProperties();
+  const propertyName = 'RAINBOW_ESTIMATE_PLATFORM_NOT_REQUIRED_CLAIMS';
+  const existingValue = properties.getProperty(propertyName) || '[]';
+  let claims = [];
+
+  try {
+    claims = JSON.parse(existingValue);
+  } catch (err) {
+    claims = [];
+  }
+
+  if (!Array.isArray(claims)) {
+    claims = [];
+  }
+
+  return claims.reduce(function(keys, claimId) {
+    const claimKeys = buildIntakeClaimMatchKeys_(claimId);
+    Object.keys(claimKeys).forEach(function(key) {
+      keys[key] = true;
+    });
+    return keys;
+  }, {});
+}
+
+
+function testMarkClaimEstimatePlatformNotRequired() {
+  const result = markClaimEstimatePlatformNotRequired('CLM-26A-0040-TXT');
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testDiagnoseEstimatePlatformNotRequiredAudit() {
+  const auditState = getIntakeAuditState_();
+  const properties = PropertiesService.getScriptProperties();
+  const rawStoredValue = properties.getProperty('RAINBOW_ESTIMATE_PLATFORM_NOT_REQUIRED_CLAIMS');
+
+  const result = {
+    rawStoredValue: rawStoredValue,
+    parsedStoredClaims: (function() {
+      try {
+        return JSON.parse(rawStoredValue || '[]');
+      } catch (err) {
+        return {
+          parseError: err.message,
+          value: rawStoredValue
+        };
+      }
+    })(),
+    storedNotRequiredClaimKeys: getEstimatePlatformNotRequiredClaimKeys_(),
+    recordCount: auditState && Array.isArray(auditState.records) ? auditState.records.length : 0,
+    matchingRecords: (auditState && Array.isArray(auditState.records) ? auditState.records : []).filter(function(record) {
+      return record && (
+        record.actionType === 'estimate-platform-not-required' ||
+        record.claimId === 'CLM-26A-0040-TXT' ||
+        String(record.issueKey || '').indexOf('CLM-26A-0040-TXT') !== -1
+      );
+    }),
+    isNotRequiredForClaim: isClaimEstimatePlatformNotRequired_({
+      claimId: 'CLM-26A-0040-TXT',
+      claimNumber: '26A-0040-TXT',
+      jobNumber: '26A-0040-TXT'
+    }, auditState)
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function isIntakeAllstateClaim_(claim) {
@@ -2030,9 +2325,22 @@ function writeIntakeWideExternalLink_(context, linkRecord) {
     throw new Error('External_Links does not have a writable column for ' + linkRecord.linkType + '.');
   }
 
-  const claimIdKey = normalizeIntakeClaimKey_(linkRecord.claimId);
+  const linkRecordKeys = buildIntakeClaimMatchKeys_({
+    claimId: linkRecord.claimId,
+    claimNumber: linkRecord.claimNumber,
+    jobNumber: linkRecord.jobNumber
+  });
+
   const existingRow = (context.wideRows || []).find(function(rowRecord) {
-    return normalizeIntakeClaimKey_(rowRecord.claimId) === claimIdKey;
+    const rowKeys = buildIntakeClaimMatchKeys_({
+      claimId: rowRecord.claimId,
+      claimNumber: rowRecord.claimNumber,
+      jobNumber: rowRecord.jobNumber
+    });
+
+    return Object.keys(linkRecordKeys).some(function(key) {
+      return !!rowKeys[key];
+    });
   });
 
   if (existingRow) {

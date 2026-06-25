@@ -42,6 +42,7 @@ function parseInsuranceIntakeThread(thread) {
   const phone = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'phone') || extractInsurancePhone_(fullText);
   const email = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'email address') || extractInsuranceEmail_(fullText);
   const lossDescription = getNormalizedRainbowIntakeField_(normalizedIntakeFields, 'loss description') || extractInsuranceLossDescription_(fullText);
+  const platformLinks = extractInsurancePlatformLinks_(fullText);
 
   return {
     subject: subject,
@@ -70,6 +71,9 @@ function parseInsuranceIntakeThread(thread) {
     carrierName: carrierName,
     carrierAbbrev: getInsuranceCarrierAbbrev_(carrierName),
     client: extractInsuranceField_(fullText, /Client:\s*([^\n]+)/i),
+    platformLinks: platformLinks,
+    xactAnalysisUrl: getInsurancePlatformLinkUrl_(platformLinks, 'XactAnalysis'),
+    symbilityUrl: getInsurancePlatformLinkUrl_(platformLinks, 'Symbility'),
     source: 'parseInsuranceIntakeThread'
   };
 }
@@ -385,4 +389,73 @@ function cleanExtractedInsuranceValue_(value) {
     .replace(/\s+(?:Evening Phone|Day Phone|Mobile Phone|Cell Phone|Phone|Email Address|Type of Loss|XA ID|Location of Property|Instructions|Claim Number|Insured Name|Date of Loss|Loss Description|Location Description|Policy Line Code|RoofTypeCd)\s*:?\s*.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function extractInsurancePlatformLinks_(text) {
+  const sourceText = String(text || '');
+  const links = [];
+  const urlMatches = sourceText.match(/https?:\/\/\S+/gi) || [];
+
+  urlMatches.forEach(function(rawUrl) {
+    const cleanedUrl = cleanInsurancePlatformUrl_(rawUrl);
+    const lowerUrl = cleanedUrl.toLowerCase();
+
+    if (lowerUrl.indexOf('symbility.net') !== -1) {
+      addInsurancePlatformLinksFromMatches_(links, 'Symbility', [cleanedUrl]);
+      return;
+    }
+
+    if (lowerUrl.indexOf('xactanalysis') !== -1 || lowerUrl.indexOf('xactware') !== -1) {
+      addInsurancePlatformLinksFromMatches_(links, 'XactAnalysis', [cleanedUrl]);
+    }
+  });
+
+  return dedupeInsurancePlatformLinks_(links);
+}
+
+function addInsurancePlatformLinksFromMatches_(links, linkType, matches) {
+  (matches || []).forEach(function(url) {
+    const cleanedUrl = cleanInsurancePlatformUrl_(url);
+
+    if (!cleanedUrl) {
+      return;
+    }
+
+    links.push({
+      linkType: linkType,
+      url: cleanedUrl,
+      source: 'insurance-intake-email'
+    });
+  });
+}
+
+function cleanInsurancePlatformUrl_(url) {
+  return String(url || '')
+    .replace(/&amp;/g, '&')
+    .replace(/[\]\[),.;]+$/g, '')
+    .trim();
+}
+
+function dedupeInsurancePlatformLinks_(links) {
+  const seen = {};
+
+  return (links || []).filter(function(link) {
+    const key = String(link.linkType || '').toLowerCase() + '|' + String(link.url || '').toLowerCase();
+
+    if (!link.url || seen[key]) {
+      return false;
+    }
+
+    seen[key] = true;
+    return true;
+  });
+}
+
+function getInsurancePlatformLinkUrl_(links, linkType) {
+  const target = String(linkType || '').toLowerCase();
+  const match = (links || []).find(function(link) {
+    return String(link.linkType || '').toLowerCase() === target && link.url;
+  });
+
+  return match ? match.url : '';
 }

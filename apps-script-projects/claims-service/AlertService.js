@@ -702,38 +702,49 @@ function buildStructuredAlertsForClaim_(claimId) {
     'Xact Analysis',
     'Xactimate',
     'Xactimate Link',
+    'Xactimate_URL',
+    'Xactimate URL',
+    'XactAnalysis_URL',
+    'XactAnalysis URL',
     'Xact URL',
-    'XactAnalysis URL'
+    'XA'
   ]) || hasExternalLinkType_(externalLinks, [
     'XactAnalysis',
     'Xact Analysis',
     'Xactimate',
     'Xactimate Link',
-    'Xact URL',
+    'Xactimate_URL',
+    'Xactimate URL',
+    'XactAnalysis_URL',
     'XactAnalysis URL',
+    'Xact URL',
     'XA'
   ]);
 
   const hasSymbility = hasExternalLinkValue_(externalLinks, [
     'Symbility',
-    'Symbility Link',
-    'Symbility URL'
+    'Symbility_URL',
+    'Symbility URL',
+    'Symbility Link'
   ]) || hasExternalLinkType_(externalLinks, [
     'Symbility',
-    'Symbility Link',
-    'Symbility URL'
+    'Symbility_URL',
+    'Symbility URL',
+    'Symbility Link'
   ]);
 
   const hasClaimX = hasExternalLinkValue_(externalLinks, [
     'ClaimX',
-    'ClaimX Link',
+    'ClaimX_URL',
     'ClaimX URL',
+    'ClaimX Link',
     'ClaimX Video',
     'ClaimX Video Link'
   ]) || hasExternalLinkType_(externalLinks, [
     'ClaimX',
-    'ClaimX Link',
+    'ClaimX_URL',
     'ClaimX URL',
+    'ClaimX Link',
     'ClaimX Video',
     'ClaimX Video Link',
     'Claim X'
@@ -1566,6 +1577,52 @@ function testReconcileRafiAlerts() {
   const result = reconcileClaimAlerts('CLM-26A-0052-WTR', {
     dryRun: false
   });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+
+function testReconcileRafi0822508719Alerts() {
+  const result = reconcileClaimAlerts('CLM-26N-0133-CUS', {
+    dryRun: false
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testDiagnoseRafi0822508719ExternalLinks() {
+  const claimId = 'CLM-26N-0133-CUS';
+  const claim = getAlertPersistenceClaimById_(claimId) || {};
+  const jobNumber = getJobNumberForAlertPersistenceClaim_(claimId);
+  const externalLinks = getExternalLinksForAlertPersistence_(claimId);
+
+  const result = {
+    claimId: claimId,
+    jobNumber: jobNumber,
+    claim: {
+      Claim_ID: getAlertPersistenceValue_(claim, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId']),
+      Job_Number: getAlertPersistenceValue_(claim, ['Job_Number', 'Job Number', 'JobNumber', 'jobNumber']),
+      Claim_Number: getAlertPersistenceValue_(claim, ['Claim_Number', 'Claim Number']),
+      Customer_Name: getAlertPersistenceValue_(claim, ['Customer_Name', 'Customer Name', 'Display_Name', 'Display Name'])
+    },
+    matchedExternalLinkRows: externalLinks.length,
+    externalLinks: externalLinks.map(function(link) {
+      return {
+        Claim_ID: getAlertPersistenceValue_(link, ['Claim_ID', 'Claim ID', 'ClaimId', 'claimId', 'Claim_Record_ID', 'Claim Record ID', 'Related_Claim_ID', 'Related Claim ID']),
+        Job_Number: getAlertPersistenceValue_(link, ['Job_Number', 'Job Number', 'JobNumber', 'jobNumber']),
+        Link_Type: getAlertPersistenceValue_(link, ['Link_Type', 'Link Type', 'Type', 'Link_Name', 'Link Name']),
+        URL: getAlertPersistenceValue_(link, ['URL', 'Url', 'Link_URL', 'Link URL', 'Value', 'External_URL', 'External URL']),
+        Fusion_URL: getAlertPersistenceValue_(link, ['Fusion_URL', 'Fusion URL', 'FusionURL']),
+        XactAnalysis: getAlertPersistenceValue_(link, ['XactAnalysis', 'Xact Analysis', 'XactAnalysis_URL', 'XactAnalysis URL']),
+        Xactimate_URL: getAlertPersistenceValue_(link, ['Xactimate_URL', 'Xactimate URL']),
+        Symbility_URL: getAlertPersistenceValue_(link, ['Symbility_URL', 'Symbility URL', 'Symbility']),
+        ClaimX_URL: getAlertPersistenceValue_(link, ['ClaimX_URL', 'ClaimX URL', 'ClaimX']),
+        rawKeys: Object.keys(link)
+      };
+    })
+  };
 
   Logger.log(JSON.stringify(result, null, 2));
   return result;
