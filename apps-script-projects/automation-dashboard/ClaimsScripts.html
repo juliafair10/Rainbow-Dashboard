@@ -3,6 +3,7 @@
   let activeClaimsWorkspacePayload = null;
   let activeClaimsRouteContext = {};
   let selectedClaimId = '';
+  let claimsListShellHtmlSnapshot = '';
 
   document.addEventListener('DOMContentLoaded', function() {
     initializeClaimsWorkspace();
@@ -968,18 +969,42 @@
       return;
     }
 
+    if (!claimsListShellHtmlSnapshot && !shell.querySelector('.full-claim-workspace')) {
+      claimsListShellHtmlSnapshot = shell.innerHTML;
+    }
+
     const header = detail.claimHeader || {};
     const operational = detail.operationalContext || {};
+    const headerModel = detail.fullClaimHeader || buildFullClaimHeaderModel_(detail);
+    const summaryModel = detail.fullClaimOperationalSummary ||
+      detail.operationalSummary ||
+      buildFullClaimOperationalSummary_(detail, headerModel, operational);
     const links = detail.externalLinks || [];
     const timelineEvents = getRecentTimelineEvents_(detail);
     const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
     const operationalLinkState = getClaimOperationalLinkState_(links);
-    const activeConditions = header.activeConditions || [];
-    const nextAction = header.nextAction || operational.nextAction || '';
-    const detailOpenRequirements = header.openRequirements || operational.openRequirements || [];
-    const detailAttentionReason = header.attentionReason || operational.attentionReason || header.healthReason || operational.healthReason || '';
-    const lastMeaningfulActivity = header.lastMeaningfulActivityAt || header.lastMeaningfulActivityDate || operational.lastMeaningfulActivityAt || operational.lastMeaningfulActivityDate || '';
-    const fullClaimStatusLine = [header.lifecycleState, header.healthLevel, header.ownershipArea].filter(Boolean).join(' • ');
+    const activeConditions = Array.isArray(headerModel.activeConditions)
+      ? headerModel.activeConditions
+      : header.activeConditions || [];
+    const nextAction = getFullClaimModelValue_([
+      header.nextAction,
+      operational.nextAction
+    ]);
+    const detailOpenRequirements = Array.isArray(headerModel.openRequirements)
+      ? headerModel.openRequirements
+      : header.openRequirements || operational.openRequirements || [];
+    const detailAttentionReason = getFullClaimModelValue_([
+      header.attentionReason,
+      operational.attentionReason,
+      header.healthReason,
+      operational.healthReason
+    ]);
+    const lastMeaningfulActivity = headerModel.lastMeaningfulActivity ||
+      header.lastMeaningfulActivityAt ||
+      header.lastMeaningfulActivityDate ||
+      operational.lastMeaningfulActivityAt ||
+      operational.lastMeaningfulActivityDate ||
+      '';
     let html = '';
 
     html += '<section class="full-claim-workspace">';
@@ -987,48 +1012,14 @@
     html += '<button type="button" class="full-claim-back-button" data-full-claim-back>← Back to Claims</button>';
     html += '</div>';
 
-    html += '<header class="full-claim-header">';
-    html += '<div>';
-    html += '<p class="full-claim-eyebrow">Full Claim Workspace</p>';
-    html += '<h1>' + escapeHtml(header.displayName || detail.claimId || 'Claim') + '</h1>';
-    html += '<div class="full-claim-jobline">' + escapeHtml(getClaimPreferredNumberFromDetail_(detail)) + '</div>';
-
-    if (fullClaimStatusLine) {
-      html += '<div class="full-claim-state-line">' + escapeHtml(fullClaimStatusLine) + '</div>';
-    }
-
-    html += '<div class="full-claim-header-intel">';
-    html += renderFullClaimHeaderIntelItem_('Last meaningful activity', lastMeaningfulActivity || 'Not yet available');
-    html += renderFullClaimHeaderIntelItem_('Next action', nextAction || 'No immediate action detected');
-    html += '</div>';
-
-    html += '<div class="full-claim-meta">';
-    html += renderFullClaimMetaItem_('Job', header.jobNumber || '');
-    html += renderFullClaimMetaItem_('Claim', header.claimNumber || detail.claimNumber || '');
-    html += renderFullClaimMetaItem_('Loss', header.lossType || '');
-    html += renderFullClaimMetaItem_('Address', header.propertyAddress || header.address || '');
-    html += renderFullClaimMetaItem_('Carrier', header.carrier || '');
-    html += '</div>';
-    html += '</div>';
-    html += '<div class="full-claim-status-stack">';
-    html += '<span class="full-claim-status-pill">' + escapeHtml(header.lifecycleState || 'Lifecycle Unknown') + '</span>';
-    html += '<span class="full-claim-status-pill">' + escapeHtml(header.healthLevel || 'Unrated') + '</span>';
-    html += '<span class="full-claim-status-pill">' + escapeHtml(header.ownershipArea || 'Unassigned') + '</span>';
-    html += '</div>';
-    html += '</header>';
-
-    if (activeConditions.length) {
-      html += '<div class="full-claim-condition-row">';
-      activeConditions.forEach(function(condition) {
-        html += '<span class="claim-pill claim-pill-condition">' + escapeHtml(getClaimConditionLabel_(condition)) + '</span>';
-      });
-      html += '</div>';
-    }
+    html += renderFullClaimHeader_(headerModel);
 
     html += '<div class="full-claim-layout">';
     html += '<main class="full-claim-main">';
 
-    html += '<section class="full-claim-card">';
+    html += renderFullClaimOperationalSummaryCard_(summaryModel);
+
+    html += '<section class="full-claim-card full-claim-operational-snapshot-card">';
     html += '<div class="full-claim-card-header">';
     html += '<h2>Operational Snapshot</h2>';
     html += '<p>Current operational context and why this claim is surfacing.</p>';
@@ -1094,12 +1085,56 @@
       backButton.addEventListener('click', function(event) {
         event.preventDefault();
         event.stopPropagation();
-        window.location.reload();
+
+        const routeContext = {
+          lensId: activeClaimsRouteContext.lensId || 'all',
+          ownership: activeClaimsRouteContext.ownership || '',
+          condition: activeClaimsRouteContext.condition || '',
+          claimId: '',
+          compliance: activeClaimsRouteContext.compliance || ''
+        };
+
+        selectedClaimId = '';
+        updateClaimsRouteContext_(routeContext);
+
+        restoreClaimsListWorkspace_(routeContext);
       });
     }
     initializeClaimLinkRequirementButtons_();
     initializeClaimOperationalLinkButtons_(detail);
   }
+  function restoreClaimsListWorkspace_(routeContext) {
+    const shell = document.querySelector('.claims-shell');
+
+    if (!shell) {
+      return;
+    }
+
+    routeContext = routeContext || {
+      lensId: 'all',
+      ownership: '',
+      condition: '',
+      claimId: '',
+      compliance: ''
+    };
+
+    routeContext.claimId = '';
+    selectedClaimId = '';
+    updateClaimsRouteContext_(routeContext);
+    activeClaimsRouteContext = routeContext;
+
+    if (claimsListShellHtmlSnapshot) {
+      shell.innerHTML = claimsListShellHtmlSnapshot;
+    }
+
+    markActiveLens_(routeContext.lensId || 'all');
+    initializeLensButtons();
+    initializeClaimsSearch();
+
+    window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
+    loadClaimsWorkspace(routeContext);
+  }
+
   function getClaimOperationalLinkState_(links) {
     const state = {
       fusion: { label: 'Fusion', url: '', status: 'Missing' },
@@ -1472,19 +1507,457 @@
     return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
   }
 
-  function renderFullClaimHeaderIntelItem_(label, value) {
-    return '<div class="full-claim-header-intel-item">' +
+  function buildFullClaimHeaderModel_(detail) {
+    detail = detail || {};
+
+    const header = detail.claimHeader || {};
+    const operational = detail.operationalContext || {};
+    const owner = normalizeClaimOwner_(detail);
+    const activeConditions = getFullClaimActiveConditionsForModel_(detail);
+    const openRequirements = getFullClaimOpenRequirementsForModel_(detail);
+    const primaryCondition = getPrimaryClaimCondition_(detail);
+    const openRequirementCount = getOpenRequirementCount_(detail);
+    const claimNumber = getFullClaimModelValue_([
+      header.claimNumber,
+      detail.claimNumber,
+      header.Claim_Number,
+      detail.Claim_Number
+    ]);
+    const jobNumber = getFullClaimModelValue_([
+      header.jobNumber,
+      detail.jobNumber,
+      header.Job_Number,
+      detail.Job_Number
+    ]);
+    const propertyAddress = getFullClaimModelValue_([
+      header.propertyAddress,
+      header.address,
+      detail.propertyAddress,
+      detail.address
+    ]);
+    const lifecycleState = normalizeClaimLifecycle_(detail);
+    const healthLevel = normalizeClaimHealth_(detail);
+    const lastMeaningfulActivity = getFullClaimModelValue_([
+      header.lastMeaningfulActivityAt,
+      header.lastMeaningfulActivityDate,
+      operational.lastMeaningfulActivityAt,
+      operational.lastMeaningfulActivityDate,
+      operational.recentActivitySummary,
+      detail.lastMeaningfulActivityAt,
+      detail.lastMeaningfulActivityDate
+    ]);
+    const nextAction = getFullClaimModelValue_([
+      header.nextAction,
+      operational.nextAction,
+      detail.nextAction
+    ]);
+
+    return {
+      eyebrow: 'Full Claim Workspace',
+      title: getFullClaimModelValue_([
+        header.displayName,
+        header.customerName,
+        detail.displayName,
+        detail.customerName,
+        claimNumber,
+        jobNumber,
+        detail.claimId
+      ]) || 'Unnamed Claim',
+      claimId: detail.claimId || header.claimId || '',
+      claimNumber: claimNumber || 'Not recorded',
+      jobNumber: jobNumber,
+      propertyAddress: propertyAddress,
+      lifecycleState: lifecycleState,
+      healthLevel: healthLevel,
+      ownershipArea: owner.ownershipArea,
+      primaryOwner: owner.primaryOwner,
+      ownerLabel: owner.ownerLabel,
+      primaryCondition: primaryCondition,
+      lastMeaningfulActivity: lastMeaningfulActivity || 'Not recorded',
+      waitingOn: primaryCondition || 'No active condition',
+      nextAction: nextAction || 'No recommended action recorded',
+      openRequirementCount: openRequirementCount,
+      openRequirementsLabel: openRequirementCount
+        ? openRequirementCount + (openRequirementCount === 1 ? ' open requirement' : ' open requirements')
+        : 'No open requirements',
+      activeConditions: activeConditions,
+      openRequirements: openRequirements
+    };
+  }
+
+  function buildFullClaimOperationalSummary_(detail, headerModel, operational) {
+    detail = detail || {};
+    headerModel = headerModel || buildFullClaimHeaderModel_(detail);
+    operational = operational || detail.operationalContext || {};
+
+    const header = detail.claimHeader || {};
+    const lifecycleState = formatFullClaimFallback_(headerModel.lifecycleState, 'Not recorded');
+    const healthLevel = formatFullClaimFallback_(headerModel.healthLevel, 'Not rated');
+    const primaryCondition = formatFullClaimFallback_(headerModel.primaryCondition, 'No active condition');
+    const owner = normalizeClaimOwner_(detail);
+    const nextAction = getFullClaimModelValue_([
+      header.nextAction,
+      operational.nextAction,
+      detail.nextAction
+    ]);
+    const attentionReason = getFullClaimModelValue_([
+      header.attentionReason,
+      operational.attentionReason,
+      header.healthReason,
+      operational.healthReason
+    ]);
+    const openRequirementCount = getOpenRequirementCount_(detail);
+    const statePhrase = lifecycleState === 'Not recorded'
+      ? 'limited recorded state data'
+      : lifecycleState;
+    const healthPhrase = healthLevel === 'Not rated'
+      ? ''
+      : ' with ' + healthLevel + ' health';
+    const trackingPhrase = primaryCondition !== 'No active condition'
+      ? 'Rainbow is tracking ' + primaryCondition
+      : attentionReason
+        ? 'Rainbow is tracking ' + truncateFullClaimPhrase_(attentionReason, 120)
+        : 'Rainbow is tracking current status and requirements as details are recorded';
+    const ownerPhrase = owner.primaryOwner !== 'Not recorded'
+      ? owner.primaryOwner + ' owns the next action'
+      : owner.ownershipArea !== 'Not recorded'
+        ? 'The ' + owner.ownershipArea + ' ownership area owns the next action'
+        : 'Ownership is not recorded yet';
+    const actionPhrase = nextAction
+      ? 'the recommended next action is ' + stripFullClaimEndingPunctuation_(truncateFullClaimPhrase_(nextAction, 120))
+      : openRequirementCount
+        ? 'there ' + (openRequirementCount === 1 ? 'is 1 open requirement' : 'are ' + openRequirementCount + ' open requirements') + ' to review'
+        : 'no open requirements are recorded right now';
+
+    return {
+      title: 'Operational Summary',
+      text: 'This claim currently shows ' + statePhrase + healthPhrase + ', and ' + trackingPhrase + '. ' +
+        ownerPhrase + ', and ' + actionPhrase + '.',
+      supportingText: 'Based on lifecycle, ownership, conditions, requirements, and recent activity.',
+      facts: [
+        {
+          label: 'Lifecycle',
+          value: lifecycleState
+        },
+        {
+          label: 'Owner',
+          value: owner.ownerLabel
+        },
+        {
+          label: 'Health',
+          value: healthLevel
+        },
+        {
+          label: 'Next action',
+          value: nextAction || 'Not recorded'
+        }
+      ]
+    };
+  }
+
+  function renderFullClaimHeader_(headerModel) {
+    headerModel = headerModel || {};
+
+    const claimNumber = formatFullClaimFallback_(headerModel.claimNumber, 'Not recorded');
+    const jobNumber = getFullClaimModelValue_([headerModel.jobNumber]);
+    const propertyAddress = getFullClaimModelValue_([headerModel.propertyAddress]);
+    const claimSubline = claimNumber === 'Not recorded' ? 'Claim not recorded' : 'Claim ' + claimNumber;
+    const sublineParts = [claimSubline];
+
+    if (jobNumber) {
+      sublineParts.push('Job ' + jobNumber);
+    }
+
+    if (propertyAddress) {
+      sublineParts.push(propertyAddress);
+    }
+
+    let html = '<header class="full-claim-header">';
+    html += '<div class="full-claim-header-main">';
+    html += '<p class="full-claim-eyebrow">' + escapeHtml(formatFullClaimFallback_(headerModel.eyebrow, 'Full Claim Workspace')) + '</p>';
+    html += '<h1 class="full-claim-title">' + escapeHtml(formatFullClaimFallback_(headerModel.title, 'Unnamed Claim')) + '</h1>';
+    html += '<div class="full-claim-subline">' + escapeHtml(sublineParts.join(' • ')) + '</div>';
+    html += '<div class="full-claim-status-stack">';
+    html += renderFullClaimStatusPill_('Lifecycle', headerModel.lifecycleState, 'lifecycle');
+    html += renderFullClaimStatusPill_('Health', headerModel.healthLevel, 'health');
+    html += renderFullClaimStatusPill_('Owner', headerModel.ownerLabel, 'owner');
+    html += renderFullClaimStatusPill_('Condition', headerModel.primaryCondition, 'condition');
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="full-claim-header-intel">';
+    html += renderFullClaimHeaderIntelItem_('Last meaningful activity', headerModel.lastMeaningfulActivity || 'Not recorded');
+    html += renderFullClaimHeaderIntelItem_('Waiting on', headerModel.waitingOn || headerModel.primaryCondition || 'No active condition');
+    html += renderFullClaimHeaderIntelItem_('Recommended next action', headerModel.nextAction || 'No recommended action recorded');
+    html += renderFullClaimHeaderIntelItem_('Open requirements', headerModel.openRequirementsLabel || 'No open requirements');
+    html += '</div>';
+    html += '</header>';
+
+    return html;
+  }
+
+  function renderFullClaimOperationalSummaryCard_(summaryModel) {
+    summaryModel = summaryModel || {};
+
+    const facts = Array.isArray(summaryModel.facts) ? summaryModel.facts : [];
+    const title = formatFullClaimFallback_(summaryModel.title, 'Operational Summary');
+    const text = formatFullClaimFallback_(
+      summaryModel.text,
+      'This claim currently shows limited recorded detail. Rainbow is tracking available lifecycle, ownership, condition, and requirement data.'
+    );
+    const supportingText = formatFullClaimFallback_(
+      summaryModel.supportingText,
+      'Based on lifecycle, ownership, conditions, requirements, and recent activity.'
+    );
+    let html = '<section class="full-claim-summary-card">';
+    html += '<div class="full-claim-card-header">';
+    html += '<h2>' + escapeHtml(title) + '</h2>';
+    html += '</div>';
+    html += '<p class="full-claim-summary-text">' + escapeHtml(text) + '</p>';
+    html += '<div class="full-claim-muted">' + escapeHtml(supportingText) + '</div>';
+
+    if (facts.length) {
+      html += '<div class="full-claim-summary-facts">';
+      facts.slice(0, 4).forEach(function(fact) {
+        if (!fact || !fact.label) {
+          return;
+        }
+
+        html += '<div class="full-claim-summary-fact">';
+        html += '<span>' + escapeHtml(formatFullClaimFallback_(fact.label, 'Fact')) + '</span>';
+        html += '<strong>' + escapeHtml(formatFullClaimFallback_(fact.value, 'Not recorded')) + '</strong>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</section>';
+    return html;
+  }
+
+  function renderFullClaimStatusPill_(label, value, modifier) {
+    const modifierClass = String(modifier || 'default').replace(/[^a-z0-9-]/gi, '').toLowerCase();
+
+    return '<span class="full-claim-status-pill full-claim-status-pill-' + modifierClass + '">' +
       '<span>' + escapeHtml(label) + '</span>' +
-      '<strong>' + escapeHtml(value || '') + '</strong>' +
+      '<strong>' + escapeHtml(formatFullClaimFallback_(value, 'Not recorded')) + '</strong>' +
+      '</span>';
+  }
+
+  function renderFullClaimHeaderIntelItem_(label, value) {
+    return '<div class="full-claim-header-intel-item full-claim-intel-item">' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<strong>' + escapeHtml(formatFullClaimFallback_(value, 'Not recorded')) + '</strong>' +
       '</div>';
   }
 
+  function formatFullClaimFallback_(value, fallback) {
+    return getFullClaimModelValue_([value]) || fallback || 'Not recorded';
+  }
+
+  function getPrimaryClaimCondition_(detail) {
+    const conditions = getFullClaimActiveConditionsForModel_(detail);
+    const priorities = {
+      'Carrier Revision Requested': 1,
+      'Revision Active': 2,
+      'Coverage Pending': 3,
+      'Waiting on Payment': 4,
+      'Monitoring Active': 5
+    };
+    let bestLabel = '';
+    let bestRank = 999;
+
+    conditions.forEach(function(condition) {
+      const label = getClaimConditionLabel_(condition);
+      const rank = priorities[label] || 50;
+
+      if (label && rank < bestRank) {
+        bestLabel = label;
+        bestRank = rank;
+      }
+    });
+
+    return bestLabel || 'No active condition';
+  }
+
+  function getOpenRequirementCount_(detail) {
+    return getFullClaimOpenRequirementsForModel_(detail).length;
+  }
+
+  function normalizeClaimOwner_(detail) {
+    detail = detail || {};
+
+    const header = detail.claimHeader || {};
+    const primaryOwner = getFullClaimModelValue_([
+      header.primaryOwner,
+      header.owner,
+      detail.primaryOwner,
+      detail.owner
+    ]);
+    const ownershipArea = getFullClaimModelValue_([
+      header.ownershipArea,
+      detail.ownershipArea
+    ]);
+    const ownerLabel = primaryOwner && ownershipArea
+      ? primaryOwner + ' / ' + ownershipArea
+      : primaryOwner || ownershipArea || 'Unassigned';
+
+    return {
+      primaryOwner: primaryOwner || 'Not recorded',
+      ownershipArea: ownershipArea || 'Not recorded',
+      ownerLabel: ownerLabel
+    };
+  }
+
+  function normalizeClaimLifecycle_(detail) {
+    detail = detail || {};
+
+    return getFullClaimModelValue_([
+      detail.claimHeader && detail.claimHeader.lifecycleState,
+      detail.lifecycleState
+    ]) || 'Not recorded';
+  }
+
+  function normalizeClaimHealth_(detail) {
+    detail = detail || {};
+
+    return getFullClaimModelValue_([
+      detail.claimHeader && detail.claimHeader.healthLevel,
+      detail.healthLevel
+    ]) || 'Not rated';
+  }
+
+  function getFullClaimActiveConditionsForModel_(detail) {
+    detail = detail || {};
+
+    const header = detail.claimHeader || {};
+    const operational = detail.operationalContext || {};
+    return normalizeFullClaimListForModel_(
+      header.activeConditions ||
+      operational.activeConditions ||
+      detail.activeConditions ||
+      []
+    );
+  }
+
+  function getFullClaimOpenRequirementsForModel_(detail) {
+    detail = detail || {};
+
+    const header = detail.claimHeader || {};
+    const operational = detail.operationalContext || {};
+    return normalizeFullClaimTextListForModel_(
+      header.openRequirements ||
+      operational.openRequirements ||
+      detail.openRequirements ||
+      []
+    );
+  }
+
+  function normalizeFullClaimListForModel_(value) {
+    if (Array.isArray(value)) {
+      return value.filter(function(item) {
+        if (item && typeof item === 'object') {
+          return Boolean(getClaimConditionLabel_(item));
+        }
+
+        return Boolean(getFullClaimModelValue_([item]));
+      });
+    }
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.split(/[,;]+/).map(function(item) {
+        return item.trim();
+      }).filter(Boolean);
+    }
+
+    return [];
+  }
+
+  function normalizeFullClaimTextListForModel_(value) {
+    if (Array.isArray(value)) {
+      return value.map(function(item) {
+        return getFullClaimListItemLabel_(item);
+      }).filter(Boolean);
+    }
+
+    if (typeof value === 'string' && value.trim()) {
+      return value.split(/[,;]+/).map(function(item) {
+        return item.trim();
+      }).filter(Boolean);
+    }
+
+    return [];
+  }
+
+  function getFullClaimListItemLabel_(item) {
+    if (!item || typeof item !== 'object') {
+      return getFullClaimModelValue_([item]);
+    }
+
+    return getFullClaimModelValue_([
+      item.label,
+      item.Label,
+      item.name,
+      item.Name,
+      item.title,
+      item.Title,
+      item.requirement,
+      item.Requirement,
+      item.requirementName,
+      item.Requirement_Name,
+      item.description,
+      item.Description,
+      item.action,
+      item.Action
+    ]);
+  }
+
+  function getFullClaimModelValue_(values) {
+    values = values || [];
+
+    for (let index = 0; index < values.length; index++) {
+      const value = values[index];
+
+      if (value === 0) {
+        return '0';
+      }
+
+      if (value === null || value === undefined || Array.isArray(value) || typeof value === 'object') {
+        continue;
+      }
+
+      const text = String(value).trim();
+      const normalized = text.toLowerCase();
+
+      if (text && normalized !== 'undefined' && normalized !== 'null' && normalized !== 'nan') {
+        return text;
+      }
+    }
+
+    return '';
+  }
+
+  function truncateFullClaimPhrase_(value, maxLength) {
+    const text = getFullClaimModelValue_([value]);
+
+    if (!text || text.length <= maxLength) {
+      return text;
+    }
+
+    return text.slice(0, maxLength - 1).trim() + '...';
+  }
+
+  function stripFullClaimEndingPunctuation_(value) {
+    return getFullClaimModelValue_([value]).replace(/[.!?]+$/g, '');
+  }
+
   function renderFullClaimMetaItem_(label, value) {
-    if (!value) {
+    const displayValue = getFullClaimModelValue_([value]);
+
+    if (!displayValue) {
       return '';
     }
 
-    return '<span><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(value) + '</span>';
+    return '<span><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(displayValue) + '</span>';
   }
 
   function renderFullClaimCurrentStateCard_(header, lastMeaningfulActivity) {
@@ -1626,13 +2099,15 @@
   }
 
   function renderClaimDetailKeyValue_(label, value) {
-    if (!value) {
+    const displayValue = getFullClaimModelValue_([value]);
+
+    if (!displayValue) {
       return '';
     }
 
     return '<div class="claim-detail-key-value">' +
       '<span>' + escapeHtml(label) + '</span>' +
-      '<strong>' + escapeHtml(value) + '</strong>' +
+      '<strong>' + escapeHtml(displayValue) + '</strong>' +
       '</div>';
   }
 
