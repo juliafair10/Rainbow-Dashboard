@@ -32,7 +32,7 @@ function getClaimsWorkspace(options) {
     ? ClaimsLensService.getClaimsLensCounts(options)
     : {};
 
-  return {
+  var workspacePayload = {
     generatedAt: new Date().toISOString(),
     defaultLensId: 'all',
     activeLensId: options.lensId || 'all',
@@ -42,6 +42,12 @@ function getClaimsWorkspace(options) {
     queueIntelligence: buildClaimsWorkspaceQueueIntelligence_(claimsList, lensCounts, options),
     claimsList: claimsList
   };
+
+  workspacePayload.claimsOperationalAwareness = (typeof buildClaimsOperationalAwareness_ === 'function')
+    ? buildClaimsOperationalAwareness_(workspacePayload)
+    : null;
+
+  return workspacePayload;
 }
 
 function buildClaimsWorkspaceAvailableLenses_(lensCounts) {
