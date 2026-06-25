@@ -363,14 +363,81 @@
   }
 
   function getClaimDisplayLastActivity_(claim) {
-    return claim.lastMeaningfulActivityAt ||
+    return formatRainbowDisplayDate_(claim.lastMeaningfulActivityAt ||
       claim.lastMeaningfulActivityDate ||
       claim.Last_Meaningful_Activity_At ||
       claim['Last Meaningful Activity At'] ||
       claim.lastActivityDate ||
       claim.Last_Activity_Date ||
       claim['Last Activity Date'] ||
-      '';
+      '');
+  }
+
+  function formatRainbowDisplayDate_(value) {
+    if (value === undefined || value === null || value === '') {
+      return '';
+    }
+
+    if (value instanceof Date && !isNaN(value.getTime())) {
+      return formatRainbowDateObject_(value);
+    }
+
+    const text = String(value).trim();
+
+    if (!text || text === 'undefined' || text === 'null' || text === 'NaN') {
+      return '';
+    }
+
+    const parsed = new Date(text);
+
+    if (!isNaN(parsed.getTime()) && looksLikeDateValue_(text)) {
+      return formatRainbowDateObject_(parsed);
+    }
+
+    return text;
+  }
+
+  function formatRainbowDateObject_(date) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const inputDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const diffDays = Math.round((today - inputDay) / oneDay);
+    const dateText = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric'
+    });
+
+    if (diffDays === 0) {
+      return 'Today';
+    }
+
+    if (diffDays === 1) {
+      return 'Yesterday';
+    }
+
+    return dateText;
+  }
+
+  function looksLikeDateValue_(text) {
+    return /^\d{4}-\d{2}-\d{2}/.test(text) ||
+      /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(text) ||
+      /^[A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}/.test(text);
+  }
+
+  function formatRainbowDisplayValue_(value, fallback) {
+    if (value === undefined || value === null) {
+      return fallback || '';
+    }
+
+    const text = String(value).trim();
+
+    if (!text || text === 'undefined' || text === 'null' || text === 'NaN') {
+      return fallback || '';
+    }
+
+    return text;
   }
 
   function renderClaimConditionPills_(conditions) {
@@ -980,7 +1047,6 @@
       detail.operationalSummary ||
       buildFullClaimOperationalSummary_(detail, headerModel, operational);
     const links = detail.externalLinks || [];
-    const timelineEvents = getRecentTimelineEvents_(detail);
     const detailAlerts = getClaimDetailOperationalAlerts_(detail, header);
     const operationalLinkState = getClaimOperationalLinkState_(links);
     const activeConditions = Array.isArray(headerModel.activeConditions)
@@ -1005,6 +1071,9 @@
       operational.lastMeaningfulActivityAt ||
       operational.lastMeaningfulActivityDate ||
       '';
+    const timelineGroups = getFullClaimTimelineGroupsForDisplay_(detail);
+    const currentStateModel = detail.fullClaimCurrentState ||
+      buildFullClaimCurrentStateModel_(detail, headerModel, detailAlerts, lastMeaningfulActivity);
     let html = '';
 
     html += '<section class="full-claim-workspace">';
@@ -1021,8 +1090,8 @@
 
     html += '<section class="full-claim-card full-claim-operational-snapshot-card">';
     html += '<div class="full-claim-card-header">';
-    html += '<h2>Operational Snapshot</h2>';
-    html += '<p>Current operational context and why this claim is surfacing.</p>';
+    html += '<h2>Operational Focus</h2>';
+    html += '<p>Why Rainbow is keeping this claim in active view.</p>';
     html += '</div>';
 
     if (detailAttentionReason) {
@@ -1034,16 +1103,21 @@
 
     if (detailOpenRequirements.length) {
       html += '<div class="full-claim-next-step">';
-      html += '<strong>Open Requirements</strong>';
-      detailOpenRequirements.forEach(function(requirement) {
+      html += '<strong>Still being watched</strong>';
+      detailOpenRequirements.slice(0, 2).forEach(function(requirement) {
         html += '<div>• ' + escapeHtml(requirement) + '</div>';
       });
+
+      if (detailOpenRequirements.length > 2) {
+        html += '<div>+' + escapeHtml(detailOpenRequirements.length - 2) + ' more requirement' + (detailOpenRequirements.length - 2 === 1 ? '' : 's') + '</div>';
+      }
+
       html += '</div>';
     }
 
     if (nextAction) {
       html += '<div class="full-claim-next-step">';
-      html += '<strong>Recommended Next Action</strong>';
+      html += '<strong>Best next move</strong>';
       html += '<div>' + escapeHtml(nextAction) + '</div>';
       html += '</div>';
     }
@@ -1056,8 +1130,8 @@
     html += '<p>Meaningful claim history grouped for active management.</p>';
     html += '</div>';
 
-    if (timelineEvents.length) {
-      html += renderFullClaimTimelineGroups_(timelineEvents);
+    if (timelineGroups.length) {
+      html += renderFullClaimTimelineGroups_(timelineGroups);
     } else {
       html += '<div class="claims-empty-state">No timeline activity available yet.</div>';
     }
@@ -1066,7 +1140,7 @@
     html += '</main>';
 
     html += '<aside class="full-claim-rail">';
-    html += renderFullClaimCurrentStateCard_(header, lastMeaningfulActivity);
+    html += renderFullClaimCurrentStateCard_(currentStateModel);
     html += renderFullClaimConditionsCard_(activeConditions);
     html += renderFullClaimAlertsCard_(detailAlerts);
     html += renderFullClaimNextActionCard_(nextAction);
@@ -1273,10 +1347,10 @@
 
   function renderFullClaimOperationalLinkAction_(link) {
     if (link.url) {
-      return '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(link.label + ' ✓') + '</a>';
+      return '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer"><span>' + escapeHtml(link.label) + '</span><small>Open linked item</small></a>';
     }
 
-    return '<button type="button" disabled>' + escapeHtml(link.label + ' — ' + link.status) + '</button>';
+    return '<button type="button" disabled><span>' + escapeHtml(link.label) + '</span><small>' + escapeHtml(link.status === 'Missing' ? 'Not linked' : link.status) + '</small></button>';
   }
   function initializeClaimOperationalLinkButtons_(detail) {
     document.querySelectorAll('[data-add-claim-operational-link]').forEach(function(button) {
@@ -1354,18 +1428,25 @@
     });
   }
 
-  function renderFullClaimTimelineGroups_(events) {
-    const groups = groupFullClaimTimelineEvents_(events || []);
+  function renderFullClaimTimelineGroups_(groupsOrEvents) {
+    const groups = normalizeFullClaimTimelineGroupsForRender_(groupsOrEvents || []);
     let html = '<div class="full-claim-timeline-groups">';
 
     groups.forEach(function(group) {
+      const events = Array.isArray(group.events)
+        ? group.events
+        : Array.isArray(group.items)
+          ? group.items
+          : [];
+
       html += '<section class="full-claim-timeline-group">';
       html += '<div class="full-claim-timeline-group-header">';
       html += '<h3>' + escapeHtml(group.label) + '</h3>';
-      html += '<span>' + escapeHtml(group.events.length) + '</span>';
+      const eventCount = group.count || events.length;
+      html += '<span>' + escapeHtml(eventCount + ' event' + (eventCount === 1 ? '' : 's')) + '</span>';
       html += '</div>';
       html += '<div class="full-claim-timeline-list">';
-      group.events.forEach(function(event) {
+      events.forEach(function(event) {
         html += renderFullClaimTimelineItem_(event);
       });
       html += '</div>';
@@ -1374,6 +1455,34 @@
 
     html += '</div>';
     return html;
+  }
+
+  function normalizeFullClaimTimelineGroupsForRender_(groupsOrEvents) {
+    if (!Array.isArray(groupsOrEvents) || !groupsOrEvents.length) {
+      return [];
+    }
+
+    const firstItem = groupsOrEvents[0] || {};
+
+    if (firstItem.label && (Array.isArray(firstItem.events) || Array.isArray(firstItem.items))) {
+      return groupsOrEvents.map(function(group) {
+        const events = Array.isArray(group.events)
+          ? group.events
+          : Array.isArray(group.items)
+            ? group.items
+            : [];
+
+        return {
+          label: formatFullClaimFallback_(group.label, 'Other Activity'),
+          count: group.count || events.length,
+          events: events
+        };
+      }).filter(function(group) {
+        return group.events.length;
+      });
+    }
+
+    return groupFullClaimTimelineEvents_(groupsOrEvents);
   }
 
   function groupFullClaimTimelineEvents_(events) {
@@ -1388,13 +1497,14 @@
     const grouped = {};
 
     events.forEach(function(event) {
-      const groupLabel = getFullClaimTimelineGroupLabel_(event);
+      const itemModel = buildFullClaimTimelineItemModel_(event);
+      const groupLabel = itemModel.groupLabel || 'Other Activity';
 
       if (!grouped[groupLabel]) {
         grouped[groupLabel] = [];
       }
 
-      grouped[groupLabel].push(event);
+      grouped[groupLabel].push(itemModel);
     });
 
     return groupOrder
@@ -1410,10 +1520,15 @@
   }
 
   function getFullClaimTimelineGroupLabel_(event) {
+    if (event && event.groupLabel) {
+      return event.groupLabel;
+    }
+
     const eventType = String(getTimelineEventType_(event) || '').toLowerCase();
     const source = String(getTimelineEventSource_(event) || '').toLowerCase();
     const summary = String(getTimelineEventSummary_(event) || '').toLowerCase();
-    const combined = [eventType, source, summary].join(' ');
+    const detail = String(getTimelineEventDetail_(event) || '').toLowerCase();
+    const combined = [eventType, source, summary, detail].join(' ');
 
     if (combined.indexOf('revision') !== -1 ||
         combined.indexOf('estimate') !== -1 ||
@@ -1441,6 +1556,13 @@
       return 'Accounting / Payment Activity';
     }
 
+    if (combined.indexOf('note') !== -1 ||
+        combined.indexOf('email') !== -1 ||
+        combined.indexOf('historical') !== -1 ||
+        combined.indexOf('communication') !== -1) {
+      return 'Notes & Communication';
+    }
+
     if (combined.indexOf('system') !== -1 ||
         combined.indexOf('health') !== -1 ||
         combined.indexOf('condition') !== -1 ||
@@ -1449,38 +1571,33 @@
       return 'System Activity';
     }
 
-    if (combined.indexOf('note') !== -1 ||
-        combined.indexOf('email') !== -1 ||
-        combined.indexOf('historical') !== -1 ||
-        combined.indexOf('communication') !== -1) {
-      return 'Notes & Communication';
-    }
-
     return 'Other Activity';
   }
 
 
   function renderFullClaimTimelineItem_(event) {
-    const eventType = getTimelineEventType_(event) || 'Activity';
-    const source = getTimelineEventSource_(event);
-    const detail = getTimelineEventDetail_(event);
-    const rawSummary = getTimelineEventSummary_(event);
-    const summary = normalizeTimelineTitle_(rawSummary);
-    const date = getTimelineEventDate_(event);
-    const actor = event.actor || event.Actor || '';
-    const metaItems = [eventType, source, actor].filter(Boolean);
-    let html = '<article class="full-claim-timeline-item">';
+    const model = normalizeFullClaimTimelineItemForRender_(event);
+    const className = getFullClaimTimelineItemClass_(model);
+    const displayDate = formatRainbowDisplayDate_(model.date) || 'Undated';
+    const displayMeta = formatFullClaimTimelineMetaDisplay_(model.meta || '');
+    let html = '<article class="' + escapeHtml(className) + '">';
 
     html += '<div class="full-claim-timeline-marker"></div>';
     html += '<div class="full-claim-timeline-body">';
     html += '<div class="full-claim-timeline-topline">';
-    html += '<span>' + escapeHtml(date || 'Undated') + '</span>';
-    html += '<span>' + escapeHtml(metaItems.join(' • ')) + '</span>';
+    html += '<span class="full-claim-timeline-category">' + escapeHtml(formatRainbowDisplayValue_(model.category, 'Claim Activity')) + '</span>';
+    html += '<span class="full-claim-timeline-date">' + escapeHtml(displayDate) + '</span>';
     html += '</div>';
-    html += '<h3>' + escapeHtml(summary) + '</h3>';
+    html += '<h3>' + escapeHtml(getOperationalTimelineTitleForDisplay_(model)) + '</h3>';
 
-    if (detail && detail !== rawSummary) {
-      html += '<p>' + escapeHtml(detail) + '</p>';
+    if (displayMeta) {
+      html += '<div class="full-claim-timeline-meta">' + escapeHtml(displayMeta) + '</div>';
+    }
+
+    const displayDetail = cleanTimelineDetailForDisplay_(model.detail || '', model.title || '');
+
+    if (displayDetail) {
+      html += '<p class="full-claim-timeline-detail">' + escapeHtml(displayDetail) + '</p>';
     }
 
     html += '</div>';
@@ -1489,22 +1606,294 @@
     return html;
   }
 
+  function getOperationalTimelineTitleForDisplay_(model) {
+    model = model || {};
+
+    const title = normalizeTimelineTitle_(model.title || '');
+    const detailTitle = normalizeTimelineTitle_(model.detail || '');
+
+    if (title && title !== 'Timeline Event') {
+      return title;
+    }
+
+    if (detailTitle && detailTitle !== 'Timeline Event') {
+      return detailTitle;
+    }
+
+    return 'Timeline Event';
+  }
+
+  function cleanTimelineDetailForDisplay_(detail, title) {
+    let text = formatRainbowDisplayValue_(detail, '');
+
+    if (!text) {
+      return '';
+    }
+
+    text = text
+      .replace(/\s+/g, ' ')
+      .replace(/\s+-\s*,?\s*-?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?.*$/i, '')
+      .replace(/\s*,?\s*-\s*,?\s*$/g, '')
+      .trim();
+
+    const normalizedTitle = stripFullClaimEndingPunctuation_(title).toLowerCase();
+    const normalizedDetail = stripFullClaimEndingPunctuation_(text).toLowerCase();
+
+    if (!text || normalizedDetail === normalizedTitle) {
+      return '';
+    }
+
+    return text;
+  }
+
+  function formatFullClaimTimelineMetaDisplay_(meta) {
+    const text = formatRainbowDisplayValue_(meta, '');
+
+    if (!text) {
+      return '';
+    }
+
+    return text
+      .replace(/\s*•\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z/g, '')
+      .replace(/\s*•\s*(?:Today|Yesterday|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s*\d{0,2}(?:,\s*\d{4})?/g, '')
+      .replace(/\s*•\s*$/g, '')
+      .trim();
+  }
+
+  function normalizeFullClaimTimelineItemForRender_(event) {
+    event = event || {};
+
+    if (event.title || event.category || event.meta || event.groupLabel) {
+      return {
+        category: formatFullClaimFallback_(event.category, 'Claim Activity'),
+        categoryClass: getFullClaimModelValue_([event.categoryClass]) || getFullClaimTimelineCategoryClass_(event.category),
+        className: getFullClaimModelValue_([event.className]),
+        groupLabel: formatFullClaimFallback_(event.groupLabel, 'Other Activity'),
+        title: normalizeTimelineTitle_(formatFullClaimFallback_(event.title, 'Timeline Event')),
+        date: formatRainbowDisplayDate_(event.date || event.dateLabel) || 'Undated',
+        meta: formatFullClaimTimelineMetaDisplay_(event.meta),
+        detail: getFullClaimModelValue_([event.detail])
+      };
+    }
+
+    return buildFullClaimTimelineItemModel_(event);
+  }
+
+  function buildFullClaimTimelineItemModel_(event) {
+    const eventType = getTimelineEventType_(event) || 'Activity';
+    const source = getTimelineEventSource_(event);
+    const actor = event.actor || event.Actor || event.owner || event.Owner || '';
+    const rawSummary = getTimelineEventSummary_(event);
+    const rawDetail = getTimelineEventDetail_(event);
+    const title = normalizeTimelineTitle_(rawSummary || eventType || rawDetail);
+    const category = getFullClaimTimelineCategory_(event);
+    const detail = normalizeTimelineDetail_(rawDetail);
+    const model = {
+      category: category,
+      categoryClass: getFullClaimTimelineCategoryClass_(category),
+      groupLabel: getFullClaimTimelineGroupLabel_(event),
+      title: title,
+      date: getTimelineEventDate_(event) || 'Undated',
+      source: source,
+      actor: actor,
+      eventType: eventType,
+      detail: shouldShowFullClaimTimelineDetail_(detail, title) ? detail : ''
+    };
+
+    model.meta = formatFullClaimTimelineMeta_(model);
+    model.className = 'full-claim-timeline-item full-claim-timeline-item-' + model.categoryClass;
+
+    return model;
+  }
+
+  function getFullClaimTimelineCategory_(event) {
+    const groupLabel = getFullClaimTimelineGroupLabel_(event);
+    const combined = [
+      getTimelineEventType_(event),
+      getTimelineEventSource_(event),
+      getTimelineEventSummary_(event)
+    ].join(' ').toLowerCase();
+
+    if (groupLabel === 'Revision / Insurance Activity') {
+      return 'Revision / Insurance';
+    }
+
+    if (groupLabel === 'Field / EOJ Activity') {
+      return 'EOJ / Field Visit';
+    }
+
+    if (groupLabel === 'Notes & Communication') {
+      return combined.indexOf('historical') !== -1 ? 'Historical Note' : 'Notes / Communication';
+    }
+
+    if (groupLabel === 'Accounting / Payment Activity') {
+      return 'Accounting / Payment';
+    }
+
+    if (groupLabel === 'System Activity') {
+      return 'System Activity';
+    }
+
+    return 'Claim Activity';
+  }
+
+  function getFullClaimTimelineCategoryClass_(category) {
+    const normalized = String(category || '').toLowerCase();
+
+    if (normalized.indexOf('revision') !== -1 || normalized.indexOf('insurance') !== -1) {
+      return 'insurance';
+    }
+
+    if (normalized.indexOf('eoj') !== -1 || normalized.indexOf('field') !== -1) {
+      return 'field';
+    }
+
+    if (normalized.indexOf('note') !== -1 || normalized.indexOf('communication') !== -1) {
+      return 'note';
+    }
+
+    if (normalized.indexOf('payment') !== -1 || normalized.indexOf('accounting') !== -1) {
+      return 'payment';
+    }
+
+    if (normalized.indexOf('system') !== -1) {
+      return 'system';
+    }
+
+    return 'other';
+  }
+
+  function getFullClaimTimelineItemClass_(model) {
+    const existingClass = getFullClaimModelValue_([model && model.className]);
+
+    if (existingClass) {
+      const classes = existingClass
+        .split(/\s+/)
+        .map(function(token) {
+          return token.replace(/[^a-z0-9_-]/gi, '');
+        })
+        .filter(Boolean)
+      const hasBaseClass = classes.some(function(token) {
+        return token === 'full-claim-timeline-item';
+      });
+
+      if (!hasBaseClass) {
+        classes.unshift('full-claim-timeline-item');
+      }
+
+      return classes.join(' ');
+    }
+
+    const categoryClass = getFullClaimModelValue_([model && model.categoryClass]) || 'other';
+    return 'full-claim-timeline-item full-claim-timeline-item-' + categoryClass.replace(/[^a-z0-9_-]/gi, '').toLowerCase();
+  }
+
+  function formatFullClaimTimelineMeta_(model) {
+    const metaItems = [
+      model.actor,
+      model.source
+    ].filter(function(item) {
+      const value = getFullClaimModelValue_([item]);
+      return value && value !== 'Undated';
+    });
+
+    if (!metaItems.length && model.eventType) {
+      metaItems.push(model.eventType);
+    }
+
+    return metaItems.join(' • ');
+  }
+
+  function shouldShowFullClaimTimelineDetail_(detail, title) {
+    const normalizedDetail = stripFullClaimEndingPunctuation_(detail).toLowerCase();
+    const normalizedTitle = stripFullClaimEndingPunctuation_(title).toLowerCase();
+
+    if (!normalizedDetail || normalizedDetail.length < 8) {
+      return false;
+    }
+
+    if (normalizedDetail === normalizedTitle) {
+      return false;
+    }
+
+    return normalizedDetail.indexOf(normalizedTitle) !== 0 || normalizedDetail.length > normalizedTitle.length + 18;
+  }
+
   function normalizeTimelineTitle_(value) {
-    const text = String(value || '').trim();
+    const rawText = formatRainbowDisplayValue_(value, 'Timeline Event');
+    const text = rawText
+      .replace(/\s+/g, ' ')
+      .replace(/\s+-\s*,?\s*-?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}\s+\d{4}.*$/i, '')
+      .replace(/\s*,?\s*-\s*,?\s*$/g, '')
+      .trim();
 
     if (!text) {
       return 'Timeline Event';
     }
 
+    const lowerText = text.toLowerCase();
+
+    if (lowerText.indexOf('hello, thank you for your note') !== -1 ||
+        lowerText.indexOf('thank you for your note') !== -1 ||
+        lowerText.indexOf('requested changes') !== -1 ||
+        lowerText.indexOf('uploaded the estimate for review') !== -1) {
+      return 'Estimate updated after review';
+    }
+
+    if (lowerText.indexOf('payment has been issued') !== -1 ||
+        lowerText.indexOf('payment issued') !== -1) {
+      return 'Payment issued';
+    }
+
+    if (lowerText.indexOf('date of cos') !== -1 ||
+        lowerText.indexOf('certificate of completion') !== -1) {
+      return 'Certificate of Completion recorded';
+    }
+
+    if (lowerText.indexOf('validate outage') !== -1 ||
+        lowerText.indexOf('estimate is not showing within the system') !== -1 ||
+        lowerText.indexOf('run this through the system again') !== -1) {
+      return 'Estimate visibility issue noted';
+    }
+
+    if (lowerText.indexOf('ems rbw') !== -1 ||
+        lowerText.indexOf('thanks so much for your revisions') !== -1 ||
+        lowerText.indexOf('one last item') !== -1 ||
+        lowerText.indexOf('replacement line item') !== -1) {
+      return 'Carrier revision response received';
+    }
+
+    // (removed duplicate block here)
+
+    if (lowerText.indexOf('corrections are due') !== -1 ||
+        lowerText.indexOf('prompt action') !== -1) {
+      return 'Corrections due';
+    }
+
+    if (lowerText.indexOf('emergency service call') !== -1 ||
+        lowerText.indexOf('ppe') !== -1 ||
+        lowerText.indexOf('line ') !== -1) {
+      return 'Estimate line item update';
+    }
+
     const letters = text.replace(/[^A-Za-z]/g, '');
     const uppercaseLetters = text.replace(/[^A-Z]/g, '');
     const isMostlyUppercase = letters.length > 12 && uppercaseLetters.length / letters.length > 0.72;
+    const readableText = isMostlyUppercase
+      ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase()
+      : text;
 
-    if (!isMostlyUppercase) {
-      return text;
+    if (readableText.length > 120) {
+      return readableText.substring(0, 117).trim() + '...';
     }
 
-    return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+    return readableText;
+  }
+
+  function normalizeTimelineDetail_(value) {
+    const text = getFullClaimModelValue_([value]).replace(/\s+/g, ' ').trim();
+
+    return truncateFullClaimPhrase_(text, 260);
   }
 
   function buildFullClaimHeaderModel_(detail) {
@@ -1551,6 +1940,10 @@
       operational.nextAction,
       detail.nextAction
     ]);
+    const openRequirementsLabel = openRequirementCount
+      ? openRequirementCount + (openRequirementCount === 1 ? ' open requirement' : ' open requirements')
+      : 'No open requirements';
+    const waitingOn = primaryCondition || 'No active condition';
 
     return {
       eyebrow: 'Full Claim Workspace',
@@ -1574,12 +1967,28 @@
       ownerLabel: owner.ownerLabel,
       primaryCondition: primaryCondition,
       lastMeaningfulActivity: lastMeaningfulActivity || 'Not recorded',
-      waitingOn: primaryCondition || 'No active condition',
-      nextAction: nextAction || 'No recommended action recorded',
+      waitingOn: waitingOn,
+      nextAction: nextAction || 'No recommended action',
       openRequirementCount: openRequirementCount,
-      openRequirementsLabel: openRequirementCount
-        ? openRequirementCount + (openRequirementCount === 1 ? ' open requirement' : ' open requirements')
-        : 'No open requirements',
+      openRequirementsLabel: openRequirementsLabel,
+      headerIntel: [
+        {
+          label: 'Last Activity',
+          value: lastMeaningfulActivity || 'Not recorded'
+        },
+        {
+          label: 'Waiting On',
+          value: waitingOn
+        },
+        {
+          label: 'Next Action',
+          value: nextAction || 'No recommended action'
+        },
+        {
+          label: 'Requirements',
+          value: openRequirementsLabel
+        }
+      ],
       activeConditions: activeConditions,
       openRequirements: openRequirements
     };
@@ -1607,32 +2016,38 @@
       operational.healthReason
     ]);
     const openRequirementCount = getOpenRequirementCount_(detail);
-    const statePhrase = lifecycleState === 'Not recorded'
-      ? 'limited recorded state data'
-      : lifecycleState;
-    const healthPhrase = healthLevel === 'Not rated'
-      ? ''
-      : ' with ' + healthLevel + ' health';
-    const trackingPhrase = primaryCondition !== 'No active condition'
+    const stateSentence = lifecycleState === 'Not recorded' && healthLevel === 'Not rated'
+      ? 'This claim currently shows limited recorded lifecycle and health data.'
+      : lifecycleState === 'Not recorded'
+        ? 'This claim currently shows limited recorded lifecycle data and is currently ' + healthLevel + '.'
+        : healthLevel === 'Not rated'
+          ? 'This claim appears to be in ' + lifecycleState + '.'
+          : 'This claim appears to be in ' + lifecycleState + ' and is currently ' + healthLevel + '.';
+    const trackingClause = primaryCondition !== 'No active condition'
       ? 'Rainbow is tracking ' + primaryCondition
       : attentionReason
-        ? 'Rainbow is tracking ' + truncateFullClaimPhrase_(attentionReason, 120)
-        : 'Rainbow is tracking current status and requirements as details are recorded';
+        ? 'Rainbow is tracking ' + stripFullClaimEndingPunctuation_(truncateFullClaimPhrase_(attentionReason, 120))
+        : 'Rainbow is tracking available conditions and requirements as details are recorded';
     const ownerPhrase = owner.primaryOwner !== 'Not recorded'
       ? owner.primaryOwner + ' owns the next action'
       : owner.ownershipArea !== 'Not recorded'
-        ? 'The ' + owner.ownershipArea + ' ownership area owns the next action'
-        : 'Ownership is not recorded yet';
-    const actionPhrase = nextAction
-      ? 'the recommended next action is ' + stripFullClaimEndingPunctuation_(truncateFullClaimPhrase_(nextAction, 120))
+        ? owner.ownershipArea + ' owns the next action'
+        : 'ownership is not recorded yet';
+    const requirementPhrase = openRequirementCount
+      ? (openRequirementCount === 1
+        ? 'one open requirement still needs review'
+        : openRequirementCount + ' open requirements still need review')
+      : 'no open requirements are recorded right now';
+    const followUpPhrase = nextAction
+      ? 'follow-up should be planned around ' + stripFullClaimEndingPunctuation_(truncateFullClaimPhrase_(nextAction, 120))
       : openRequirementCount
-        ? 'there ' + (openRequirementCount === 1 ? 'is 1 open requirement' : 'are ' + openRequirementCount + ' open requirements') + ' to review'
-        : 'no open requirements are recorded right now';
+        ? 'follow-up should be planned'
+        : '';
 
     return {
       title: 'Operational Summary',
-      text: 'This claim currently shows ' + statePhrase + healthPhrase + ', and ' + trackingPhrase + '. ' +
-        ownerPhrase + ', and ' + actionPhrase + '.',
+      text: stateSentence + ' ' + trackingClause + '; ' +
+        joinFullClaimPhraseList_([ownerPhrase, requirementPhrase, followUpPhrase]) + '.',
       supportingText: 'Based on lifecycle, ownership, conditions, requirements, and recent activity.',
       facts: [
         {
@@ -1648,8 +2063,8 @@
           value: healthLevel
         },
         {
-          label: 'Next action',
-          value: nextAction || 'Not recorded'
+          label: 'Requirements',
+          value: openRequirementCount ? openRequirementCount + ' open' : 'None open'
         }
       ]
     };
@@ -1661,6 +2076,26 @@
     const claimNumber = formatFullClaimFallback_(headerModel.claimNumber, 'Not recorded');
     const jobNumber = getFullClaimModelValue_([headerModel.jobNumber]);
     const propertyAddress = getFullClaimModelValue_([headerModel.propertyAddress]);
+    const headerIntel = Array.isArray(headerModel.headerIntel)
+      ? headerModel.headerIntel
+      : [
+        {
+          label: 'Last Activity',
+          value: headerModel.lastMeaningfulActivity || 'Not recorded'
+        },
+        {
+          label: 'Waiting On',
+          value: headerModel.waitingOn || headerModel.primaryCondition || 'No active condition'
+        },
+        {
+          label: 'Next Action',
+          value: headerModel.nextAction || 'No recommended action'
+        },
+        {
+          label: 'Requirements',
+          value: headerModel.openRequirementsLabel || 'No open requirements'
+        }
+      ];
     const claimSubline = claimNumber === 'Not recorded' ? 'Claim not recorded' : 'Claim ' + claimNumber;
     const sublineParts = [claimSubline];
 
@@ -1685,10 +2120,9 @@
     html += '</div>';
     html += '</div>';
     html += '<div class="full-claim-header-intel">';
-    html += renderFullClaimHeaderIntelItem_('Last meaningful activity', headerModel.lastMeaningfulActivity || 'Not recorded');
-    html += renderFullClaimHeaderIntelItem_('Waiting on', headerModel.waitingOn || headerModel.primaryCondition || 'No active condition');
-    html += renderFullClaimHeaderIntelItem_('Recommended next action', headerModel.nextAction || 'No recommended action recorded');
-    html += renderFullClaimHeaderIntelItem_('Open requirements', headerModel.openRequirementsLabel || 'No open requirements');
+    headerIntel.slice(0, 4).forEach(function(item) {
+      html += renderFullClaimHeaderIntelItem_(item.label, item.value);
+    });
     html += '</div>';
     html += '</header>';
 
@@ -1744,9 +2178,14 @@
   }
 
   function renderFullClaimHeaderIntelItem_(label, value) {
+    const isActivityDate = String(label || '').toLowerCase().indexOf('activity') !== -1;
+    const displayValue = isActivityDate
+      ? formatRainbowDisplayDate_(value) || 'Not recorded'
+      : formatFullClaimFallback_(value, 'Not recorded');
+
     return '<div class="full-claim-header-intel-item full-claim-intel-item">' +
       '<span>' + escapeHtml(label) + '</span>' +
-      '<strong>' + escapeHtml(formatFullClaimFallback_(value, 'Not recorded')) + '</strong>' +
+      '<strong title="' + escapeHtml(displayValue) + '">' + escapeHtml(displayValue) + '</strong>' +
       '</div>';
   }
 
@@ -1950,6 +2389,22 @@
     return getFullClaimModelValue_([value]).replace(/[.!?]+$/g, '');
   }
 
+  function joinFullClaimPhraseList_(phrases) {
+    phrases = (phrases || []).filter(function(phrase) {
+      return Boolean(getFullClaimModelValue_([phrase]));
+    });
+
+    if (phrases.length <= 1) {
+      return phrases[0] || '';
+    }
+
+    if (phrases.length === 2) {
+      return phrases[0] + ', and ' + phrases[1];
+    }
+
+    return phrases.slice(0, -1).join(', ') + ', and ' + phrases[phrases.length - 1];
+  }
+
   function renderFullClaimMetaItem_(label, value) {
     const displayValue = getFullClaimModelValue_([value]);
 
@@ -1960,17 +2415,93 @@
     return '<span><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(displayValue) + '</span>';
   }
 
-  function renderFullClaimCurrentStateCard_(header, lastMeaningfulActivity) {
-    let html = '<section class="full-claim-card">';
-    html += '<h3>Current State</h3>';
-    html += '<div class="full-claim-key-list">';
-    html += renderClaimDetailKeyValue_('Lifecycle', header.lifecycleState || '');
-    html += renderClaimDetailKeyValue_('Health', header.healthLevel || '');
-    html += renderClaimDetailKeyValue_('Owner', header.ownershipArea || header.primaryOwner || '');
-    html += renderClaimDetailKeyValue_('Last Meaningful Activity', lastMeaningfulActivity || '');
-    html += '</div>';
+  function buildFullClaimCurrentStateModel_(detail, headerModel, alerts, lastMeaningfulActivity) {
+    detail = detail || {};
+    headerModel = headerModel || buildFullClaimHeaderModel_(detail);
+    alerts = Array.isArray(alerts) ? alerts : [];
+
+    const header = detail.claimHeader || {};
+    const alertCount = getFullClaimModelValue_([
+      header.alertCount,
+      detail.alertCount
+    ]) || String(alerts.length || 0);
+
+    return {
+      title: 'Current State',
+      helperText: 'Used for operational routing, follow-up cadence, and claim prioritization.',
+      items: [
+        {
+          label: 'Lifecycle',
+          value: headerModel.lifecycleState || 'Not recorded'
+        },
+        {
+          label: 'Health',
+          value: headerModel.healthLevel || 'Not rated'
+        },
+        {
+          label: 'Ownership',
+          value: headerModel.ownerLabel || 'Unassigned'
+        },
+        {
+          label: 'Primary condition',
+          value: headerModel.primaryCondition || 'No active condition'
+        },
+        {
+          label: 'Last meaningful activity',
+          value: lastMeaningfulActivity || headerModel.lastMeaningfulActivity || 'Not recorded'
+        },
+        {
+          label: 'Open requirements',
+          value: headerModel.openRequirementsLabel || 'No open requirements'
+        },
+        {
+          label: 'Alert count',
+          value: alertCount
+        }
+      ]
+    };
+  }
+
+  function renderFullClaimCurrentStateCard_(currentStateModel) {
+    currentStateModel = currentStateModel || {};
+    let items = Array.isArray(currentStateModel.items) ? currentStateModel.items : [];
+
+    items = items.filter(function(item) {
+      const label = String(item && item.label || '').toLowerCase();
+      return label === 'lifecycle' ||
+        label === 'health' ||
+        label === 'ownership' ||
+        label === 'last meaningful activity';
+    });
+
+    let html = '<section class="full-claim-card full-claim-current-state-card">';
+    html += '<h3>' + escapeHtml(formatFullClaimFallback_(currentStateModel.title, 'Current State')) + '</h3>';
+
+    items.forEach(function(item) {
+      html += renderFullClaimCurrentStateRow_(item);
+    });
+
+    if (currentStateModel.helperText) {
+      html += '<p class="full-claim-current-state-helper">Used for routing, cadence, and claim prioritization.</p>';
+    }
+
     html += '</section>';
     return html;
+  }
+
+  function renderFullClaimCurrentStateRow_(item) {
+    item = item || {};
+
+    const label = formatFullClaimFallback_(item.label, 'State');
+    const isActivityDate = label.toLowerCase().indexOf('activity') !== -1;
+    const displayValue = isActivityDate
+      ? formatRainbowDisplayDate_(item.value) || 'Not recorded'
+      : formatFullClaimFallback_(item.value, 'Not recorded');
+
+    return '<div class="claim-detail-key-value full-claim-current-state-row">' +
+      '<span>' + escapeHtml(label) + '</span>' +
+      '<strong>' + escapeHtml(displayValue) + '</strong>' +
+      '</div>';
   }
 
   function renderFullClaimConditionsCard_(conditions) {
@@ -2023,23 +2554,25 @@
   }
 
   function renderFullClaimQuickActionsCard_(links) {
-    let html = '<section class="full-claim-card">';
+    const state = getClaimOperationalLinkState_(links || []);
+    let html = '<section class="full-claim-card full-claim-quick-actions-card">';
     html += '<h3>Quick Actions</h3>';
-    html += '<div class="full-claim-action-list">';
+    html += '<div class="full-claim-action-list full-claim-quick-action-list">';
 
-    if (links.length) {
-      links.forEach(function(link) {
-        const label = getExternalLinkDisplayLabel_(link);
-        const url = link.url || '';
-
-        if (url) {
-          html += '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>';
-        }
-      });
+    if (state.fusion && state.fusion.url) {
+      html += '<a href="' + escapeHtml(state.fusion.url) + '" target="_blank" rel="noopener noreferrer"><span>📂 Open Fusion</span><small>Claim file</small></a>';
+    } else {
+      html += '<button type="button" disabled><span>📂 Open Fusion</span><small>Not linked</small></button>';
     }
 
-    html += '<button type="button" disabled>Create Todoist Task</button>';
-    html += '<button type="button" disabled>Add Note</button>';
+    if (state.estimate && state.estimate.url) {
+      html += '<a href="' + escapeHtml(state.estimate.url) + '" target="_blank" rel="noopener noreferrer"><span>📄 Open XactAnalysis</span><small>Estimate platform</small></a>';
+    } else {
+      html += '<button type="button" disabled><span>📄 Open XactAnalysis</span><small>Not linked</small></button>';
+    }
+
+    html += '<button type="button" disabled><span>✓ Create Todoist Task</span><small>Coming soon</small></button>';
+    html += '<button type="button" disabled><span>✎ Add Note</span><small>Coming soon</small></button>';
     html += '</div>';
     html += '</section>';
     return html;
@@ -2168,22 +2701,76 @@
     return [];
   }
 
+  function getFullClaimTimelineGroupsForDisplay_(detail) {
+    if (!detail) {
+      return [];
+    }
+
+    if (detail.fullClaimTimeline && Array.isArray(detail.fullClaimTimeline.groups)) {
+      return detail.fullClaimTimeline.groups;
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.timelineGroups)) {
+      return detail.timelineSection.timelineGroups;
+    }
+
+    return groupFullClaimTimelineEvents_(getFullClaimTimelineEventsForDisplay_(detail));
+  }
+
+  function getFullClaimTimelineEventsForDisplay_(detail) {
+    if (!detail) {
+      return [];
+    }
+
+    if (detail.fullClaimTimeline && Array.isArray(detail.fullClaimTimeline.items)) {
+      return detail.fullClaimTimeline.items;
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.events)) {
+      return detail.timelineSection.events;
+    }
+
+    if (detail.timelineSection && Array.isArray(detail.timelineSection.timelineEvents)) {
+      return detail.timelineSection.timelineEvents;
+    }
+
+    if (Array.isArray(detail.recentTimelineEvents)) {
+      return detail.recentTimelineEvents;
+    }
+
+    return getRecentTimelineEvents_(detail);
+  }
+
   function getTimelineEventSummary_(event) {
-    return event.summary ||
-      event.Summary ||
-      event.title ||
-      event.eventSummary ||
-      event.description ||
-      event.lastActivitySummary ||
-      event.activitySummary ||
-      event.detail ||
-      event.details ||
-      event.Details ||
-      'Timeline Event';
+    event = event || {};
+
+    return getFullClaimModelValue_([
+      event.summary,
+      event.Summary,
+      event.title,
+      event.eventSummary,
+      event.description,
+      event.lastActivitySummary,
+      event.activitySummary,
+      event.detail,
+      event.details,
+      event.Details
+    ]) || 'Timeline Event';
   }
 
   function getTimelineEventDate_(event) {
-    const rawDate = event.eventDate || event.date || event.Date || event.createdAt || event.timestamp || '';
+    event = event || {};
+
+    const dateCandidates = [
+      event.eventDate,
+      event.date,
+      event.Date,
+      event.createdAt,
+      event.timestamp
+    ];
+    const rawDate = dateCandidates.find(function(value) {
+      return value instanceof Date && !isNaN(value.getTime());
+    }) || getFullClaimModelValue_(dateCandidates);
 
     if (!rawDate) {
       return '';
@@ -2212,15 +2799,36 @@
   }
 
   function getTimelineEventType_(event) {
-    return event.eventType || event.type || event['Event Type'] || event.Event_Type || '';
+    event = event || {};
+
+    return getFullClaimModelValue_([
+      event.eventType,
+      event.type,
+      event['Event Type'],
+      event.Event_Type
+    ]);
   }
 
   function getTimelineEventSource_(event) {
-    return event.source || event.sourceSystem || event.Source || event.Source_System || '';
+    event = event || {};
+
+    return getFullClaimModelValue_([
+      event.source,
+      event.sourceSystem,
+      event.Source,
+      event.Source_System
+    ]);
   }
 
   function getTimelineEventDetail_(event) {
-    return event.detail || event.details || event.Details || event.description || '';
+    event = event || {};
+
+    return getFullClaimModelValue_([
+      event.detail,
+      event.details,
+      event.Details,
+      event.description
+    ]);
   }
 
   function handleClaimsWorkspaceError(error) {
