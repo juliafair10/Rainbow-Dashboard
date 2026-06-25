@@ -105,6 +105,10 @@ function getClaimDetail(claimId) {
 
   detail.claimFoundation = claimFoundation;
 
+  detail.operationalIntelligence = (typeof buildOperationalIntelligence_ === 'function')
+    ? buildOperationalIntelligence_(detail.claimFoundation, detail)
+    : null;
+
   return detail;
 }
 

@@ -140,11 +140,30 @@ function getClaimsWorkspaceActivityAge_(claim) {
     return explicitAge;
   }
 
-  if (!claim.lastMeaningfulActivityDate) {
+  var activityDate = claim.lastMeaningfulActivityDate ||
+    claim.lastMeaningfulActivityAt ||
+    '';
+
+  if (!activityDate) {
     return -1;
   }
 
-  var timestamp = new Date(claim.lastMeaningfulActivityDate).getTime();
+  // Delegate to the canonical days-since-activity calculator in ClaimFoundationService.
+  // buildFoundationDaysSinceActivity_ uses the same date arithmetic and is the
+  // authoritative implementation for this calculation.
+  if (typeof buildFoundationDaysSinceActivity_ === 'function') {
+    var days = buildFoundationDaysSinceActivity_(activityDate);
+    // buildFoundationDaysSinceActivity_ returns 0 for unparseable dates;
+    // distinguish "genuinely 0 days" from "could not parse" by re-checking.
+    var parsed = new Date(activityDate);
+    if (isNaN(parsed.getTime())) {
+      return -1;
+    }
+    return days;
+  }
+
+  // Fallback: inline date arithmetic in case ClaimFoundationService is not loaded.
+  var timestamp = new Date(activityDate).getTime();
 
   if (isNaN(timestamp)) {
     return -1;
@@ -353,6 +372,14 @@ function dedupeClaimOperationalAlerts_(alerts) {
 }
 
 function getHighestClaimAlertSeverity_(alerts) {
+  // Delegate to the canonical severity resolver in ClaimFoundationService.
+  // buildFoundationHighestSeverity_ uses the same severity ranking logic
+  // and is the authoritative implementation for this calculation.
+  if (typeof buildFoundationHighestSeverity_ === 'function') {
+    return buildFoundationHighestSeverity_(alerts) || '';
+  }
+
+  // Fallback: inline ranking in case ClaimFoundationService is not loaded.
   var severityRank = {
     Critical: 5,
     High: 4,

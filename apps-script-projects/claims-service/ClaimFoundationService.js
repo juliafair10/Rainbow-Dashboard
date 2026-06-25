@@ -519,5 +519,9 @@ function buildFoundationDaysSinceActivity_(lastActivityValue) {
 // --- Service Object ---
 
 var ClaimFoundationService = {
-  buildClaimFoundation_: buildClaimFoundation_
+  buildClaimFoundation_: buildClaimFoundation_,
+  // Expose shared utility helpers so other services (e.g. ClaimsWorkspaceService)
+  // can delegate to the canonical implementations rather than maintaining duplicates.
+  buildFoundationHighestSeverity_: buildFoundationHighestSeverity_,
+  buildFoundationDaysSinceActivity_: buildFoundationDaysSinceActivity_
 };
