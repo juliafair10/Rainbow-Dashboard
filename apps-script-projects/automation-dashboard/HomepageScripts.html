@@ -171,7 +171,13 @@
   }
 
   function renderKpis(kpis) {
-    setKpiValue('activeClaims', kpis.activeClaims || homepageData.activeClaimCount || homepageData.claimSummaryCount || 0);
+    var awareness = homepageData.claimsOperationalAwareness || null;
+
+    var activeClaims = (awareness && awareness.summary && awareness.summary.totalActiveClaims != null)
+      ? awareness.summary.totalActiveClaims
+      : (kpis.activeClaims || homepageData.activeClaimCount || homepageData.claimSummaryCount || 0);
+
+    setKpiValue('activeClaims', activeClaims);
     setKpiValue('recentActivityClaims', kpis.recentActivityClaims || homepageData.recentActivityClaimCount || homepageData.recentActivityClaims || 0);
     setKpiValue('timelineEvents', kpis.timelineEvents || homepageData.timelineEventCount || homepageData.timelineEventsCount || 0);
     setKpiValue('openComplianceActions', kpis.openComplianceActions || homepageData.openComplianceActionCount || homepageData.openComplianceActionsCount || 0);
