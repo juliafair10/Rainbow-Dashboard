@@ -601,21 +601,36 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
   const jobNumber = String(claimData.rainbowJobNumber || '').trim();
   const claimId = String(claimData.claimId || '').trim();
   const claimNumber = String(claimData.claimNumber || '').trim();
+
+  // Auto-ensure Claim Number column header exists. Idempotent: skips if already present.
+  if (columnMap.claimNumber === -1) {
+    const newColIndex = headers.length;
+    sheet.getRange(1, newColIndex + 1).setValue('Claim Number');
+    headers.push('Claim Number');
+    columnMap.claimNumber = newColIndex;
+  }
+
+  // Guard: only write claim number if it is a real insurance claim number (not a fallback).
+  const isRealClaimNumber = isRealIntakeClaimNumber_(claimNumber, jobNumber);
+
   let rowNumber = findInsuranceIntakeExternalLinkRow_(values, columnMap, {
     claimId: claimId,
     jobNumber: jobNumber,
     claimNumber: claimNumber
   });
+  let rowCreated = false;
 
   if (!rowNumber) {
     const newRow = headers.map(function(header, index) {
       if (index === columnMap.claimId) return claimId;
       if (index === columnMap.jobNumber) return jobNumber || claimNumber;
+      if (index === columnMap.claimNumber && isRealClaimNumber) return claimNumber;
       return '';
     });
 
     sheet.appendRow(newRow);
     rowNumber = sheet.getLastRow();
+    rowCreated = true;
   }
 
   const saved = [];
@@ -636,10 +651,31 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
     }
   });
 
+  // For existing rows: write claim number to Claim Number column if blank and number is real.
+  // For new rows: already written via appendRow above; skip to avoid redundant write.
+  let claimNumberWritten = rowCreated && isRealClaimNumber;
+  let claimNumberSkippedReason = '';
+
+  if (!rowCreated && isRealClaimNumber && columnMap.claimNumber !== -1) {
+    const claimNumberRange = sheet.getRange(rowNumber, columnMap.claimNumber + 1);
+    const existingClaimNumber = String(claimNumberRange.getValue() || '').trim();
+
+    if (!existingClaimNumber) {
+      claimNumberRange.setValue(claimNumber);
+      claimNumberWritten = true;
+    } else {
+      claimNumberSkippedReason = 'existing_value_preserved';
+    }
+  } else if (!isRealClaimNumber) {
+    claimNumberSkippedReason = claimNumber ? 'fallback_equals_job_number' : 'blank_claim_number';
+  }
+
   return {
     rowNumber: rowNumber,
     savedCount: saved.length,
-    linksSaved: saved
+    linksSaved: saved,
+    claimNumberWritten: claimNumberWritten,
+    claimNumberSkippedReason: claimNumberSkippedReason
   };
 }
 
@@ -651,6 +687,7 @@ function buildInsuranceIntakeExternalLinkColumnMap_(headers) {
   return {
     claimId: normalized.indexOf('claim id'),
     jobNumber: normalized.indexOf('job number'),
+    claimNumber: normalized.indexOf('claim number'),
     fusionUrl: normalized.indexOf('fusion url'),
     driveFolder: normalized.indexOf('drive folder'),
     xactAnalysis: normalized.indexOf('xactanalysis'),
@@ -731,6 +768,259 @@ function testSaveInsuranceIntakeExternalLinks() {
   const result = saveInsuranceIntakeExternalLinks_(claimData, folderResult);
   Logger.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+/**
+ * Returns true if claimNumber is a real insurance claim number —
+ * i.e. non-blank and NOT equal (normalized) to rainbowJobNumber.
+ *
+ * parseInsuranceIntakeThread() sets claimNumber = fusionJobNumber as a
+ * fallback when no real claim number can be extracted. We must not
+ * write that fallback value into the Claim Number column.
+ */
+function isRealIntakeClaimNumber_(claimNumber, rainbowJobNumber) {
+  var cleanClaim = String(claimNumber || '').trim();
+
+  if (!cleanClaim) {
+    return false;
+  }
+
+  var normClaim = cleanClaim.toUpperCase().replace(/\s+/g, '');
+  var normJob = String(rainbowJobNumber || '').trim().toUpperCase().replace(/\s+/g, '');
+
+  // If rainbowJobNumber is blank we cannot confirm it's a fallback — allow write.
+  if (!normJob) {
+    return true;
+  }
+
+  return normClaim !== normJob;
+}
+
+/**
+ * Ensures the Claim Number column header exists in External_Links.
+ * Safe to run multiple times — idempotent.
+ * Only touches row 1 (the header row) if the column is missing.
+ * Never modifies data rows, never writes link values.
+ *
+ * Returns an object with:
+ *   success            — whether the operation completed without error
+ *   status             — 'already_exists' | 'column_added'
+ *   claimNumberColumn  — 1-based column index of Claim Number (before and after)
+ *   headersBefore      — header row as it was when the function ran
+ *   headersAfter       — header row after any change (same as before if no change needed)
+ */
+function ensureExternalLinksClaimNumberColumn() {
+  const spreadsheetId = getInsuranceIntakeClaimFoundationSpreadsheetId_();
+
+  if (!spreadsheetId) {
+    const result = {
+      success: false,
+      status: 'missing_spreadsheet_id',
+      message: 'Claim Foundation spreadsheet ID is not configured.'
+    };
+    Logger.log('[ensureExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName('External_Links');
+
+  if (!sheet) {
+    const result = {
+      success: false,
+      status: 'sheet_not_found',
+      message: 'External_Links sheet not found in configured spreadsheet.'
+    };
+    Logger.log('[ensureExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const lastColumn = sheet.getLastColumn();
+
+  if (lastColumn < 1) {
+    const result = {
+      success: false,
+      status: 'sheet_empty',
+      message: 'External_Links sheet has no columns.'
+    };
+    Logger.log('[ensureExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, lastColumn);
+  const headerRow = headerRange.getValues()[0].map(function(h) { return String(h || '').trim(); });
+  const normalized = headerRow.map(function(h) { return h.toLowerCase(); });
+  const existingIdx = normalized.indexOf('claim number');
+
+  if (existingIdx !== -1) {
+    const result = {
+      success: true,
+      status: 'already_exists',
+      claimNumberColumn: existingIdx + 1,
+      headersBefore: headerRow,
+      headersAfter: headerRow
+    };
+    Logger.log('[ensureExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  // Column is missing — append it to row 1 only.
+  const newColumnIndex = lastColumn + 1;
+  sheet.getRange(1, newColumnIndex).setValue('Claim Number');
+
+  const headersAfter = headerRow.concat(['Claim Number']);
+
+  const result = {
+    success: true,
+    status: 'column_added',
+    claimNumberColumn: newColumnIndex,
+    headersBefore: headerRow,
+    headersAfter: headersAfter
+  };
+  Logger.log('[ensureExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+  return result;
+}
+
+/**
+ * Preview the state of the Claim Number column in External_Links.
+ * Run this to confirm the column is present (or not) before deploying.
+ * Logs the result and returns it.
+ */
+function previewExternalLinksClaimNumberColumn() {
+  const spreadsheetId = getInsuranceIntakeClaimFoundationSpreadsheetId_();
+
+  if (!spreadsheetId) {
+    const result = { success: false, message: 'Claim Foundation spreadsheet ID not configured.' };
+    Logger.log('[previewExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName('External_Links');
+
+  if (!sheet) {
+    const result = { success: false, message: 'External_Links sheet not found in configured spreadsheet.' };
+    Logger.log('[previewExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (!values.length) {
+    const result = { success: false, message: 'External_Links sheet is empty.' };
+    Logger.log('[previewExternalLinksClaimNumberColumn] ' + JSON.stringify(result));
+    return result;
+  }
+
+  const headerRow = values[0].map(function(h) { return String(h || '').trim(); });
+  const normalizedHeaders = headerRow.map(function(h) { return h.toLowerCase(); });
+  const claimNumberColIdx = normalizedHeaders.indexOf('claim number');
+  const jobNumberColIdx = normalizedHeaders.indexOf('job number');
+  const claimIdColIdx = normalizedHeaders.indexOf('claim id');
+
+  const sampleRows = [];
+
+  for (var i = 1; i < Math.min(values.length, 6); i++) {
+    const row = values[i];
+    sampleRows.push({
+      rowNumber: i + 1,
+      claimId: claimIdColIdx !== -1 ? String(row[claimIdColIdx] || '').trim() : '(col not found)',
+      jobNumber: jobNumberColIdx !== -1 ? String(row[jobNumberColIdx] || '').trim() : '(col not found)',
+      claimNumber: claimNumberColIdx !== -1 ? String(row[claimNumberColIdx] || '').trim() : '(col not present)'
+    });
+  }
+
+  const result = {
+    success: true,
+    generatedAt: new Date().toISOString(),
+    claimNumberColumnExists: claimNumberColIdx !== -1,
+    claimNumberColumnIndex: claimNumberColIdx !== -1 ? claimNumberColIdx + 1 : null,
+    totalColumns: headerRow.length,
+    totalDataRows: values.length - 1,
+    headers: headerRow,
+    sampleRows: sampleRows
+  };
+
+  Logger.log('[previewExternalLinksClaimNumberColumn] ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
+/**
+ * Verifies the fallback guard logic without touching any sheets or Gmail.
+ * All test cases run in-memory. Run this after deploying to confirm
+ * isRealIntakeClaimNumber_ behaves correctly.
+ */
+function testInsuranceIntakeClaimNumberPersistence() {
+  const testCases = [
+    {
+      label: 'Real claim number',
+      claimNumber: 'INS-2025-999888',
+      rainbowJobNumber: 'R25001',
+      expectedReal: true
+    },
+    {
+      label: 'Fallback: claimNumber === rainbowJobNumber',
+      claimNumber: 'R25001',
+      rainbowJobNumber: 'R25001',
+      expectedReal: false
+    },
+    {
+      label: 'Fallback: case-insensitive match',
+      claimNumber: 'r25001',
+      rainbowJobNumber: 'R25001',
+      expectedReal: false
+    },
+    {
+      label: 'Fallback: whitespace-normalized match',
+      claimNumber: 'R 25001',
+      rainbowJobNumber: 'R25001',
+      expectedReal: false
+    },
+    {
+      label: 'Blank claim number',
+      claimNumber: '',
+      rainbowJobNumber: 'R25001',
+      expectedReal: false
+    },
+    {
+      label: 'Blank rainbowJobNumber — cannot confirm fallback, allow write',
+      claimNumber: 'INS-2025-888777',
+      rainbowJobNumber: '',
+      expectedReal: true
+    },
+    {
+      label: 'Both blank',
+      claimNumber: '',
+      rainbowJobNumber: '',
+      expectedReal: false
+    }
+  ];
+
+  const results = testCases.map(function(tc) {
+    const isReal = isRealIntakeClaimNumber_(tc.claimNumber, tc.rainbowJobNumber);
+    const passed = isReal === tc.expectedReal;
+    return {
+      label: tc.label,
+      claimNumber: tc.claimNumber,
+      rainbowJobNumber: tc.rainbowJobNumber,
+      isReal: isReal,
+      expectedReal: tc.expectedReal,
+      passed: passed
+    };
+  });
+
+  const allPassed = results.every(function(r) { return r.passed; });
+  const passedCount = results.filter(function(r) { return r.passed; }).length;
+
+  Logger.log('[testInsuranceIntakeClaimNumberPersistence] allPassed=' + allPassed +
+    ' (' + passedCount + '/' + results.length + ')');
+  Logger.log(JSON.stringify(results, null, 2));
+
+  return {
+    success: true,
+    allPassed: allPassed,
+    passedCount: passedCount,
+    failedCount: results.length - passedCount,
+    results: results
+  };
 }
 
 function testLogProcessInsuranceIntake() {

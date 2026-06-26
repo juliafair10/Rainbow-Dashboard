@@ -58,7 +58,7 @@ const CLAIM_SHEET_NAMES = {
 
 const CLAIM_FOUNDATION_SHEETS = {
   Claims: [
-    'Claim_ID', 'Claim_Number', 'Customer_Name', 'Property_Address', 'Carrier',
+    'Claim_ID', 'Claim_Number', 'Job_Number', 'Customer_Name', 'Property_Address', 'Carrier',
     'Adjuster_Name', 'Adjuster_Email', 'Policy_Number', 'Loss_Date', 'Date_Received',
     'Source_System', 'Source_Email_Thread_ID', 'Claim_Folder_ID', 'Claim_Folder_URL',
     'Lifecycle_State', 'Ownership_Area', 'Primary_Owner', 'Operational_Health',

@@ -35,6 +35,11 @@ function createClaim(payload) {
   const claim = {
     Claim_ID: claimId,
     Claim_Number: normalized.Claim_Number,
+    Job_Number: normalized.Job_Number || '',
+    // Customer_Name is the live Claims sheet column (schema: CLAIM_FOUNDATION_SHEETS.Claims).
+    // Display_Name is the internal key used by validateClaimPayload/lookupClaim.
+    // Both are written so the row is populated regardless of which header the sheet uses.
+    Customer_Name: normalized.Display_Name || '',
     Display_Name: normalized.Display_Name,
     Claim_Label: buildClaimLabel_(normalized.Display_Name, normalized.Claim_Number),
     Property_Address: normalized.Property_Address || '',
@@ -224,8 +229,22 @@ function normalizeClaimData(payload) {
     normalized.Claim_Number || normalized.claimNumber || normalized.claim_number || ''
   );
 
+  normalized.Job_Number = normalizeString(
+    normalized.Job_Number || normalized.jobNumber || normalized.job_number || ''
+  );
+
+  // Accept all customer/display name input variants.
+  // The live Claims sheet stores this as Customer_Name; Display_Name is the internal key.
   normalized.Display_Name = normalizeString(
-    normalized.Display_Name || normalized.displayName || normalized.display_name || normalized.Customer_Name || normalized.customerName || ''
+    normalized.Display_Name ||
+    normalized['Display Name'] ||
+    normalized.displayName ||
+    normalized.display_name ||
+    normalized.Customer_Name ||
+    normalized['Customer Name'] ||
+    normalized.customerName ||
+    normalized.customer_name ||
+    ''
   );
 
   normalized.Claim_Label = buildClaimLabel_(normalized.Display_Name, normalized.Claim_Number);
@@ -264,12 +283,22 @@ function normalizeClaimUpdates_(updates) {
         normalized.Claim_Number = normalizeClaimNumber(value);
         break;
 
+      case 'jobNumber':
+      case 'job_number':
+      case 'Job_Number':
+        normalized.Job_Number = normalizeString(value);
+        break;
+
       case 'displayName':
       case 'display_name':
-      case 'Customer_Name':
-      case 'customerName':
+      case 'Display Name':
       case 'Display_Name':
+      case 'Customer_Name':
+      case 'Customer Name':
+      case 'customerName':
+      case 'customer_name':
         normalized.Display_Name = normalizeString(value);
+        normalized.Customer_Name = normalizeString(value);
         break;
 
       case 'propertyAddress':
@@ -442,6 +471,247 @@ function repairClaimsIdentityHeaders() {
     newHeaders: repairedHeaders
   }, 'Claims identity headers repaired successfully.');
 }
+
+// ---------------------------------------------------------------------------
+// Claims Claim_ID Backfill
+// ---------------------------------------------------------------------------
+// Older Claims rows may have a blank Claim_ID (they existed before Claim_IDs
+// were consistently written, or were imported from legacy systems).
+// These functions assign stable, deterministic IDs to those rows.
+//
+// ID derivation priority:
+//   1. CLM-{sanitized Job_Number}   (if Job_Number is populated)
+//   2. CLM-{sanitized Claim_Number} (if Claim_Number is populated)
+//
+// "Sanitize" = trim, uppercase, keep only [A-Z0-9-], collapse runs of hyphens.
+//
+// Rules enforced:
+//   - Never overwrite a non-blank Claim_ID.
+//   - Never change any column other than Claim_ID.
+//   - Skip rows where neither Job_Number nor Claim_Number is available.
+//   - Detect collisions against already-existing Claim_IDs in the sheet
+//     AND against IDs proposed for other rows in the same run.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitize a raw identifier value into a stable Claim_ID suffix.
+ * Keeps uppercase alphanumeric and hyphens; collapses consecutive hyphens.
+ * Returns '' if the result would be empty.
+ * @param {*} value
+ * @returns {string}
+ */
+function sanitizeClaimIdSuffix_(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Derive a stable Claim_ID for a Claims row that currently has none.
+ * Returns '' if no usable identifier is found.
+ * @param {string} jobNumber
+ * @param {string} claimNumber
+ * @returns {string}
+ */
+function deriveStableClaimId_(jobNumber, claimNumber) {
+  var jobSuffix   = sanitizeClaimIdSuffix_(jobNumber);
+  var claimSuffix = sanitizeClaimIdSuffix_(claimNumber);
+
+  if (jobSuffix)   { return 'CLM-' + jobSuffix; }
+  if (claimSuffix) { return 'CLM-' + claimSuffix; }
+  return '';
+}
+
+/**
+ * Read the Claims sheet and return header-to-column-index map (0-based).
+ * Uses normalised lower-alpha-numeric matching for header resilience.
+ * @param {Array<Array>} values  raw values from getDataRange().getValues()
+ * @returns {{ claimId: number, claimNumber: number, jobNumber: number, customerName: number }}
+ */
+function buildClaimsColumnMap_(values) {
+  var headers = values[0].map(function(h) {
+    return String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  });
+
+  return {
+    claimId:      headers.indexOf('claimid'),
+    claimNumber:  headers.indexOf('claimnumber'),
+    jobNumber:    headers.indexOf('jobnumber'),
+    customerName: headers.indexOf('customername')
+  };
+}
+
+/**
+ * Dry-run preview: scans Claims sheet, proposes stable Claim_IDs for rows
+ * where Claim_ID is blank.  No writes are performed.
+ * Logs and returns full diagnostics.
+ */
+function previewBackfillMissingClaimIds() {
+  return runClaimIdBackfill_(true);
+}
+
+/**
+ * Apply: writes stable Claim_IDs to Claims rows where Claim_ID is blank.
+ * Only the Claim_ID cell is touched; all other columns are unchanged.
+ */
+function backfillMissingClaimIds() {
+  return runClaimIdBackfill_(false);
+}
+
+/**
+ * @private
+ * Core logic for Claim_ID backfill.
+ * @param {boolean} dryRun
+ */
+function runClaimIdBackfill_(dryRun) {
+  var ss = SpreadsheetApp.openById(CLAIMS_DATABASE_SPREADSHEET_ID);
+  var sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.claims);
+
+  if (!sheet) {
+    return { success: false, message: 'Claims sheet not found.' };
+  }
+
+  var values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return { success: false, message: 'Claims sheet has no data rows.' };
+  }
+
+  var colMap = buildClaimsColumnMap_(values);
+
+  if (colMap.claimId === -1) {
+    return { success: false, message: 'Claim_ID column not found in Claims sheet.' };
+  }
+
+  if (colMap.claimNumber === -1 && colMap.jobNumber === -1) {
+    return { success: false, message: 'Neither Claim_Number nor Job_Number column found; cannot derive IDs.' };
+  }
+
+  // ── First pass: collect all existing Claim_IDs ──────────────────────────
+  var existingClaimIds = {};
+
+  values.slice(1).forEach(function(row) {
+    var id = String(row[colMap.claimId] || '').trim();
+    if (id) {
+      existingClaimIds[id.toUpperCase()] = true;
+    }
+  });
+
+  // ── Second pass: build proposals ─────────────────────────────────────────
+  var rowsChecked              = 0;
+  var rowsMissingClaimId       = 0;
+  var rowsSkippedNoIdentifiers = 0;
+  var rowsSkippedCollision     = 0;
+  var proposals                = [];
+  var proposedIds              = {};   // collision guard within this run
+
+  values.slice(1).forEach(function(row, relativeIndex) {
+    rowsChecked++;
+
+    var existingId  = String(row[colMap.claimId] || '').trim();
+
+    // Skip rows that already have a Claim_ID.
+    if (existingId) {
+      return;
+    }
+
+    rowsMissingClaimId++;
+
+    var jobNumber   = colMap.jobNumber   !== -1 ? String(row[colMap.jobNumber]   || '').trim() : '';
+    var claimNumber = colMap.claimNumber !== -1 ? String(row[colMap.claimNumber] || '').trim() : '';
+    var customerName = colMap.customerName !== -1 ? String(row[colMap.customerName] || '').trim() : '';
+
+    var proposedId = deriveStableClaimId_(jobNumber, claimNumber);
+
+    if (!proposedId) {
+      rowsSkippedNoIdentifiers++;
+      Logger.log('[ClaimIdBackfill] SKIP row ' + (relativeIndex + 2) +
+        ': no Job_Number or Claim_Number available' +
+        (customerName ? ' (customer: ' + customerName + ')' : ''));
+      return;
+    }
+
+    // Collision check: existing sheet IDs and already-proposed IDs.
+    if (existingClaimIds[proposedId.toUpperCase()] || proposedIds[proposedId.toUpperCase()]) {
+      rowsSkippedCollision++;
+      Logger.log('[ClaimIdBackfill] COLLISION row ' + (relativeIndex + 2) +
+        ': proposed=' + proposedId + ' already exists; skipping row' +
+        (customerName ? ' (customer: ' + customerName + ')' : ''));
+      return;
+    }
+
+    // Sheet row number is 1-based: row 1 is header, first data row is 2.
+    var sheetRowNumber = relativeIndex + 2;
+
+    proposedIds[proposedId.toUpperCase()] = true;
+
+    proposals.push({
+      sheetRow:     sheetRowNumber,
+      jobNumber:    jobNumber,
+      claimNumber:  claimNumber,
+      customerName: customerName,
+      derivedFrom:  jobNumber ? 'jobNumber' : 'claimNumber',
+      proposedId:   proposedId
+    });
+  });
+
+  // ── Apply writes (real run only) ─────────────────────────────────────────
+  var rowsWritten = 0;
+
+  if (!dryRun) {
+    proposals.forEach(function(p) {
+      sheet.getRange(p.sheetRow, colMap.claimId + 1).setValue(p.proposedId);
+      rowsWritten++;
+    });
+
+    if (rowsWritten > 0) {
+      SpreadsheetApp.flush();
+    }
+  }
+
+  var summary = {
+    success:                  true,
+    dryRun:                   dryRun,
+    generatedAt:              new Date().toISOString(),
+    rowsChecked:              rowsChecked,
+    rowsMissingClaimId:       rowsMissingClaimId,
+    rowsEligible:             proposals.length,
+    rowsWritten:              dryRun ? 0 : rowsWritten,
+    rowsSkippedNoIdentifiers: rowsSkippedNoIdentifiers,
+    rowsSkippedCollision:     rowsSkippedCollision,
+    sampleProposals:          proposals.slice(0, 10)
+  };
+
+  Logger.log(
+    '[ClaimIdBackfill] ' + (dryRun ? 'PREVIEW' : 'RUN') +
+    ': checked=' + rowsChecked +
+    ' missingId=' + rowsMissingClaimId +
+    ' eligible=' + proposals.length +
+    ' written=' + (dryRun ? '(dryRun)' : rowsWritten) +
+    ' skippedNoId=' + rowsSkippedNoIdentifiers +
+    ' skippedCollision=' + rowsSkippedCollision
+  );
+
+  if (dryRun && proposals.length > 0) {
+    Logger.log('[ClaimIdBackfill] PREVIEW — first ' +
+      Math.min(10, proposals.length) + ' proposals:');
+    proposals.slice(0, 10).forEach(function(p) {
+      Logger.log('  row ' + p.sheetRow +
+        ' | derivedFrom=' + p.derivedFrom +
+        ' | jobNumber=' + p.jobNumber +
+        ' | claimNumber=' + p.claimNumber +
+        ' | customer=' + p.customerName +
+        ' | proposedId=' + p.proposedId);
+    });
+  }
+
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
 
 function testCreateClaim() {
   return createClaim({

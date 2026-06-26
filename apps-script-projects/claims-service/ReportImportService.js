@@ -50,12 +50,21 @@ function importLatestDailyOpenJobsReport() {
     let updatedCount = 0;
     let unmatchedCount = 0;
     let skippedCount = 0;
+    let createdClaimsCount = 0;
+    let skippedMissingIdentifiersCount = 0;
 
     reportData.rowObjects.forEach(row => {
       const match = matchReportRowToClaim_(row, claimIndexes);
 
       if (!match.matched) {
-        unmatchedCount++;
+        const bootstrapResult = tryBootstrapClaimFromDailyOpenJobsRow_(row, claimIndexes);
+        if (bootstrapResult.created) {
+          createdClaimsCount++;
+        } else if (bootstrapResult.skippedMissingIdentifiers) {
+          skippedMissingIdentifiersCount++;
+        } else {
+          unmatchedCount++;
+        }
         return;
       }
 
@@ -91,9 +100,14 @@ function importLatestDailyOpenJobsReport() {
       data: {
         sourceFileName: latestFile.fileName,
         totalReportRows: reportData.totalDataRows,
+        matchedUpdated: updatedCount,
+        createdClaims: createdClaimsCount,
+        unmatchedSkipped: unmatchedCount,
+        skippedMissingIdentifiers: skippedMissingIdentifiersCount,
+        skippedCount: skippedCount,
+        // Legacy alias kept for backward compatibility
         updatedCount: updatedCount,
         unmatchedCount: unmatchedCount,
-        skippedCount: skippedCount,
         convertedSpreadsheetId: converted.spreadsheetId
       }
     };
@@ -880,6 +894,95 @@ function dryRunReportImportMatching_(reportKey) {
 }
 
 /**
+ * Attempt to bootstrap a new Claims row from an unmatched Daily Open Jobs report row.
+ *
+ * Guards:
+ * 1. Requires job_number AND customer_name — skips if either is blank.
+ * 2. Checks claimIndexes.byJobNumber before creating — prevents duplicates against
+ *    pre-existing claims and against rows already created in this same import run
+ *    (because the index is updated in-memory after each creation).
+ * 3. findOrCreateClaim() performs an additional DB-level lookup by Claim_Number
+ *    before appending a row.
+ *
+ * Returns: { created, skippedMissingIdentifiers, alreadyExists, error }
+ */
+function tryBootstrapClaimFromDailyOpenJobsRow_(row, claimIndexes) {
+  const jobNumber = getReportValue_(row, 'job_number');
+  const customerName = getReportValue_(row, 'customer_name');
+
+  if (!jobNumber || !customerName) {
+    return {
+      created: false,
+      skippedMissingIdentifiers: true,
+      reason: !jobNumber ? 'missing job_number' : 'missing customer_name'
+    };
+  }
+
+  // Guard: in-memory index check (covers pre-existing claims by job number
+  // and same-run duplicates from rows processed earlier in this forEach).
+  if (claimIndexes.byJobNumber[normalizeLookupKey_(jobNumber)]) {
+    return { created: false, alreadyExists: true };
+  }
+
+  const claimNumber = getReportValue_(row, 'claim_number');
+  const lossAddress = getReportValue_(row, 'loss_address');
+
+  const createResult = findOrCreateClaim({
+    Job_Number: jobNumber,
+    Claim_Number: claimNumber || jobNumber,
+    Display_Name: customerName,
+    Customer_Name: customerName,
+    Property_Address: lossAddress || '',
+    Lifecycle_State: 'Active Work',
+    Ownership_Area: 'Field Operations',
+    Operational_Health: 'Healthy',
+    Source_System: 'daily-open-jobs-import'
+  });
+
+  if (!createResult || !createResult.success) {
+    Logger.log(
+      'ReportImportService BOOTSTRAP ERROR: job=' + jobNumber +
+      ' customer=' + customerName +
+      ' error=' + (createResult ? createResult.message : 'null result')
+    );
+    return { created: false, error: createResult ? createResult.message : 'null result' };
+  }
+
+  const wasCreated = !!(createResult.data && createResult.data.created);
+  const claim = createResult.data && createResult.data.claim;
+
+  if (claim) {
+    // Update in-memory indexes so later rows in this same import run don't duplicate.
+    const claimRecord = {
+      rowNumber: -1,
+      claimId: claim.Claim_ID || '',
+      jobNumber: jobNumber,
+      claimNumber: claim.Claim_Number || claimNumber || jobNumber,
+      customerName: customerName
+    };
+
+    claimIndexes.byJobNumber[normalizeLookupKey_(jobNumber)] = claimRecord;
+
+    if (claim.Claim_ID) {
+      claimIndexes.byClaimId[normalizeLookupKey_(claim.Claim_ID)] = claimRecord;
+    }
+
+    if (claimRecord.claimNumber) {
+      claimIndexes.byClaimNumber[normalizeLookupKey_(claimRecord.claimNumber)] = claimRecord;
+    }
+  }
+
+  if (wasCreated) {
+    Logger.log(
+      'ReportImportService BOOTSTRAP: Created claim ' + (claim ? claim.Claim_ID : '?') +
+      ' for job=' + jobNumber + ' (' + customerName + ')'
+    );
+  }
+
+  return { created: wasCreated, alreadyExists: !wasCreated };
+}
+
+/**
  * Build claim lookup indexes.
  */
 function buildClaimLookupIndexes_() {
@@ -1100,6 +1203,575 @@ function buildHeaderIndexMap_(headers) {
 
   return map;
 }
+
+/**
+ * Preview which Daily Open Jobs rows would create new Claims rows.
+ *
+ * Dry-run only — no writes. Run this first; then run
+ * backfillMissingClaimsFromLatestDailyOpenJobs() to apply.
+ *
+ * Logs:
+ *   - total report rows
+ *   - matched rows (existing claims)
+ *   - rows eligible for creation (have job_number + customer_name, not already indexed)
+ *   - rows skipped due to missing identifiers
+ *   - first 5 would-create claims
+ */
+function testDailyOpenJobsClaimBootstrapPreview() {
+  let converted = null;
+
+  try {
+    const latestFileResponse = getLatestReportImportFile(REPORT_IMPORT_CONFIG.dailyOpenJobsReportKey);
+    const latestFile = unwrapLatestReportImportFile_(latestFileResponse);
+
+    if (!latestFile || !latestFile.fileId) {
+      throw new Error('No Daily Open Jobs report found.');
+    }
+
+    converted = convertXlsxToGoogleSheet_(latestFile.fileId, latestFile.fileName);
+    const reportData = readReportSheetRows_(converted.spreadsheetId);
+    const claimIndexes = buildClaimLookupIndexes_();
+
+    let matchedCount = 0;
+    const wouldCreate = [];
+    const skippedMissingIdentifiers = [];
+    const alreadyIndexedByJobNumber = [];
+
+    reportData.rowObjects.forEach(function(row, index) {
+      const match = matchReportRowToClaim_(row, claimIndexes);
+
+      if (match.matched) {
+        matchedCount++;
+        return;
+      }
+
+      const jobNumber = getReportValue_(row, 'job_number');
+      const customerName = getReportValue_(row, 'customer_name');
+      const claimNumber = getReportValue_(row, 'claim_number');
+      const lossAddress = getReportValue_(row, 'loss_address');
+
+      if (!jobNumber || !customerName) {
+        skippedMissingIdentifiers.push({
+          reportRow: index + 2,
+          jobNumber: jobNumber || '(blank)',
+          customerName: customerName || '(blank)',
+          reason: !jobNumber ? 'missing job_number' : 'missing customer_name'
+        });
+        return;
+      }
+
+      if (claimIndexes.byJobNumber[normalizeLookupKey_(jobNumber)]) {
+        alreadyIndexedByJobNumber.push({
+          reportRow: index + 2,
+          jobNumber: jobNumber,
+          customerName: customerName
+        });
+        return;
+      }
+
+      wouldCreate.push({
+        reportRow: index + 2,
+        jobNumber: jobNumber,
+        customerName: customerName,
+        claimNumber: claimNumber || '(will use job number as Claim_Number)',
+        lossAddress: lossAddress || '(blank)',
+        proposedClaimNumber: claimNumber || jobNumber
+      });
+    });
+
+    const result = {
+      status: 'Preview',
+      success: true,
+      message: 'Bootstrap preview completed. No claims were created.',
+      data: {
+        sourceFileName: latestFile.fileName,
+        totalReportRows: reportData.totalDataRows,
+        matchedExistingClaims: matchedCount,
+        unmatchedRows: reportData.totalDataRows - matchedCount,
+        eligibleForCreation: wouldCreate.length,
+        alreadyIndexedByJobNumber: alreadyIndexedByJobNumber.length,
+        skippedMissingIdentifiers: skippedMissingIdentifiers.length,
+        sampleWouldCreate: wouldCreate.slice(0, 5),
+        sampleSkippedMissingIdentifiers: skippedMissingIdentifiers.slice(0, 5),
+        duplicatePreventionNote: [
+          'Each row is checked against byJobNumber (pre-loaded from Claims sheet) before creation.',
+          'After each creation the in-memory index is updated so same-run duplicates are prevented.',
+          'findOrCreateClaim() performs a final DB-level Claim_Number lookup before appending a row.'
+        ].join(' ')
+      }
+    };
+
+    Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  } finally {
+    cleanupConvertedReportSheet_(converted);
+  }
+}
+
+/**
+ * One-time backfill: create missing Claims rows for all jobs in the latest
+ * Daily Open Jobs report that do not yet have a Claims row.
+ *
+ * Run testDailyOpenJobsClaimBootstrapPreview() first to confirm expected counts.
+ * This calls importLatestDailyOpenJobsReport() which now includes bootstrap logic.
+ */
+function backfillMissingClaimsFromLatestDailyOpenJobs() {
+  Logger.log('ReportImportService: Starting one-time backfill of missing claims from latest Daily Open Jobs report.');
+  const result = importLatestDailyOpenJobsReport();
+  Logger.log('ReportImportService: Backfill complete. ' + JSON.stringify({
+    createdClaims: result.data && result.data.createdClaims,
+    matchedUpdated: result.data && result.data.matchedUpdated,
+    unmatchedSkipped: result.data && result.data.unmatchedSkipped,
+    skippedMissingIdentifiers: result.data && result.data.skippedMissingIdentifiers
+  }));
+  return result;
+}
+
+/**
+ * Preview which bootstrapped Claims rows are missing Customer Name.
+ *
+ * Targets rows where:
+ *   - Claim_ID starts with the provided prefix (default: 'CLM-20260626-')
+ *   - Job_Number is not blank
+ *   - Customer Name is blank
+ *
+ * Dry-run only — no writes. Run this first; then run
+ * repairDailyOpenJobsBootstrappedClaimNames() to apply.
+ */
+function previewRepairDailyOpenJobsBootstrappedClaimNames(claimIdPrefix) {
+  return repairBootstrappedClaimNames_(claimIdPrefix || 'CLM-20260626-', true);
+}
+
+/**
+ * Repair bootstrapped Claims rows that are missing Customer Name.
+ *
+ * Looks up the correct customer name from the latest Daily Open Jobs report
+ * by matching Job_Number. Only writes to Customer Name — does not change
+ * lifecycle, health, ownership, or any other field.
+ *
+ * Run previewRepairDailyOpenJobsBootstrappedClaimNames() first to confirm counts.
+ */
+function repairDailyOpenJobsBootstrappedClaimNames(claimIdPrefix) {
+  return repairBootstrappedClaimNames_(claimIdPrefix || 'CLM-20260626-', false);
+}
+
+/**
+ * Core logic for bootstrapped claim name repair.
+ * @param {string} claimIdPrefix - Only repairs rows whose Claim_ID starts with this string.
+ * @param {boolean} dryRun - If true, logs what would be written without writing.
+ */
+function repairBootstrappedClaimNames_(claimIdPrefix, dryRun) {
+  let converted = null;
+
+  try {
+    // --- Load Daily Open Jobs report for job_number → customer_name lookup ---
+    const latestFileResponse = getLatestReportImportFile(REPORT_IMPORT_CONFIG.dailyOpenJobsReportKey);
+    const latestFile = unwrapLatestReportImportFile_(latestFileResponse);
+
+    if (!latestFile || !latestFile.fileId) {
+      throw new Error('No Daily Open Jobs report found.');
+    }
+
+    converted = convertXlsxToGoogleSheet_(latestFile.fileId, latestFile.fileName);
+    const reportData = readReportSheetRows_(converted.spreadsheetId);
+
+    // Build job_number → customer_name index from report
+    const reportByJobNumber = {};
+    reportData.rowObjects.forEach(function(row) {
+      const jobNumber = normalizeLookupKey_(getReportValue_(row, 'job_number'));
+      const customerName = getReportValue_(row, 'customer_name');
+      if (jobNumber && customerName) {
+        reportByJobNumber[jobNumber] = customerName;
+      }
+    });
+
+    // --- Read live Claims sheet ---
+    const spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+    const claimsSheet = spreadsheet.getSheetByName('Claims');
+
+    if (!claimsSheet) {
+      throw new Error('Claims sheet not found.');
+    }
+
+    const claimValues = claimsSheet.getDataRange().getValues();
+    const rawHeaders = claimValues.length ? claimValues[0].map(function(h) {
+      return String(h || '').trim();
+    }) : [];
+    const claimHeaderMap = buildHeaderIndexMap_(rawHeaders);
+
+    // Resolve column indexes for the fields we read/write.
+    const claimIdCol       = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Claim_ID', 'Claim ID']);
+    const jobNumberCol     = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Job_Number', 'Job Number']);
+    const customerNameCol  = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Customer_Name', 'Customer Name']);
+
+    if (claimIdCol === -1) {
+      throw new Error('Claim_ID column not found in Claims sheet.');
+    }
+
+    if (customerNameCol === -1) {
+      throw new Error('Customer_Name / Customer Name column not found in Claims sheet.');
+    }
+
+    const repairs = [];
+    const skipped = [];
+
+    for (var rowIndex = 1; rowIndex < claimValues.length; rowIndex++) {
+      const row = claimValues[rowIndex];
+      const claimId      = String(row[claimIdCol] || '').trim();
+      const jobNumber    = jobNumberCol !== -1 ? String(row[jobNumberCol] || '').trim() : '';
+      const customerName = String(row[customerNameCol] || '').trim();
+
+      // Filter: must match the Claim_ID prefix (targets the specific backfill batch)
+      if (!claimId || claimId.indexOf(claimIdPrefix) !== 0) {
+        continue;
+      }
+
+      // Filter: must have a Job_Number to look up from the report
+      if (!jobNumber) {
+        skipped.push({ rowNumber: rowIndex + 1, claimId: claimId, reason: 'Job_Number is blank' });
+        continue;
+      }
+
+      // Filter: only repair rows where Customer Name is blank
+      if (customerName) {
+        skipped.push({ rowNumber: rowIndex + 1, claimId: claimId, jobNumber: jobNumber, reason: 'Customer Name already populated: ' + customerName });
+        continue;
+      }
+
+      // Look up customer name from the report
+      const proposedName = reportByJobNumber[normalizeLookupKey_(jobNumber)] || '';
+
+      if (!proposedName) {
+        skipped.push({ rowNumber: rowIndex + 1, claimId: claimId, jobNumber: jobNumber, reason: 'Job number not found in latest Daily Open Jobs report' });
+        continue;
+      }
+
+      repairs.push({
+        rowNumber: rowIndex + 1,
+        claimId: claimId,
+        jobNumber: jobNumber,
+        proposedCustomerName: proposedName
+      });
+    }
+
+    // Apply repairs if not dry-run
+    if (!dryRun) {
+      repairs.forEach(function(repair) {
+        claimsSheet
+          .getRange(repair.rowNumber, customerNameCol + 1)
+          .setValue(repair.proposedCustomerName);
+      });
+    }
+
+    const result = {
+      status: dryRun ? 'Preview' : 'Success',
+      success: true,
+      message: dryRun
+        ? 'Repair preview completed. No rows were modified.'
+        : 'Customer Name repair completed. ' + repairs.length + ' rows updated.',
+      data: {
+        dryRun: dryRun,
+        claimIdPrefix: claimIdPrefix,
+        sourceFileName: latestFile.fileName,
+        reportJobsIndexed: Object.keys(reportByJobNumber).length,
+        totalClaimRowsScanned: claimValues.length - 1,
+        affectedRowCount: repairs.length,
+        skippedRowCount: skipped.length,
+        customerNameColumn: rawHeaders[customerNameCol] || '(column ' + customerNameCol + ')',
+        sampleRepairs: repairs.slice(0, 10),
+        sampleSkipped: skipped.slice(0, 5)
+      }
+    };
+
+    Logger.log(JSON.stringify(result, null, 2));
+    return result;
+  } finally {
+    cleanupConvertedReportSheet_(converted);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrapped Claim_Number Enrichment
+// ---------------------------------------------------------------------------
+// When the bootstrap path created Claims rows from the Daily Open Jobs report,
+// it used `Claim_Number = claimNumber || jobNumber`.  If no real claim number
+// was available at import time the Job_Number became the Claim_Number (fallback).
+//
+// A "fallback" Claim_Number is:
+//   - blank, OR
+//   - identical to Job_Number (normalized comparison)
+//
+// This pass re-reads the latest Daily Open Jobs report and, where the report
+// now carries a real claim number for a job that has a fallback Claim_Number,
+// updates only the Claim_Number cell.
+//
+// Safety rules (all enforced):
+//   1. Skip if Job_Number is blank (no join key).
+//   2. Skip if current Claim_Number is non-blank AND ≠ Job_Number (not a fallback).
+//   3. Skip if report has no row for this job number.
+//   4. Skip if the report claim_number is blank.
+//   5. Skip if the report claim_number equals the job_number (still a fallback).
+//   6. Skip if multiple report rows for the same job_number disagree on
+//      claim_number (conflict — logged individually).
+//   7. Never touch Claim_ID, Customer_Name, lifecycle, ownership, or health.
+// ---------------------------------------------------------------------------
+
+/**
+ * Dry-run preview: scans Claims sheet for fallback Claim_Numbers and proposes
+ * updates from the latest Daily Open Jobs report. No writes are performed.
+ */
+function previewEnrichBootstrappedClaimNumbersFromDailyOpenJobs() {
+  return runBootstrappedClaimNumberEnrichment_(true);
+}
+
+/**
+ * Apply: writes real Claim_Numbers from the latest Daily Open Jobs report to
+ * Claims rows where Claim_Number is a fallback (blank or equals Job_Number).
+ * Only the Claim_Number cell is touched.
+ *
+ * Run previewEnrichBootstrappedClaimNumbersFromDailyOpenJobs() first to
+ * confirm proposed updates, then run this to apply.
+ *
+ * After apply, re-run previewBackfillExternalLinkClaimIds() and
+ * backfillExternalLinkClaimIds() because updated Claim_Numbers may now
+ * match External_Links rows that were previously unmatched.
+ */
+function enrichBootstrappedClaimNumbersFromDailyOpenJobs() {
+  return runBootstrappedClaimNumberEnrichment_(false);
+}
+
+/**
+ * @private
+ * Core enrichment logic.
+ * @param {boolean} dryRun
+ */
+function runBootstrappedClaimNumberEnrichment_(dryRun) {
+  var converted = null;
+
+  try {
+    // ── Load Daily Open Jobs report ─────────────────────────────────────────
+    var latestFileResponse = getLatestReportImportFile(REPORT_IMPORT_CONFIG.dailyOpenJobsReportKey);
+    var latestFile = unwrapLatestReportImportFile_(latestFileResponse);
+
+    if (!latestFile || !latestFile.fileId) {
+      throw new Error('No Daily Open Jobs report found.');
+    }
+
+    converted = convertXlsxToGoogleSheet_(latestFile.fileId, latestFile.fileName);
+    var reportData = readReportSheetRows_(converted.spreadsheetId);
+
+    // ── Build job_number → claim_number index from report ───────────────────
+    // Track conflicts: if two rows have the same job_number but different
+    // claim_numbers, we cannot safely pick one — skip the job.
+    var reportByJobNumber = {};    // normalizedJobNumber → raw claim_number string
+    var conflictsByJobNumber = {}; // normalizedJobNumber → { first, second }
+
+    reportData.rowObjects.forEach(function(row) {
+      var jobNumber   = normalizeLookupKey_(getReportValue_(row, 'job_number'));
+      var claimNumber = getReportValue_(row, 'claim_number');  // raw, may be blank
+
+      if (!jobNumber) {
+        return;
+      }
+
+      // Already flagged as conflicted — ignore additional rows.
+      if (conflictsByJobNumber[jobNumber]) {
+        return;
+      }
+
+      if (reportByJobNumber.hasOwnProperty(jobNumber)) {
+        // Second row for this job_number: conflict if claim_numbers differ.
+        var normalizedNew      = normalizeLookupKey_(claimNumber);
+        var normalizedExisting = normalizeLookupKey_(reportByJobNumber[jobNumber]);
+
+        if (normalizedNew !== normalizedExisting) {
+          conflictsByJobNumber[jobNumber] = {
+            first:  reportByJobNumber[jobNumber],
+            second: claimNumber
+          };
+          delete reportByJobNumber[jobNumber];
+        }
+        // If they match, no conflict — keep existing.
+      } else {
+        reportByJobNumber[jobNumber] = claimNumber;
+      }
+    });
+
+    // ── Read Claims sheet ───────────────────────────────────────────────────
+    var spreadsheet = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+    var claimsSheet = spreadsheet.getSheetByName('Claims');
+
+    if (!claimsSheet) {
+      throw new Error('Claims sheet not found.');
+    }
+
+    var claimValues = claimsSheet.getDataRange().getValues();
+
+    if (claimValues.length < 2) {
+      return { success: false, message: 'Claims sheet has no data rows.' };
+    }
+
+    var rawHeaders = claimValues[0].map(function(h) { return String(h || '').trim(); });
+    var claimHeaderMap = buildHeaderIndexMap_(rawHeaders);
+
+    var jobNumberCol   = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Job_Number',   'Job Number']);
+    var claimNumberCol = getHeaderIndexByPossibleNames_(claimHeaderMap, ['Claim_Number', 'Claim Number']);
+    var customerNameCol = getHeaderIndexByPossibleNames_(claimHeaderMap, [
+      'Customer_Name', 'Customer Name', 'Display_Name', 'Display Name'
+    ]);
+
+    if (claimNumberCol === -1) {
+      throw new Error('Claim_Number / Claim Number column not found in Claims sheet.');
+    }
+
+    if (jobNumberCol === -1) {
+      throw new Error('Job_Number / Job Number column not found in Claims sheet.');
+    }
+
+    // ── Scan Claims rows ────────────────────────────────────────────────────
+    var claimsChecked                         = 0;
+    var fallbackClaimNumbersFound             = 0;
+    var eligibleUpdates                       = 0;
+    var conflictCount                         = 0;
+    var skippedNoJobNumber                    = 0;
+    var skippedNotFallback                    = 0;
+    var skippedNoReportRow                    = 0;
+    var skippedBlankReportClaimNumber         = 0;
+    var skippedReportClaimNumberEqualsJobNum  = 0;
+    var proposals                             = [];
+
+    for (var rowIndex = 1; rowIndex < claimValues.length; rowIndex++) {
+      var row = claimValues[rowIndex];
+      claimsChecked++;
+
+      var jobNumber          = jobNumberCol     !== -1 ? String(row[jobNumberCol]    || '').trim() : '';
+      var currentClaimNumber = claimNumberCol   !== -1 ? String(row[claimNumberCol]  || '').trim() : '';
+      var customerName       = customerNameCol  !== -1 ? String(row[customerNameCol] || '').trim() : '';
+
+      // Rule 1: must have a Job_Number to join against the report.
+      if (!jobNumber) {
+        skippedNoJobNumber++;
+        continue;
+      }
+
+      // Rule 2: only update fallback claim numbers.
+      // Fallback = blank OR normalized value equals normalized job number.
+      var normalizedCurrentClaim = normalizeLookupKey_(currentClaimNumber);
+      var normalizedJobNumber    = normalizeLookupKey_(jobNumber);
+      var isFallback = !currentClaimNumber || (normalizedCurrentClaim === normalizedJobNumber);
+
+      if (!isFallback) {
+        skippedNotFallback++;
+        continue;
+      }
+
+      fallbackClaimNumbersFound++;
+
+      // Rule 6: conflict check.
+      if (conflictsByJobNumber[normalizedJobNumber]) {
+        conflictCount++;
+        Logger.log(
+          '[ClaimNumberEnrich] CONFLICT — skipping job=' + jobNumber +
+          ' row=' + (rowIndex + 1) +
+          ' conflict=' + JSON.stringify(conflictsByJobNumber[normalizedJobNumber])
+        );
+        continue;
+      }
+
+      // Rule 3: report must have a row for this job number.
+      if (!reportByJobNumber.hasOwnProperty(normalizedJobNumber)) {
+        skippedNoReportRow++;
+        continue;
+      }
+
+      var reportClaimNumber = reportByJobNumber[normalizedJobNumber];
+
+      // Rule 4: report claim number must not be blank.
+      if (!reportClaimNumber) {
+        skippedBlankReportClaimNumber++;
+        continue;
+      }
+
+      // Rule 5: report claim number must not equal job number (still a fallback).
+      if (normalizeLookupKey_(reportClaimNumber) === normalizedJobNumber) {
+        skippedReportClaimNumberEqualsJobNum++;
+        continue;
+      }
+
+      // Eligible.
+      eligibleUpdates++;
+      var sheetRowNumber = rowIndex + 1;
+
+      proposals.push({
+        sheetRow:              sheetRowNumber,
+        jobNumber:             jobNumber,
+        currentClaimNumber:    currentClaimNumber || '(blank — was using job number as fallback)',
+        proposedClaimNumber:   reportClaimNumber,
+        customerName:          customerName
+      });
+
+      if (!dryRun) {
+        claimsSheet.getRange(sheetRowNumber, claimNumberCol + 1).setValue(reportClaimNumber);
+      }
+    }
+
+    if (!dryRun && eligibleUpdates > 0) {
+      SpreadsheetApp.flush();
+    }
+
+    // ── Log summary ─────────────────────────────────────────────────────────
+    Logger.log(
+      '[ClaimNumberEnrich] ' + (dryRun ? 'PREVIEW' : 'RUN') +
+      ': claimsChecked=' + claimsChecked +
+      ' fallbackFound=' + fallbackClaimNumbersFound +
+      ' eligible=' + eligibleUpdates +
+      ' written=' + (dryRun ? '(dryRun)' : eligibleUpdates) +
+      ' conflicts=' + conflictCount +
+      ' skippedNoJob=' + skippedNoJobNumber +
+      ' skippedNotFallback=' + skippedNotFallback +
+      ' skippedNoReportRow=' + skippedNoReportRow +
+      ' skippedBlankReportClaim=' + skippedBlankReportClaimNumber +
+      ' skippedReportClaimEqualsJob=' + skippedReportClaimNumberEqualsJobNum
+    );
+
+    if (dryRun && proposals.length > 0) {
+      Logger.log(
+        '[ClaimNumberEnrich] PREVIEW — first ' + Math.min(10, proposals.length) + ' proposals:'
+      );
+      proposals.slice(0, 10).forEach(function(p) {
+        Logger.log(
+          '  row=' + p.sheetRow +
+          ' job=' + p.jobNumber +
+          ' currentClaim=' + p.currentClaimNumber +
+          ' proposedClaim=' + p.proposedClaimNumber +
+          ' customer=' + p.customerName
+        );
+      });
+    }
+
+    return {
+      success:                             true,
+      dryRun:                              dryRun,
+      generatedAt:                         new Date().toISOString(),
+      sourceFileName:                      latestFile.fileName,
+      claimsChecked:                       claimsChecked,
+      fallbackClaimNumbersFound:           fallbackClaimNumbersFound,
+      eligibleUpdates:                     eligibleUpdates,
+      rowsUpdated:                         dryRun ? 0 : eligibleUpdates,
+      conflicts:                           conflictCount,
+      skippedNoJobNumber:                  skippedNoJobNumber,
+      skippedNotFallback:                  skippedNotFallback,
+      skippedNoReportRow:                  skippedNoReportRow,
+      skippedBlankReportClaimNumber:       skippedBlankReportClaimNumber,
+      skippedReportClaimNumberEqualsJobNum: skippedReportClaimNumberEqualsJobNum,
+      sampleProposals:                     proposals.slice(0, 10)
+    };
+  } finally {
+    cleanupConvertedReportSheet_(converted);
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * One-time cleanup for Phase 8C.
