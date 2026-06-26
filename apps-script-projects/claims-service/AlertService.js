@@ -603,8 +603,9 @@ function reconcileAllClaimAlerts(options) {
     activeClaimsEvaluated: activeClaims.length,
     alertsProposed: 0,
     alertsSuppressed: 0,
-    newAlerts: 0,          // alerts that would be (or were) written — reliable in both dryRun and live
-    alertsWritten: 0,      // only non-zero in live runs
+    newAlerts: 0,                     // alerts that would be (or were) written — reliable in both dryRun and live
+    alertsWritten: 0,                 // only non-zero in live runs
+    staleStructuredAlertsResolved: 0, // stale alerts auto-resolved because their conditions are now satisfied
     skippedExistingAlerts: 0,
     skippedClaims: 0,
     proposedAlertTypes: {}, // {Alert_Type: count} across all claims
@@ -633,6 +634,7 @@ function reconcileAllClaimAlerts(options) {
       results.alertsSuppressed += Number(data.alertsSuppressed || 0);
       results.newAlerts += Number(data.newAlerts || 0);
       results.alertsWritten += Number(data.alertsWritten || 0);
+      results.staleStructuredAlertsResolved += Number(data.staleStructuredAlertsResolved || 0);
       results.skippedExistingAlerts += Number(data.skippedExistingAlerts || 0);
 
       // Accumulate per-type counts from this claim's proposed alerts

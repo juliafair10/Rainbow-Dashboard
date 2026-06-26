@@ -36,6 +36,11 @@ function runRainbowMorningAutomation() {
   ));
 
   steps.push(runMorningAutomationStep_(
+    'synchronizeClaimsFoundation',
+    runMorningSynchronizeClaimsFoundation_
+  ));
+
+  steps.push(runMorningAutomationStep_(
     'refreshHomepageData',
     runMorningHomepageRefresh_
   ));
@@ -80,6 +85,11 @@ function runMorningHistoricalNotesImport_() {
 
 function runMorningTimelineRebuild_() {
   return bulkRebuildTimelineDerivedFieldsForActiveClaims();
+}
+
+function runMorningSynchronizeClaimsFoundation_() {
+  var result = synchronizeClaimsFoundation({ dryRun: false, quiet: true });
+  return successResponse(result, 'Claims Foundation synchronization completed.');
 }
 
 function runMorningHomepageRefresh_() {
