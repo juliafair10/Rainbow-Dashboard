@@ -43,6 +43,7 @@
     const conditionsVisibility = getHomepageConditionsVisibilityForRender_(homepageData);
 
     renderKpis(homepageData.kpis || {});
+    renderAwarenessCards(homepageData.claimsOperationalAwareness);
     renderTodayPriorities(homepageData.todayPriorities || []);
     renderBecomingStale(homepageData.becomingStale || []);
     renderOperationalAlerts(homepageData.operationalAlerts || []);
@@ -924,6 +925,101 @@
     if (statusStrip) {
       statusStrip.textContent = 'Navigation target: ' + (item && item.targetRoute ? item.targetRoute : '?view=claimShell');
     }
+  }
+
+  function renderAwarenessCards(awareness) {
+    var section = document.getElementById('awareness-cards-section');
+    var grid = document.getElementById('awareness-cards-grid');
+
+    if (!section || !grid) {
+      return;
+    }
+
+    if (!awareness || !Array.isArray(awareness.priorityCards) || awareness.priorityCards.length === 0) {
+      return;
+    }
+
+    var cards = awareness.priorityCards;
+
+    grid.innerHTML = cards.map(function(card, index) {
+      var severityLabel = card.severity || 'info';
+      var cardClass = 'rainbow-awareness-card rainbow-awareness-card--severity-' + escapeHtml(severityLabel);
+      var isClickable = !!(card.route);
+
+      if (isClickable) {
+        cardClass += ' rainbow-awareness-card--clickable';
+      }
+
+      var openTag = isClickable
+        ? '<a class="' + cardClass + '" data-awareness-card-index="' + index + '" href="javascript:void(0)">'
+        : '<div class="' + cardClass + '" data-awareness-card-index="' + index + '">';
+      var closeTag = isClickable ? '</a>' : '</div>';
+
+      return [
+        openTag,
+        '<div class="rainbow-awareness-card-count">' + escapeHtml(String(card.count || 0)) + '</div>',
+        '<div class="rainbow-awareness-card-label">' + escapeHtml(card.label || '') + '</div>',
+        card.description ? '<div class="rainbow-awareness-card-desc">' + escapeHtml(card.description) + '</div>' : '',
+        '<span class="rainbow-awareness-card-severity">' + escapeHtml(severityLabel) + '</span>',
+        closeTag
+      ].join('');
+    }).join('');
+
+    attachAwarenessCardNavigation_(grid, cards);
+
+    section.style.display = '';
+  }
+
+  function attachAwarenessCardNavigation_(container, cards) {
+    if (!container || !Array.isArray(cards)) {
+      return;
+    }
+
+    var elements = container.querySelectorAll('[data-awareness-card-index]');
+
+    elements.forEach(function(element) {
+      var index = Number(element.getAttribute('data-awareness-card-index'));
+      var card = cards[index];
+
+      if (!card || !card.route) {
+        return;
+      }
+
+      element.setAttribute('role', 'button');
+      element.setAttribute('tabindex', '0');
+      element.setAttribute('title', 'Open Claims Workspace — ' + (card.label || ''));
+
+      element.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openAwarenessCard_(card);
+        return false;
+      });
+
+      element.addEventListener('keydown', function(event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openAwarenessCard_(card);
+        }
+      });
+    });
+  }
+
+  function openAwarenessCard_(card) {
+    if (!card) {
+      return;
+    }
+
+    var route = card.route || '?view=claimShell';
+
+    console.log('Rainbow awareness card navigation:', {
+      id: card.id || '',
+      label: card.label || '',
+      lensId: card.lensId || '',
+      route: route
+    });
+
+    navigateToRainbowRoute_(route);
   }
 
   function escapeHtml(value) {

@@ -109,6 +109,10 @@ function getClaimDetail(claimId) {
     ? buildOperationalIntelligence_(detail.claimFoundation, detail)
     : null;
 
+  detail.workspaceContext = (typeof buildWorkspaceContext_ === 'function')
+    ? buildWorkspaceContext_(detail.claimFoundation, detail.operationalIntelligence, detail)
+    : null;
+
   return detail;
 }
 
@@ -404,6 +408,7 @@ function buildFullClaimCurrentStateModel_(detail, headerModel, claimFoundation) 
   };
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.alerts.count
 function getFullClaimAlertCount_(detail) {
   detail = detail || {};
 
@@ -432,6 +437,7 @@ function getFullClaimAlertCount_(detail) {
   return Math.max(operationalAlerts.length, activeAlerts.length);
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.ownership
 function normalizeClaimOwner_(detail) {
   detail = detail || {};
 
@@ -461,6 +467,7 @@ function normalizeClaimOwner_(detail) {
   };
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.lifecycle.state
 function normalizeClaimLifecycle_(detail) {
   detail = detail || {};
 
@@ -470,6 +477,7 @@ function normalizeClaimLifecycle_(detail) {
   ]) || 'Not recorded';
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.health.level
 function normalizeClaimHealth_(detail) {
   detail = detail || {};
 
@@ -479,6 +487,7 @@ function normalizeClaimHealth_(detail) {
   ]) || 'Not rated';
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.conditions.primaryCondition
 function getPrimaryClaimCondition_(detail) {
   var conditions = getFullClaimActiveConditions_(detail);
   var priority = {
@@ -504,10 +513,12 @@ function getPrimaryClaimCondition_(detail) {
   return bestLabel || 'No active condition';
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.requirements.count
 function getOpenRequirementCount_(detail) {
   return getFullClaimOpenRequirements_(detail).length;
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.conditions.active
 function getFullClaimActiveConditions_(detail) {
   detail = detail || {};
 
@@ -521,6 +532,7 @@ function getFullClaimActiveConditions_(detail) {
   );
 }
 
+// LEGACY: retained as fallback — primary source is now claimFoundation.requirements.open
 function getFullClaimOpenRequirements_(detail) {
   detail = detail || {};
 
@@ -1295,6 +1307,173 @@ function testClaimDetail() {
   Logger.log(JSON.stringify(detail, null, 2));
 
   return detail;
+}
+
+/**
+ * buildWorkspaceContext_
+ *
+ * Builds a concise, self-contained workspace context object from already-computed
+ * claimFoundation and operationalIntelligence objects. No additional Sheets reads.
+ *
+ * @param {object} claimFoundation       - canonical foundation from buildClaimFoundation_()
+ * @param {object} operationalIntelligence - OI object from buildOperationalIntelligence_()
+ * @param {object} detail                - the full detail object (for safe fallbacks only)
+ * @returns {object} workspaceContext
+ */
+function buildWorkspaceContext_(claimFoundation, operationalIntelligence, detail) {
+  claimFoundation = claimFoundation || {};
+  operationalIntelligence = operationalIntelligence || {};
+  detail = detail || {};
+
+  var oiHealth = operationalIntelligence.health || {};
+  var oiLifecycle = operationalIntelligence.lifecycle || {};
+  var oiOwnership = operationalIntelligence.ownership || {};
+  var oiConditions = operationalIntelligence.conditions || {};
+  var oiAlerts = operationalIntelligence.alerts || {};
+  var oiRequirements = operationalIntelligence.requirements || {};
+  var oiNextAction = operationalIntelligence.nextAction || {};
+  var oiSummary = operationalIntelligence.operationalSummary || {};
+  var cfSummary = claimFoundation.summary || {};
+
+  // --- claim identity ---
+  var claimId = getFullClaimFirstValue_([claimFoundation.claimId, detail.claimId]) || '';
+  var claimNumber = getFullClaimFirstValue_([claimFoundation.claimNumber, detail.claimNumber]) || '';
+  var jobNumber = getFullClaimFirstValue_([claimFoundation.jobNumber, detail.jobNumber]) || '';
+  var displayName = getFullClaimFirstValue_([claimFoundation.displayName, detail.displayName]) || '';
+  var customerName = getFullClaimFirstValue_([claimFoundation.customerName, detail.customerName]) || '';
+  var propertyAddress = getFullClaimFirstValue_([claimFoundation.propertyAddress, detail.propertyAddress]) || '';
+
+  // --- owner ---
+  var ownerArea = getFullClaimFirstValue_([oiOwnership.area, claimFoundation.ownership && claimFoundation.ownership.area]) || 'Not recorded';
+  var primaryOwner = getFullClaimFirstValue_([oiOwnership.primaryOwner, claimFoundation.ownership && claimFoundation.ownership.primaryOwner]) || 'Not recorded';
+  var ownerLabel = getFullClaimFirstValue_([oiOwnership.ownerLabel, claimFoundation.ownership && claimFoundation.ownership.ownerLabel]) || 'Unassigned';
+
+  // --- health ---
+  var healthLevel = getFullClaimFirstValue_([oiHealth.level, claimFoundation.health && claimFoundation.health.level]) || 'Not rated';
+  var healthReason = getFullClaimFirstValue_([oiHealth.reason, claimFoundation.health && claimFoundation.health.reason]) || '';
+  var healthPriority = (typeof oiHealth.priority === 'number') ? oiHealth.priority : ((claimFoundation.health && claimFoundation.health.priority) || 5);
+  var daysSinceMeaningfulActivity = (typeof oiHealth.daysSinceMeaningfulActivity === 'number') ? oiHealth.daysSinceMeaningfulActivity : 0;
+
+  // --- lifecycle ---
+  var lifecycleState = getFullClaimFirstValue_([oiLifecycle.state, claimFoundation.lifecycle && claimFoundation.lifecycle.state]) || 'Not recorded';
+  var lifecycleReason = getFullClaimFirstValue_([oiLifecycle.reason, claimFoundation.lifecycle && claimFoundation.lifecycle.reason]) || '';
+
+  // --- waitingOn, operationalPriority, staleRisk ---
+  var waitingOn = getFullClaimFirstValue_([operationalIntelligence.waitingOn]) || 'Unknown';
+  var operationalPriority = getFullClaimFirstValue_([operationalIntelligence.operationalPriority]) || 'Normal';
+  var staleRisk = operationalIntelligence.staleRisk === true;
+
+  // --- nextAction ---
+  var nextActionTitle = getFullClaimFirstValue_([oiNextAction.title, claimFoundation.nextAction && claimFoundation.nextAction.label]) || 'No recommended action';
+  var nextActionReason = getFullClaimFirstValue_([oiNextAction.reason, claimFoundation.nextAction && claimFoundation.nextAction.reason]) || '';
+  var nextActionOwner = getFullClaimFirstValue_([oiNextAction.owner, primaryOwner]) || '';
+  var nextActionGeneratedBy = getFullClaimFirstValue_([oiNextAction.generatedBy]) || '';
+
+  // --- attentionReason ---
+  var attentionReason = getFullClaimFirstValue_([
+    claimFoundation.nextAction && claimFoundation.nextAction.reason,
+    detail.claimHeader && detail.claimHeader.attentionReason,
+    detail.operationalContext && detail.operationalContext.attentionReason
+  ]) || '';
+
+  // --- alerts ---
+  var alertCount = (typeof oiAlerts.count === 'number') ? oiAlerts.count : ((claimFoundation.alerts && claimFoundation.alerts.count) || 0);
+  var highestSeverity = getFullClaimFirstValue_([oiAlerts.highestSeverity, claimFoundation.alerts && claimFoundation.alerts.highestSeverity]) || '';
+  var activeAlerts = Array.isArray(oiAlerts.active) ? oiAlerts.active : (Array.isArray(claimFoundation.alerts && claimFoundation.alerts.active) ? claimFoundation.alerts.active : []);
+
+  // --- conditions ---
+  var activeConditions = Array.isArray(oiConditions.active) ? oiConditions.active : (Array.isArray(claimFoundation.conditions && claimFoundation.conditions.active) ? claimFoundation.conditions.active : []);
+  var primaryCondition = getFullClaimFirstValue_([oiConditions.primaryCondition, claimFoundation.conditions && claimFoundation.conditions.primaryCondition]) || 'No active condition';
+  var conditionsWaitingOn = getFullClaimFirstValue_([oiConditions.waitingOn, claimFoundation.conditions && claimFoundation.conditions.waitingOn]) || 'No active condition';
+
+  // --- requirements ---
+  var openRequirements = Array.isArray(oiRequirements.open) ? oiRequirements.open : (Array.isArray(claimFoundation.requirements && claimFoundation.requirements.open) ? claimFoundation.requirements.open : []);
+  var requirementCount = (typeof oiRequirements.count === 'number') ? oiRequirements.count : openRequirements.length;
+
+  // --- lastMeaningfulActivity ---
+  var lastMeaningfulActivity = getFullClaimFirstValue_([
+    operationalIntelligence.lastMeaningfulActivity,
+    oiHealth.lastMeaningfulActivity,
+    claimFoundation.health && claimFoundation.health.lastMeaningfulActivity
+  ]) || '';
+
+  // --- summary ---
+  var operationalSummaryText = getFullClaimFirstValue_([oiSummary.text, cfSummary.operationalSummary]) || '';
+  var supportingText = getFullClaimFirstValue_([oiSummary.supportingText, cfSummary.supportingText]) || '';
+  var summaryFacts = Array.isArray(oiSummary.facts) ? oiSummary.facts : (Array.isArray(cfSummary.facts) ? cfSummary.facts : []);
+
+  // --- timelineHighlights — first 5 events, no re-fetch ---
+  var timelineEvents = [];
+
+  if (claimFoundation.timeline && Array.isArray(claimFoundation.timeline.events)) {
+    timelineEvents = claimFoundation.timeline.events;
+  } else if (operationalIntelligence.timeline && Array.isArray(operationalIntelligence.timeline.events)) {
+    timelineEvents = operationalIntelligence.timeline.events;
+  }
+
+  var timelineHighlights = timelineEvents.slice(0, 5);
+
+  // --- financialTracks ---
+  var financialTracks = Array.isArray(claimFoundation.financialTracks) ? claimFoundation.financialTracks : [];
+
+  return {
+    claim: {
+      claimId: claimId,
+      claimNumber: claimNumber,
+      jobNumber: jobNumber,
+      displayName: displayName,
+      customerName: customerName,
+      propertyAddress: propertyAddress
+    },
+    owner: {
+      area: ownerArea,
+      primaryOwner: primaryOwner,
+      ownerLabel: ownerLabel
+    },
+    health: {
+      level: healthLevel,
+      reason: healthReason,
+      priority: healthPriority,
+      daysSinceMeaningfulActivity: daysSinceMeaningfulActivity
+    },
+    lifecycle: {
+      state: lifecycleState,
+      reason: lifecycleReason
+    },
+    waitingOn: waitingOn,
+    operationalPriority: operationalPriority,
+    staleRisk: staleRisk,
+    nextAction: {
+      title: nextActionTitle,
+      reason: nextActionReason,
+      owner: nextActionOwner,
+      generatedBy: nextActionGeneratedBy
+    },
+    attentionReason: attentionReason,
+    alerts: {
+      count: alertCount,
+      highestSeverity: highestSeverity,
+      active: activeAlerts
+    },
+    conditions: {
+      active: activeConditions,
+      primaryCondition: primaryCondition,
+      waitingOn: conditionsWaitingOn
+    },
+    requirements: {
+      open: openRequirements,
+      count: requirementCount
+    },
+    lastMeaningfulActivity: lastMeaningfulActivity,
+    summary: {
+      operationalSummary: operationalSummaryText,
+      supportingText: supportingText,
+      facts: summaryFacts
+    },
+    timelineHighlights: timelineHighlights,
+    financialTracks: financialTracks,
+    generatedAt: new Date().toISOString()
+  };
 }
 
 var ClaimDetailService = {
