@@ -60,7 +60,7 @@ function getHomepageClaimSummaryData() {
     openComplianceActionCount: openComplianceActions.length,
     claimSummaryCount: claimSummaries.length,
     activeClaimSummaryCount: activeClaimSummaries.length,
-    claimSummaryMetrics: getHomepageClaimSummaryMetrics_(activeClaimSummaries),
+    claimSummaryMetrics: getHomepageClaimSummaryMetrics_(activeClaimSummaries, activeClaims, timeline),
     kpis: {
       activeClaims: activeClaims.length,
       healthCounts: countHomepageHealthLevels_(activeClaims),
@@ -77,7 +77,7 @@ function getHomepageClaimSummaryData() {
         'Waiting on Payment'
       ]),
       monitoringActive: countHomepageClaimsWithAnyCondition_(activeConditions, ['Monitoring Active']),
-      recentActivityClaims: countHomepageSummariesWithRecentActivity_(activeClaimSummaries),
+      recentActivityClaims: countHomepageSummariesWithRecentActivity_(activeClaimSummaries, activeClaims, timeline),
       openComplianceActions: openComplianceActions.length,
       timelineEvents: sumHomepageTimelineEvents_(activeClaimSummaries)
     },
@@ -94,15 +94,57 @@ function getHomepageClaimSummaryData() {
   };
 }
 
-function getHomepageClaimSummaryMetrics_(summaries) {
+function getHomepageClaimSummaryMetrics_(summaries, activeClaims, timeline) {
   return {
-    recentActivityClaims: countHomepageSummariesWithRecentActivity_(summaries),
+    recentActivityClaims: countHomepageSummariesWithRecentActivity_(summaries, activeClaims, timeline),
     timelineEvents: sumHomepageTimelineEvents_(summaries),
     openComplianceActions: sumHomepageOpenComplianceActions_(summaries)
   };
 }
 
-function countHomepageSummariesWithRecentActivity_(summaries) {
+function countHomepageSummariesWithRecentActivity_(summaries, activeClaims, timeline) {
+  // Build set of Claim_IDs that have at least one Timeline_Event row.
+  // This catches bootstrapped claims that have historical notes / imported
+  // activity but no Claim_Summaries row yet.
+  var claimIdsWithTimeline = {};
+  (timeline || []).forEach(function(event) {
+    if (event.Claim_ID) {
+      claimIdsWithTimeline[event.Claim_ID] = true;
+    }
+  });
+
+  // Build lookup from whatever Claim_Summaries rows do exist.
+  var summaryMap = {};
+  (summaries || []).forEach(function(summary) {
+    if (summary.Claim_ID) {
+      summaryMap[summary.Claim_ID] = summary;
+    }
+    if (summary.Job_Number) {
+      summaryMap[summary.Job_Number] = summary;
+      summaryMap['CLM-' + summary.Job_Number] = summary;
+    }
+  });
+
+  // When activeClaims is available, count every active claim that has ANY
+  // activity signal — Timeline_Event, Last_Meaningful_Activity_Date on the
+  // claim row, or a populated Claim_Summaries entry.  This prevents the count
+  // from being artificially capped at the number of Claim_Summaries rows.
+  if (activeClaims && activeClaims.length) {
+    return activeClaims.filter(function(claim) {
+      if (claim.Claim_ID && claimIdsWithTimeline[claim.Claim_ID]) {
+        return true;
+      }
+      if (claim.Last_Meaningful_Activity_Date) {
+        return true;
+      }
+      var summary = summaryMap[claim.Claim_ID] ||
+                    summaryMap[claim.Job_Number] ||
+                    {};
+      return Boolean(summary.Last_Activity_Date || summary.Last_Activity_Summary);
+    }).length;
+  }
+
+  // Fallback: original summary-only count (no activeClaims passed).
   return (summaries || []).filter(function(summary) {
     return Boolean(summary.Last_Activity_Date || summary.Last_Activity_Summary);
   }).length;
@@ -2495,6 +2537,159 @@ function testHomepageOperationalAlertClaimIds() {
   });
 
   Logger.log('HOMEPAGE_OPERATIONAL_ALERT_CLAIMS ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic: cross-check all homepage count sources
+// ---------------------------------------------------------------------------
+
+/**
+ * testHomepageClaimsCountConsistency
+ *
+ * Logs a side-by-side comparison of every data source that feeds the four
+ * headline homepage counts.  Run this after any claim backfill to confirm
+ * all metrics are internally consistent.
+ *
+ * Logged fields:
+ *   activeClaimsCount                — direct Claims sheet count (source of truth)
+ *   recentActivityClaimCount         — active claims with any activity signal
+ *                                      (Timeline_Events OR Last_Meaningful_Activity_Date
+ *                                       OR Claim_Summaries entry)
+ *   timelineEventDistinctClaimIdCount — distinct active Claim_IDs in Timeline_Events
+ *   activeClaimsWithNoSummaryRow     — claims missing from Claim_Summaries (stale cache)
+ *   activeClaimsMissingXaSymbility   — open "Missing XA/Symbility" or "Missing
+ *                                      Operational Links Record" alerts in Claim_Alerts
+ *   openAlertCountByType             — all open alert types with counts
+ *   sampleBootstrappedClaims         — first ≤10 claims with no Claim_Summaries row,
+ *                                      showing whether each is included in recent-activity
+ *                                      count and whether it has a missing-link alert
+ */
+function testHomepageClaimsCountConsistency() {
+  var ss = SpreadsheetApp.openById(HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID);
+
+  var claims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims).map(normalizeHomepageClaim_);
+  var timeline = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.timeline).map(normalizeHomepageTimelineEvent_);
+  var claimAlerts = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.alerts).map(normalizeHomepageAlert_);
+  var claimSummaries = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claimSummaries).map(normalizeHomepageClaimSummary_);
+
+  // Read External_Links directly for missing-links detection
+  var elSheet = ss.getSheetByName('External_Links');
+  var elClaimIds = {};
+  if (elSheet) {
+    var elValues = elSheet.getDataRange().getValues();
+    if (elValues.length >= 2) {
+      var elHeaders = elValues[0].map(function(h) { return String(h || '').trim(); });
+      var elClaimIdIdx = elHeaders.indexOf('Claim_ID') !== -1 ? elHeaders.indexOf('Claim_ID') : elHeaders.indexOf('Claim ID');
+      var elJobNumIdx  = elHeaders.indexOf('Job_Number') !== -1 ? elHeaders.indexOf('Job_Number') : elHeaders.indexOf('Job Number');
+      elValues.slice(1).forEach(function(row) {
+        var cid = elClaimIdIdx !== -1 ? String(row[elClaimIdIdx] || '').trim() : '';
+        var jn  = elJobNumIdx  !== -1 ? String(row[elJobNumIdx]  || '').trim() : '';
+        if (cid) elClaimIds[cid] = true;
+        if (jn)  { elClaimIds[jn] = true; elClaimIds['CLM-' + jn] = true; }
+      });
+    }
+  }
+
+  var activeClaims = claims.filter(isHomepageActiveClaim_);
+
+  var activeClaimIds = activeClaims.reduce(function(map, claim) {
+    addHomepageClaimKeysToMap_(map, claim);
+    return map;
+  }, {});
+
+  // Distinct active-claim Claim_IDs that appear in Timeline_Events
+  var timelineClaimIds = {};
+  timeline.forEach(function(event) {
+    if (event.Claim_ID && activeClaimIds[event.Claim_ID]) {
+      timelineClaimIds[event.Claim_ID] = true;
+    }
+  });
+
+  // Open alerts scoped to active claims
+  var openAlertsByType = {};
+  var alertsByClaimId = {};
+  claimAlerts.forEach(function(alert) {
+    if (!homepageRecordMatchesActiveClaim_(alert, activeClaimIds)) { return; }
+    if (!isHomepageOpenStatus_(alert.Alert_Status || alert.Status || alert.Action_Status)) { return; }
+    var alertType = String(alert.Alert_Type || 'Unknown');
+    openAlertsByType[alertType] = (openAlertsByType[alertType] || 0) + 1;
+    if (alert.Claim_ID) {
+      if (!alertsByClaimId[alert.Claim_ID]) { alertsByClaimId[alert.Claim_ID] = []; }
+      alertsByClaimId[alert.Claim_ID].push(alertType);
+    }
+  });
+
+  // Active claims with a missing-link alert (XA/Symbility or no EL record)
+  var missingLinkAlertTypes = /xa|xact|symbility|operational links/i;
+  var claimsWithMissingLinkAlert = Object.keys(alertsByClaimId).filter(function(claimId) {
+    return alertsByClaimId[claimId].some(function(type) {
+      return missingLinkAlertTypes.test(type);
+    });
+  });
+
+  // Claim_Summaries coverage
+  var summaryClaimIds = {};
+  claimSummaries.forEach(function(summary) {
+    if (summary.Claim_ID && activeClaimIds[summary.Claim_ID]) {
+      summaryClaimIds[summary.Claim_ID] = true;
+    }
+    if (summary.Job_Number) {
+      var synth = 'CLM-' + summary.Job_Number;
+      if (activeClaimIds[synth]) { summaryClaimIds[synth] = true; }
+      if (activeClaimIds[summary.Job_Number]) { summaryClaimIds[summary.Job_Number] = true; }
+    }
+  });
+
+  var activeClaimsWithNoSummary = activeClaims.filter(function(claim) {
+    return !summaryClaimIds[claim.Claim_ID];
+  });
+
+  // Active claims with no External_Links row
+  var activeClaimsWithNoEl = activeClaims.filter(function(claim) {
+    return !elClaimIds[claim.Claim_ID] &&
+           !elClaimIds[claim.Job_Number] &&
+           !(claim.Job_Number && elClaimIds['CLM-' + claim.Job_Number]);
+  });
+
+  // recentActivityClaims as the fixed logic would compute it
+  var activeClaimSummaries = claimSummaries.filter(function(summary) {
+    return homepageRecordMatchesActiveClaim_(summary, activeClaimIds);
+  });
+  var recentActivityCount = countHomepageSummariesWithRecentActivity_(activeClaimSummaries, activeClaims, timeline);
+
+  // Sample bootstrapped claims (no Claim_Summaries row)
+  var sampleBootstrapped = activeClaimsWithNoSummary.slice(0, 10).map(function(claim) {
+    var hasTimeline  = !!(claim.Claim_ID && timelineClaimIds[claim.Claim_ID]);
+    var hasActivity  = hasTimeline || !!claim.Last_Meaningful_Activity_Date;
+    var alerts       = alertsByClaimId[claim.Claim_ID] || [];
+    var hasMissingLinkAlert = alerts.some(function(t) { return missingLinkAlertTypes.test(t); });
+    var hasElRow     = !!(elClaimIds[claim.Claim_ID] || elClaimIds[claim.Job_Number]);
+
+    return {
+      claimId:                     claim.Claim_ID,
+      jobNumber:                   claim.Job_Number,
+      customerName:                claim.Customer_Name,
+      hasSummaryRow:               false,
+      hasElRow:                    hasElRow,
+      includedInRecentActivityCount: hasActivity,
+      hasMissingLinkAlert:         hasMissingLinkAlert,
+      alerts:                      alerts
+    };
+  });
+
+  var result = {
+    activeClaimsCount:                activeClaims.length,
+    recentActivityClaimCount:         recentActivityCount,
+    timelineEventDistinctClaimIdCount: Object.keys(timelineClaimIds).length,
+    activeClaimsWithNoSummaryRow:     activeClaimsWithNoSummary.length,
+    activeClaimsWithNoElRow:          activeClaimsWithNoEl.length,
+    activeClaimsMissingLinkAlertCount: claimsWithMissingLinkAlert.length,
+    openAlertCountByType:             openAlertsByType,
+    sampleBootstrappedClaims:         sampleBootstrapped
+  };
+
+  Logger.log('HOMEPAGE_COUNT_CONSISTENCY ' + JSON.stringify(result, null, 2));
   return result;
 }
 

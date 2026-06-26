@@ -441,6 +441,81 @@ function runAlertPersistenceWrite() {
   return reconcileAllClaimAlerts({ dryRun: false });
 }
 
+/**
+ * rebuildHomepageOperationalAlerts
+ *
+ * Re-evaluates every active claim against External_Links and writes any
+ * missing alert rows to Claim_Alerts.  Call this after any claim backfill
+ * (e.g. enrichBootstrappedClaimNumbersFromDailyOpenJobs) to ensure the
+ * homepage operational-alert counts reflect all active claims.
+ *
+ * For bootstrapped claims with no External_Links row, a
+ * "Missing Operational Links Record" alert is written.  This alert is
+ * automatically resolved on the next reconcile run once an External_Links
+ * row is present (because normalizeStructuredLinkAlertType_ maps it to the
+ * structured type 'missing-operational-links-record').
+ *
+ * Returns the full reconcileAllClaimAlerts result object.
+ */
+function previewRebuildHomepageOperationalAlerts() {
+  const response = reconcileAllClaimAlerts({ dryRun: true, quiet: true });
+  const data = response && response.data ? response.data : response;
+
+  const proposedTypes = data.proposedAlertTypes || {};
+
+  // Count "Missing Operational Links Record" proposals (bootstrapped claims with no EL row)
+  const missingOperationalLinksRecordProposed = Object.keys(proposedTypes).reduce(function(n, type) {
+    return String(type).toLowerCase() === 'missing operational links record' ? n + proposedTypes[type] : n;
+  }, 0);
+
+  // Count "Missing XA/Symbility Link" proposals (claims with EL row but no XA/Symbility URL)
+  const missingXaSymbilityProposed = Object.keys(proposedTypes).reduce(function(n, type) {
+    const t = String(type).toLowerCase();
+    return (t === 'missing xa/symbility link' || t === 'missing xact/symbility link') ? n + proposedTypes[type] : n;
+  }, 0);
+
+  const summary = {
+    dryRun: true,
+    activeClaimsEvaluated: data.activeClaimsEvaluated,
+    alertsProposed: data.alertsProposed,
+    alertsSuppressed: data.alertsSuppressed,
+    // Breakdown by type
+    missingOperationalLinksRecordProposed: missingOperationalLinksRecordProposed,
+    missingXaSymbilityProposed: missingXaSymbilityProposed,
+    // data.newAlerts is the per-claim-aggregated count of proposals with no matching
+    // existing open alert — i.e. what would actually be written.
+    // This is correct in dryRun because reconcileClaimAlerts computes newAlerts.length
+    // before the !dryRun guard, while alertsWritten is gated behind !dryRun and stays 0.
+    newAlertsWouldBeWritten: data.newAlerts,
+    skippedExistingAlerts: data.skippedExistingAlerts,
+    proposedAlertTypeBreakdown: proposedTypes,
+    errors: data.errors || [],
+    sample: data.sample || []
+  };
+
+  Logger.log('REBUILD_HOMEPAGE_OPERATIONAL_ALERTS_PREVIEW ' + JSON.stringify(summary, null, 2));
+  return successResponse(summary, 'Homepage operational alerts rebuild preview complete.');
+}
+
+function rebuildHomepageOperationalAlerts() {
+  const response = reconcileAllClaimAlerts({ dryRun: false, quiet: true });
+  const data = response && response.data ? response.data : response;
+
+  const summary = {
+    dryRun: false,
+    activeClaimsEvaluated: data.activeClaimsEvaluated,
+    alertsProposed: data.alertsProposed,
+    alertsSuppressed: data.alertsSuppressed,
+    alertsWritten: data.alertsWritten,
+    skippedExistingAlerts: data.skippedExistingAlerts,
+    staleAlertsResolved: data.staleStructuredAlertsResolved,
+    errors: data.errors || []
+  };
+
+  Logger.log('REBUILD_HOMEPAGE_OPERATIONAL_ALERTS ' + JSON.stringify(summary, null, 2));
+  return successResponse(summary, 'Homepage operational alerts rebuilt. Refresh the homepage to see updated counts.');
+}
+
 function testAlertPersistencePreview() {
   const response = runAlertPersistencePreview();
   Logger.log(JSON.stringify(response, null, 2));
@@ -528,9 +603,11 @@ function reconcileAllClaimAlerts(options) {
     activeClaimsEvaluated: activeClaims.length,
     alertsProposed: 0,
     alertsSuppressed: 0,
-    alertsWritten: 0,
+    newAlerts: 0,          // alerts that would be (or were) written — reliable in both dryRun and live
+    alertsWritten: 0,      // only non-zero in live runs
     skippedExistingAlerts: 0,
     skippedClaims: 0,
+    proposedAlertTypes: {}, // {Alert_Type: count} across all claims
     errors: [],
     sample: []
   };
@@ -554,8 +631,17 @@ function reconcileAllClaimAlerts(options) {
 
       results.alertsProposed += Number(data.alertsProposed || 0);
       results.alertsSuppressed += Number(data.alertsSuppressed || 0);
+      results.newAlerts += Number(data.newAlerts || 0);
       results.alertsWritten += Number(data.alertsWritten || 0);
       results.skippedExistingAlerts += Number(data.skippedExistingAlerts || 0);
+
+      // Accumulate per-type counts from this claim's proposed alerts
+      if (data.proposedAlerts && data.proposedAlerts.length) {
+        data.proposedAlerts.forEach(function(alert) {
+          const alertType = String(alert.Alert_Type || 'Unknown');
+          results.proposedAlertTypes[alertType] = (results.proposedAlertTypes[alertType] || 0) + 1;
+        });
+      }
 
       if (results.sample.length < 10 && data.proposedAlerts && data.proposedAlerts.length) {
         data.proposedAlerts.slice(0, 10 - results.sample.length).forEach(function(alert) {
@@ -690,10 +776,28 @@ function buildStructuredAlertsForClaim_(claimId) {
   const externalLinks = getExternalLinksForAlertPersistence_(claimId);
 
   if (!externalLinks.length) {
-    // Do not create a broad alert when no External_Links row is found.
-    // At this stage, a missing row may mean the link table uses a different key
-    // than Claim_ID. We only create specific missing-link alerts after a claim's
-    // External_Links rows are positively matched.
+    // No External_Links row was found for this claim by either Claim_ID or
+    // Job_Number.  getExternalLinksForAlertPersistence_ already attempts both
+    // lookups, so a miss here means the claim genuinely has no intake record —
+    // typically a claim bootstrapped from a Daily Open Jobs report or another
+    // data source that bypasses the normal insurance-intake workflow.
+    //
+    // Flag it as "Missing Operational Links Record" so the homepage operational
+    // alerts reflect all active claims, not only those that went through intake.
+    // reconcileClaimAlerts() will suppress this alert for any claim covered by
+    // an active Alert_Rules suppression rule before writing to Claim_Alerts.
+    proposed.push(buildStructuredAlert_(claimId, {
+      Alert_Type: 'Missing Operational Links Record',
+      Severity: 'Medium',
+      Source_System: 'claims-service alert persistence',
+      Source_Record_ID: 'External_Links:' + claimId,
+      Reason: 'No External_Links row found for this claim by Claim_ID or Job_Number. ' +
+              'The claim was likely bootstrapped without completing insurance intake.',
+      Recommended_Action: 'Process the insurance intake email or manually add an ' +
+                          'External_Links record for this claim.',
+      Owner_Area: 'Office Operations',
+      Notes: 'Generated from structured External_Links data only.'
+    }));
     return proposed;
   }
 
@@ -1517,6 +1621,14 @@ function normalizeStructuredLinkAlertType_(alertType) {
 
   if (normalized === 'missing claimx link/video') {
     return 'missing-claimx-link-video';
+  }
+
+  // When a bootstrapped claim gains an External_Links row, the next
+  // reconcileClaimAlerts run will propose specific link alerts instead.
+  // This mapping ensures the stale "Missing Operational Links Record" alert
+  // is resolved automatically at that point.
+  if (normalized === 'missing operational links record') {
+    return 'missing-operational-links-record';
   }
 
   return '';
