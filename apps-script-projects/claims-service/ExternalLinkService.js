@@ -525,6 +525,245 @@ function runExternalLinkClaimIdBackfill_(dryRun) {
 }
 
 // ---------------------------------------------------------------------------
+// Enrich Claims.Claim_Number from External_Links.Claim Number
+// ---------------------------------------------------------------------------
+
+/**
+ * Dry-run preview: shows which Claims rows would have Claim_Number updated
+ * from External_Links, without making any changes.
+ */
+function previewEnrichClaimNumbersFromExternalLinks() {
+  return runEnrichClaimNumbersFromExternalLinks_(true);
+}
+
+/**
+ * Apply: writes real insurance claim numbers to Claims rows where:
+ *   - Claim_Number is blank or equals Job_Number (fallback)
+ *   - External_Links has a real Claim Number for the same Job_Number
+ * Only the Claim_Number cell is touched per row.
+ * Flushes once at the end.
+ *
+ * After running this, call previewBackfillExternalLinkClaimIds() and
+ * backfillExternalLinkClaimIds() to pick up any improved EL matches.
+ */
+function enrichClaimNumbersFromExternalLinks() {
+  return runEnrichClaimNumbersFromExternalLinks_(false);
+}
+
+/**
+ * @private
+ * Core logic for enriching Claims.Claim_Number from External_Links.Claim Number.
+ * @param {boolean} dryRun
+ */
+function runEnrichClaimNumbersFromExternalLinks_(dryRun) {
+  var ss = SpreadsheetApp.openById(CLAIMS_DATABASE_SPREADSHEET_ID);
+
+  // ── Read External_Links sheet ─────────────────────────────────────────────
+  var elSheet = ss.getSheetByName(CLAIM_SHEET_NAMES.externalLinks);
+
+  if (!elSheet) {
+    return { success: false, message: 'External_Links sheet not found.' };
+  }
+
+  var elValues = elSheet.getDataRange().getValues();
+
+  if (elValues.length < 2) {
+    return { success: false, message: 'External_Links sheet has no data rows.' };
+  }
+
+  var elHeaderRowIndex = findElhHeaderRowIndex_(elValues);
+  var elColMap         = buildElhColumnIndexMap_(elValues[elHeaderRowIndex]);
+
+  if (elColMap.jobNumber === -1) {
+    return { success: false, message: 'Job Number / Job_Number column not found in External_Links sheet.' };
+  }
+
+  if (elColMap.claimNumber === -1) {
+    return {
+      success: false,
+      message: 'Claim Number column not found in External_Links sheet. ' +
+               'Run ensureExternalLinksClaimNumberColumn() in insurance-intake-automation first.'
+    };
+  }
+
+  // ── Build External_Links lookup: jobNumber → { claimNumber } ─────────────
+  // Conflict detection: two rows with same jobNumber but different claimNumbers → skip both.
+  var elByJobNumber  = {};  // normalizedJobNumber → rawClaimNumber string
+  var elConflicts    = {};  // normalizedJobNumber → { first, second }
+  var elRowsChecked  = 0;
+
+  elValues.slice(elHeaderRowIndex + 1).forEach(function(row) {
+    elRowsChecked++;
+
+    var jobNum   = normalizeElhKey_(row[elColMap.jobNumber]);
+    var claimNum = String(row[elColMap.claimNumber] || '').trim();
+
+    if (!jobNum || !claimNum) {
+      return;
+    }
+
+    // Skip if claimNum equals jobNum (fallback contamination in External_Links).
+    if (normalizeElhKey_(claimNum) === jobNum) {
+      return;
+    }
+
+    if (elConflicts[jobNum]) {
+      // Already conflicted — ignore further rows.
+      return;
+    }
+
+    if (elByJobNumber[jobNum]) {
+      // Second row for same job number.
+      if (normalizeElhKey_(elByJobNumber[jobNum]) !== normalizeElhKey_(claimNum)) {
+        // Disagreement → conflict; remove entry.
+        elConflicts[jobNum] = {
+          first:  elByJobNumber[jobNum],
+          second: claimNum
+        };
+        delete elByJobNumber[jobNum];
+      }
+      // Exact match → keep existing entry (idempotent, no change needed).
+      return;
+    }
+
+    elByJobNumber[jobNum] = claimNum;
+  });
+
+  // ── Read Claims sheet ─────────────────────────────────────────────────────
+  var claimsSheet = ss.getSheetByName(CLAIM_SHEET_NAMES.claims);
+
+  if (!claimsSheet) {
+    return { success: false, message: 'Claims sheet not found.' };
+  }
+
+  var claimsValues = claimsSheet.getDataRange().getValues();
+
+  if (claimsValues.length < 2) {
+    return { success: false, message: 'Claims sheet has no data rows.' };
+  }
+
+  var colMap = buildClaimsColumnMap_(claimsValues);
+
+  if (colMap.claimNumber === -1) {
+    return { success: false, message: 'Claim_Number column not found in Claims sheet.' };
+  }
+
+  if (colMap.jobNumber === -1) {
+    return { success: false, message: 'Job_Number column not found in Claims sheet.' };
+  }
+
+  // ── Scan Claims rows, build proposals ────────────────────────────────────
+  var claimsChecked               = 0;
+  var fallbackClaimNumbersFound   = 0;
+  var skippedNoJobNumber          = 0;
+  var skippedNotFallback          = 0;
+  var skippedNoElRow              = 0;
+  var skippedConflict             = 0;
+  var proposals                   = [];
+
+  claimsValues.slice(1).forEach(function(row, relativeIndex) {
+    claimsChecked++;
+
+    var jobNumber           = normalizeElhKey_(row[colMap.jobNumber]);
+    var currentClaimNumber  = String(row[colMap.claimNumber] || '').trim();
+    var claimId             = colMap.claimId !== -1 ? String(row[colMap.claimId] || '').trim() : '';
+    var customerName        = colMap.customerName !== -1 ? String(row[colMap.customerName] || '').trim() : '';
+    var normCurrentClaim    = normalizeElhKey_(currentClaimNumber);
+
+    // Guard 1: require Job_Number.
+    if (!jobNumber) {
+      skippedNoJobNumber++;
+      return;
+    }
+
+    // Guard 2: current Claim_Number must be blank or equal to Job_Number (fallback).
+    var isFallback = !currentClaimNumber || (normCurrentClaim === jobNumber);
+
+    if (!isFallback) {
+      skippedNotFallback++;
+      return;
+    }
+
+    fallbackClaimNumbersFound++;
+
+    // Guard 3: must have a non-conflicted External_Links entry for this job number.
+    if (elConflicts[jobNumber]) {
+      skippedConflict++;
+      return;
+    }
+
+    if (!elByJobNumber[jobNumber]) {
+      skippedNoElRow++;
+      return;
+    }
+
+    // The EL entry was already filtered for blank and equals-job-number at build time.
+    var proposedClaimNumber = elByJobNumber[jobNumber];
+
+    // Sheet row is 1-based: row 1 is header, first data row is 2.
+    var sheetRowNumber = relativeIndex + 2;
+
+    proposals.push({
+      sheetRow:            sheetRowNumber,
+      claimId:             claimId,
+      jobNumber:           jobNumber,
+      currentClaimNumber:  currentClaimNumber,
+      proposedClaimNumber: proposedClaimNumber,
+      customerName:        customerName
+    });
+  });
+
+  // ── Apply writes (real run only) ──────────────────────────────────────────
+  var rowsUpdated = 0;
+
+  if (!dryRun) {
+    proposals.forEach(function(p) {
+      claimsSheet.getRange(p.sheetRow, colMap.claimNumber + 1).setValue(p.proposedClaimNumber);
+      rowsUpdated++;
+    });
+
+    if (rowsUpdated > 0) {
+      SpreadsheetApp.flush();
+    }
+  }
+
+  var summary = {
+    success:                        true,
+    dryRun:                         dryRun,
+    generatedAt:                    new Date().toISOString(),
+    claimsChecked:                  claimsChecked,
+    fallbackClaimNumbersFound:      fallbackClaimNumbersFound,
+    externalLinkRowsChecked:        elRowsChecked,
+    jobNumbersWithStoredClaimNumbers: Object.keys(elByJobNumber).length,
+    eligibleUpdates:                proposals.length,
+    conflicts:                      Object.keys(elConflicts).length,
+    rowsUpdated:                    dryRun ? 0 : rowsUpdated,
+    skippedNoJobNumber:             skippedNoJobNumber,
+    skippedNotFallback:             skippedNotFallback,
+    skippedNoElRow:                 skippedNoElRow,
+    skippedConflict:                skippedConflict,
+    sampleProposals:                proposals.slice(0, 10)
+  };
+
+  Logger.log(
+    '[EnrichClaimNumbersFromExternalLinks] ' +
+    (dryRun ? 'PREVIEW' : 'RUN') +
+    ': claimsChecked=' + claimsChecked +
+    ' fallback=' + fallbackClaimNumbersFound +
+    ' elRows=' + elRowsChecked +
+    ' elJobsWithClaimNumbers=' + Object.keys(elByJobNumber).length +
+    ' eligible=' + proposals.length +
+    ' conflicts=' + Object.keys(elConflicts).length +
+    ' rowsUpdated=' + (dryRun ? '(dryRun)' : rowsUpdated) +
+    ' skippedNotFallback=' + skippedNotFallback +
+    ' skippedNoElRow=' + skippedNoElRow +
+    ' skippedConflict=' + skippedConflict
+  );
+
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
 
 function testAddFusionLink() {
   return addExternalLink('CLM-20260605-821496', {
