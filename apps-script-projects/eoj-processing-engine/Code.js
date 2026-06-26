@@ -1,3 +1,43 @@
+/**
+ * Run createProcessingTrigger() once from the Apps Script editor to set up
+ * the time-based trigger. Every 15 minutes is the recommended cadence for pilot.
+ * Re-running createProcessingTrigger() removes old triggers first, so it's safe to call again.
+ */
+function createProcessingTrigger() {
+  // Remove existing triggers for this function to prevent duplicates.
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'processUnprocessedEOJs')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('processUnprocessedEOJs')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+
+  Logger.log('Processing trigger created: processUnprocessedEOJs runs every 15 minutes.');
+  return { ok: true, message: 'Trigger created. processUnprocessedEOJs will run every 15 minutes.' };
+}
+
+function deleteProcessingTrigger() {
+  const triggers = ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'processUnprocessedEOJs');
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+  Logger.log('Deleted ' + triggers.length + ' processing trigger(s).');
+  return { ok: true, deleted: triggers.length };
+}
+
+function listProcessingTriggers() {
+  const triggers = ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'processUnprocessedEOJs')
+    .map(t => ({
+      triggerId: t.getUniqueId(),
+      handlerFunction: t.getHandlerFunction(),
+      eventType: String(t.getEventType())
+    }));
+  Logger.log(JSON.stringify(triggers, null, 2));
+  return triggers;
+}
+
 function processUnprocessedEOJs() {
   const runId = Utilities.getUuid();
   const rows = getUnprocessedEOJRows();

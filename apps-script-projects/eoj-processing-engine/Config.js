@@ -21,6 +21,7 @@ const CONFIG = {
     'Technician',
     'Job_Name',
     'Claim_Number',
+    'Claim_ID',
     'Customer_Name',
     'Property_Address',
     'Visit_Date',
@@ -39,6 +40,7 @@ const CONFIG = {
 
   STATUS: {
     PROCESSED: 'Processed',
-    ERROR: 'Error'
+    ERROR: 'Error',
+    NEW: 'New'
   }
 };

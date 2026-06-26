@@ -17,6 +17,7 @@ function writeProcessingOutput_(interpreted) {
     Technician: interpreted.technician,
     Job_Name: interpreted.jobName,
     Claim_Number: interpreted.claimNumber,
+    Claim_ID: interpreted.claimId,
     Customer_Name: interpreted.customerName,
     Property_Address: interpreted.propertyAddress,
     Visit_Date: interpreted.visitDate,

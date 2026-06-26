@@ -22,6 +22,7 @@ function interpretBasicEOJ_(parsed, row, runId) {
     technician: base.technician,
     jobName: base.jobName,
     claimNumber: base.claimNumber,
+    claimId: base.claimId,
     customerName: base.customerName,
     propertyAddress: base.propertyAddress,
     visitDate: base.visitDate,
@@ -60,6 +61,11 @@ function buildBaseEOJContext_(parsed, row, processedAt) {
       getNestedValue_(parsed, ['Claim_Number']),
       getNestedValue_(parsed, ['claim', 'number']),
       row.claimNumber
+    ),
+    claimId: firstNonBlank_(
+      getNestedValue_(parsed, ['claimId']),
+      getNestedValue_(parsed, ['Claim_ID']),
+      row.claimId
     ),
     customerName: firstNonBlank_(
       getNestedValue_(parsed, ['customerName']),
@@ -148,6 +154,7 @@ function buildTimelineEvent_(base, eventType, details) {
     technician: base.technician,
     job_name: base.jobName,
     claim_number: base.claimNumber,
+    claim_id: base.claimId,
     customer_name: base.customerName,
     property_address: base.propertyAddress,
     visit_date: stringifyDateSafe_(base.visitDate),
@@ -242,6 +249,7 @@ function buildOperationalObject_(base, objectType, objectName, payload, options)
     source_type: 'EOJ',
     source_id: base.eojId,
     claim_number: base.claimNumber,
+    claim_id: base.claimId,
     job_name: base.jobName,
     customer_name: base.customerName,
     property_address: base.propertyAddress,
