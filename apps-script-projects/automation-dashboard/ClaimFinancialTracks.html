@@ -1,0 +1,71 @@
+<script>
+  // ============================================================
+  // ClaimFinancialTracks.html
+  // Row 4: Financial Tracks — compact cards per track
+  // ============================================================
+
+  function renderFcvFinancialTracks(detail) {
+    var el = document.getElementById('fcvFinancialTracks');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var tracks = Array.isArray(detail.financialTracks) ? detail.financialTracks
+               : ((detail.claimFoundation && Array.isArray(detail.claimFoundation.financialTracks))
+                  ? detail.claimFoundation.financialTracks : []);
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header"><h2>Financial Tracks</h2>';
+    html += '<p class="fcv-card-description">Estimate, supplement, and payment tracking for this claim. From the Financial Track service.</p></div>';
+
+    if (!tracks.length) {
+      html += '<div class="fcv-card-empty">No financial tracks recorded for this claim.</div>';
+    } else {
+      html += '<div class="fcv-track-grid">';
+      tracks.forEach(function(track) {
+        html += renderFcvTrackCard(track);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function renderFcvTrackCard(track) {
+    track = track || {};
+    var name          = fcvPickVal([track.trackName, track.name, track.Track_Name, track.type]) || 'Financial Track';
+    var carrier       = fcvPickVal([track.carrier, track.Carrier]);
+    var status        = fcvPickVal([track.status, track.Status]);
+    var approvalState = fcvPickVal([track.approvalState, track.Approval_State, track.approvalStatus]);
+    var paymentState  = fcvPickVal([track.paymentState, track.Payment_State, track.paymentStatus]);
+    var fusionLink    = fcvPickVal([track.fusionLink, track.Fusion_Link, track.url]);
+    var lastUpdated   = fcvPickVal([track.lastUpdated, track.Last_Updated, track.updatedAt]);
+
+    var displayStatus = status || approvalState || paymentState || '';
+
+    var html = '<div class="fcv-track-card">';
+    html += '<div class="fcv-track-name">' + fcvEscape(name) + '</div>';
+
+    if (carrier) {
+      html += '<div class="fcv-track-field"><span>Carrier</span><strong>' + fcvEscape(carrier) + '</strong></div>';
+    }
+    if (approvalState) {
+      html += '<div class="fcv-track-field"><span>Approval</span><strong>' + fcvEscape(approvalState) + '</strong></div>';
+    }
+    if (paymentState) {
+      html += '<div class="fcv-track-field"><span>Payment</span><strong>' + fcvEscape(paymentState) + '</strong></div>';
+    }
+    if (lastUpdated) {
+      html += '<div class="fcv-track-field"><span>Updated</span><strong>' + fcvEscape(fcvFormatDate(lastUpdated)) + '</strong></div>';
+    }
+    if (displayStatus) {
+      html += '<span class="fcv-track-status">' + fcvEscape(displayStatus) + '</span>';
+    }
+    if (fusionLink) {
+      html += '<a class="fcv-track-link" href="' + fcvEscape(fusionLink) + '" target="_blank" rel="noopener noreferrer">Open in Fusion ↗</a>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+</script>

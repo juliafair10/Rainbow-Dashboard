@@ -1,0 +1,16 @@
+<style>
+<?!= include('ClaimViewStyles'); ?>
+</style>
+<?!= include('ClaimView'); ?>
+<script>
+  window.RAINBOW_FULL_CLAIM_ID = <?!= JSON.stringify(claimId || '') ?>;
+  window.RAINBOW_DASHBOARD_BASE_URL = <?!= JSON.stringify(dashboardBaseUrl || '') ?>;
+</script>
+<?!= include('ClaimViewScripts'); ?>
+<?!= include('ClaimOperationalSummary'); ?>
+<?!= include('ClaimTimeline'); ?>
+<?!= include('ClaimConditions'); ?>
+<?!= include('ClaimAlerts'); ?>
+<?!= include('ClaimFinancialTracks'); ?>
+<?!= include('ClaimDocuments'); ?>
+<?!= include('ClaimSidebar'); ?>

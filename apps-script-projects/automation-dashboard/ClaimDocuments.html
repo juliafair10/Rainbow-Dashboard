@@ -1,0 +1,78 @@
+<script>
+  // ============================================================
+  // ClaimDocuments.html
+  // Row 6: Documents — Drive-linked categories
+  // ============================================================
+
+  function renderFcvDocuments(detail) {
+    var el = document.getElementById('fcvDocuments');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var links = Array.isArray(detail.externalLinks) ? detail.externalLinks : [];
+
+    // Find Drive folder from external links
+    var driveFolderUrl = '';
+    links.forEach(function(link) {
+      if (driveFolderUrl) { return; }
+      var type = fcvStrLower(fcvPickVal([link.linkType, link.Link_Type, link.label, link.type]));
+      if (type.indexOf('drive') !== -1 || type.indexOf('folder') !== -1) {
+        driveFolderUrl = fcvGetLinkUrl(link);
+      }
+      if (!driveFolderUrl && (link.Drive_Folder || link.driveFolder)) {
+        driveFolderUrl = link.Drive_Folder || link.driveFolder;
+      }
+    });
+
+    // Document categories (expected in Drive folder structure)
+    var categories = [
+      { label: 'ESA',            icon: '📄', description: 'Emergency Service Agreement' },
+      { label: 'COS',            icon: '✅', description: 'Certificate of Completion' },
+      { label: 'Photos',         icon: '📷', description: 'Job site photographs' },
+      { label: 'Estimate',       icon: '📊', description: 'Initial estimate documents' },
+      { label: 'Supplement',     icon: '📝', description: 'Supplement documentation' },
+      { label: 'Invoices',       icon: '💵', description: 'Invoices and billing' },
+      { label: 'Lab Reports',    icon: '🧪', description: 'Testing and lab results' },
+      { label: 'Contracts',      icon: '📋', description: 'Signed contracts' },
+      { label: 'Miscellaneous',  icon: '📁', description: 'Other documents' }
+    ];
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>Documents</h2>';
+    html += '<p class="fcv-card-description">Document categories for this claim. Opens the Drive folder when linked.</p>';
+    html += '</div>';
+
+    if (driveFolderUrl) {
+      html += '<div style="margin-bottom: 14px;">';
+      html += '<a class="fcv-action-btn" href="' + fcvEscape(driveFolderUrl) + '" target="_blank" rel="noopener noreferrer">' +
+              '☁️ Open Claim Drive Folder</a>';
+      html += '</div>';
+
+      html += '<div class="fcv-doc-grid">';
+      categories.forEach(function(cat) {
+        html += '<a class="fcv-doc-item" href="' + fcvEscape(driveFolderUrl) + '" target="_blank" rel="noopener noreferrer">';
+        html += '<span>' + cat.icon + '</span>';
+        html += '<span>' + fcvEscape(cat.label) + '</span>';
+        html += '</a>';
+      });
+      html += '</div>';
+
+      html += '<div class="fcv-muted" style="margin-top: 12px;">Document listing requires a ClaimDocumentService integration. Currently opens the linked Drive folder. Categories above are expected folder structure.</div>';
+    } else {
+      html += '<div class="fcv-card-empty" style="margin-bottom: 14px;">No Drive folder linked for this claim.</div>';
+      html += '<div class="fcv-doc-grid">';
+      categories.forEach(function(cat) {
+        html += '<div class="fcv-doc-item" style="opacity: 0.52; pointer-events: none;">';
+        html += '<span>' + cat.icon + '</span>';
+        html += '<span>' + fcvEscape(cat.label) + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '<div class="fcv-muted" style="margin-top: 12px;">Link a Drive folder to this claim to enable document access. Use the Action Bar to add a Claim Folder link.</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+</script>

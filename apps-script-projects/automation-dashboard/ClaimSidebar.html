@@ -1,0 +1,126 @@
+<script>
+  // ============================================================
+  // ClaimSidebar.html
+  // Right sticky sidebar: always visible while scrolling
+  // Contains: Claim Health, Current Owner, Condition Summary,
+  //           Alert Count, Next Action, Quick Links, Recent Timeline
+  // ============================================================
+
+  function renderFcvSidebar(detail) {
+    var el = document.getElementById('fcvSidebar');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var ctx        = detail.workspaceContext || {};
+    var header     = detail.claimHeader || {};
+    var fullHeader = detail.fullClaimHeader || {};
+    var oi         = detail.operationalIntelligence || {};
+    var foundation = detail.claimFoundation || {};
+
+    var health      = fcvPickVal([ctx.health && ctx.health.level, header.healthLevel]) || 'Not rated';
+    var owner       = fcvPickVal([ctx.owner && ctx.owner.ownerLabel, fullHeader.ownerLabel]) || 'Unassigned';
+    var lifecycle   = fcvPickVal([ctx.lifecycle && ctx.lifecycle.state, header.lifecycleState]) || 'Not recorded';
+    var condition   = fcvPickVal([ctx.conditions && ctx.conditions.primaryCondition, fullHeader.primaryCondition]) || 'No active condition';
+    var alertCount  = (ctx.alerts && ctx.alerts.count != null) ? ctx.alerts.count : fcvGetActiveAlerts(detail).length;
+    var nextAction  = fcvPickVal([ctx.nextAction && ctx.nextAction.title, fullHeader.nextAction, header.nextAction]) || 'No recommended action';
+    var lastActiv   = fcvPickVal([ctx.lastMeaningfulActivity, fullHeader.lastMeaningfulActivity, header.lastMeaningfulActivityAt]);
+    var priority    = fcvPickVal([ctx.operationalPriority, oi.operationalPriority]) || 'Normal';
+
+    // Links
+    var links = Array.isArray(detail.externalLinks) ? detail.externalLinks : [];
+    var urlMap = {};
+    links.forEach(function(link) {
+      var url  = fcvGetLinkUrl(link);
+      var type = fcvStrLower(fcvPickVal([link.linkType, link.Link_Type, link.label, link.type]));
+      if (!urlMap.fusion && (type.indexOf('fusion') !== -1 || link.Fusion_URL || link.fusionUrl)) {
+        urlMap.fusion = url || link.Fusion_URL || link.fusionUrl;
+      }
+      if (!urlMap.estimate && (type.indexOf('xact') !== -1 || type.indexOf('symbility') !== -1)) {
+        urlMap.estimate = url;
+      }
+      if (!urlMap.drive && (type.indexOf('drive') !== -1 || link.Drive_Folder || link.driveFolder)) {
+        urlMap.drive = url || link.Drive_Folder || link.driveFolder;
+      }
+    });
+
+    // Recent timeline highlights
+    var recentEvents = fcvGetTimelineEvents(detail);
+    var highlights = recentEvents.slice(0, 4);
+
+    var html = '';
+
+    // ── State Card ──────────────────────────────────────────────
+    html += '<div class="fcv-sb-card">';
+    html += '<h4>Claim State</h4>';
+
+    var healthValueClass = health.toLowerCase().indexOf('at risk') !== -1 ? ' fcv-sb-value--alert'
+                         : (health.toLowerCase() === 'healthy' ? ' fcv-sb-value--ok' : '');
+
+    html += fcvSbRow('Health',    health, healthValueClass);
+    html += fcvSbRow('Lifecycle', lifecycle, '');
+    html += fcvSbRow('Owner',     owner, '');
+    html += fcvSbRow('Condition', condition, '');
+    html += fcvSbRow('Alerts',    alertCount > 0 ? alertCount + ' open' : 'None', alertCount > 0 ? ' fcv-sb-value--alert' : ' fcv-sb-value--ok');
+    if (lastActiv) {
+      html += fcvSbRow('Last Activity', fcvFormatDate(lastActiv), '');
+    }
+    html += fcvSbRow('Priority',  priority, '');
+    html += '</div>';
+
+    // ── Next Action Card ────────────────────────────────────────
+    html += '<div class="fcv-sb-card">';
+    html += '<h4>Next Action</h4>';
+    html += '<div class="fcv-sb-next-action">' + fcvEscape(nextAction) + '</div>';
+
+    var nextActionReason = fcvPickVal([ctx.nextAction && ctx.nextAction.reason, ctx.attentionReason, header.attentionReason]);
+    if (nextActionReason) {
+      html += '<div class="fcv-muted" style="margin-top: 8px; font-size: 11.5px;">' + fcvEscape(fcvTruncate(nextActionReason, 120)) + '</div>';
+    }
+    html += '</div>';
+
+    // ── Quick Links Card ────────────────────────────────────────
+    html += '<div class="fcv-sb-card">';
+    html += '<h4>Quick Links</h4>';
+    html += '<div class="fcv-sb-quick-links">';
+
+    function sbLink(label, url, icon) {
+      if (url) {
+        return '<a class="fcv-sb-link" href="' + fcvEscape(url) + '" target="_blank" rel="noopener noreferrer">' +
+               '<span>' + icon + '</span><span>' + fcvEscape(label) + '</span></a>';
+      }
+      return '<div class="fcv-sb-link fcv-sb-link--disabled"><span>' + icon + '</span><span>' + fcvEscape(label) + '</span></div>';
+    }
+
+    html += sbLink('Open Fusion',      urlMap.fusion || '',   '📂');
+    html += sbLink('XactAnalysis',     urlMap.estimate || '', '📊');
+    html += sbLink('Claim Folder',     urlMap.drive || '',    '📁');
+    html += '<button type="button" class="fcv-sb-link" onclick="fcvOpenClaimDrawer(' + JSON.stringify(fcvClaimId) + ')">' +
+            '<span>🗂</span><span>Open Drawer</span></button>';
+    html += '</div>';
+    html += '</div>';
+
+    // ── Recent Timeline Card ────────────────────────────────────
+    if (highlights.length) {
+      html += '<div class="fcv-sb-card">';
+      html += '<h4>Recent Timeline</h4>';
+      highlights.forEach(function(evt) {
+        var title = fcvNormalizeTitle(fcvPickVal([evt.title, evt.summary, evt.Summary]));
+        var date  = fcvFormatDate(fcvGetEventDate(evt));
+        html += '<div class="fcv-sb-timeline-item">';
+        html += '<div class="fcv-sb-timeline-title">' + fcvEscape(title) + '</div>';
+        if (date) { html += '<div class="fcv-sb-timeline-date">' + fcvEscape(date) + '</div>'; }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+  }
+
+  function fcvSbRow(label, value, valueClass) {
+    return '<div class="fcv-sb-row">' +
+      '<span class="fcv-sb-label">' + fcvEscape(label) + '</span>' +
+      '<span class="fcv-sb-value' + (valueClass || '') + '">' + fcvEscape(value || '—') + '</span>' +
+      '</div>';
+  }
+</script>

@@ -1,0 +1,234 @@
+<script>
+  // ============================================================
+  // ClaimTimeline.html
+  // Row 2 Left: Full timeline with filters, grouped, newest first
+  // ============================================================
+
+  var fcvTimelineAllEvents = [];
+
+  function renderFcvTimeline(detail) {
+    var el = document.getElementById('fcvTimeline');
+    if (!el) { return; }
+
+    var events = fcvGetTimelineEvents(detail);
+
+    // Sort newest first
+    fcvTimelineAllEvents = events.slice().sort(function(a, b) {
+      var da = new Date(fcvGetEventDate(a));
+      var db = new Date(fcvGetEventDate(b));
+      if (isNaN(da)) { da = new Date(0); }
+      if (isNaN(db)) { db = new Date(0); }
+      return db - da;
+    });
+
+    var html = '<div class="fcv-card fcv-timeline-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>Operational Timeline</h2>';
+    html += '<p class="fcv-card-description">Meaningful claim history grouped for active management. Newest first.</p>';
+    html += '</div>';
+
+    // Filter buttons
+    var filters = [
+      { key: 'all',            label: 'All' },
+      { key: 'operational',    label: 'Operational' },
+      { key: 'insurance',      label: 'Insurance' },
+      { key: 'financial',      label: 'Financial' },
+      { key: 'administrative', label: 'Administrative' },
+      { key: 'notes',          label: 'Notes' }
+    ];
+
+    html += '<div class="fcv-timeline-filters" id="fcvTimelineFilters">';
+    filters.forEach(function(f) {
+      var isActive = f.key === 'all';
+      html += '<button type="button" class="fcv-timeline-filter-btn' + (isActive ? ' is-active' : '') + '" ' +
+              'onclick="fcvApplyTimelineFilter(\'' + fcvEscape(f.key) + '\')" ' +
+              'data-filter="' + fcvEscape(f.key) + '">' +
+              fcvEscape(f.label) + '</button>';
+    });
+    html += '</div>';
+
+    html += '<div id="fcvTimelineBody">';
+    html += renderFcvTimelineBody(fcvTimelineAllEvents);
+    html += '</div>';
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function fcvApplyTimelineFilter(filterKey) {
+    fcvActiveTimelineFilter = filterKey;
+
+    // Update button states
+    document.querySelectorAll('#fcvTimelineFilters .fcv-timeline-filter-btn').forEach(function(btn) {
+      btn.classList.toggle('is-active', btn.getAttribute('data-filter') === filterKey);
+    });
+
+    var filtered = filterKey === 'all' ? fcvTimelineAllEvents : fcvTimelineAllEvents.filter(function(evt) {
+      return fcvTimelineEventMatchesFilter(evt, filterKey);
+    });
+
+    var body = document.getElementById('fcvTimelineBody');
+    if (body) {
+      body.innerHTML = renderFcvTimelineBody(filtered);
+    }
+  }
+
+  function fcvTimelineEventMatchesFilter(evt, filterKey) {
+    var group = fcvGetTimelineEventGroup(evt);
+    switch (filterKey) {
+      case 'operational':    return group === 'Field / EOJ Activity';
+      case 'insurance':      return group === 'Revision / Insurance Activity';
+      case 'financial':      return group === 'Accounting / Payment Activity';
+      case 'administrative': return group === 'System Activity';
+      case 'notes':          return group === 'Notes & Communication';
+      default:               return true;
+    }
+  }
+
+  function renderFcvTimelineBody(events) {
+    if (!events || !events.length) {
+      return '<div class="fcv-card-empty">No timeline events match this filter.</div>';
+    }
+
+    // Group events
+    var groupOrder = [
+      'Field / EOJ Activity',
+      'Revision / Insurance Activity',
+      'Accounting / Payment Activity',
+      'Notes & Communication',
+      'System Activity',
+      'Other Activity'
+    ];
+    var grouped = {};
+
+    events.forEach(function(evt) {
+      var group = fcvGetTimelineEventGroup(evt);
+      if (!grouped[group]) { grouped[group] = []; }
+      grouped[group].push(evt);
+    });
+
+    // Flatten with groups visible
+    var html = '<div class="fcv-timeline-groups">';
+
+    groupOrder.forEach(function(groupLabel) {
+      var groupEvents = grouped[groupLabel];
+      if (!groupEvents || !groupEvents.length) { return; }
+
+      html += '<div class="fcv-timeline-group">';
+      html += '<div class="fcv-timeline-group-header">';
+      html += '<h3>' + fcvEscape(groupLabel) + '</h3>';
+      html += '<span>' + groupEvents.length + ' event' + (groupEvents.length === 1 ? '' : 's') + '</span>';
+      html += '</div>';
+      html += '<div class="fcv-timeline-list">';
+
+      groupEvents.forEach(function(evt) {
+        html += renderFcvTimelineEvent(evt);
+      });
+
+      html += '</div>';
+      html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderFcvTimelineEvent(evt) {
+    evt = evt || {};
+
+    // Normalize: accept both already-built models and raw events
+    var category = fcvPickVal([evt.category]) || fcvGetTimelineCategory(evt);
+    var categoryClass = fcvGetTimelineCategoryClass(category);
+    var title    = fcvNormalizeTitle(fcvPickVal([evt.title, evt.summary, evt.Summary, evt.description]) || 'Timeline Event');
+    var date     = fcvFormatDate(fcvPickVal([evt.date, evt.dateLabel]) || fcvGetEventDate(evt)) || 'Undated';
+    var meta     = fcvPickVal([evt.meta]) || fcvBuildTimelineMeta(evt);
+    var detail   = fcvPickVal([evt.detail, evt.details, evt.description]);
+
+    // Clean detail
+    if (detail && detail.toLowerCase() === title.toLowerCase()) { detail = ''; }
+    if (detail && detail.length > 200) { detail = detail.slice(0, 197) + '…'; }
+
+    var className = 'fcv-timeline-item fcv-timeline-item--' + fcvEscape(categoryClass);
+
+    var html = '<article class="' + className + '">';
+    html += '<div class="fcv-timeline-marker"></div>';
+    html += '<div class="fcv-timeline-topline">';
+    html += '<span class="fcv-timeline-category">' + fcvEscape(category || 'Claim Activity') + '</span>';
+    html += '<span class="fcv-timeline-date">' + fcvEscape(date) + '</span>';
+    html += '</div>';
+    html += '<h3 class="fcv-timeline-title">' + fcvEscape(title) + '</h3>';
+    if (meta) { html += '<div class="fcv-timeline-meta">' + fcvEscape(meta) + '</div>'; }
+    if (detail) { html += '<p class="fcv-timeline-detail">' + fcvEscape(detail) + '</p>'; }
+    html += '</article>';
+    return html;
+  }
+
+  function fcvGetTimelineEventGroup(evt) {
+    evt = evt || {};
+    if (fcvPickVal([evt.groupLabel])) { return fcvPickVal([evt.groupLabel]); }
+
+    var combined = [
+      fcvStrLower(fcvPickVal([evt.eventType, evt.type])),
+      fcvStrLower(fcvPickVal([evt.source, evt.sourceSystem])),
+      fcvStrLower(fcvPickVal([evt.summary, evt.title, evt.Summary])),
+      fcvStrLower(fcvPickVal([evt.detail, evt.description]))
+    ].join(' ');
+
+    if (combined.indexOf('eoj') !== -1 || combined.indexOf('field') !== -1 ||
+        combined.indexOf('monitor') !== -1 || combined.indexOf('inspection') !== -1 ||
+        combined.indexOf('technician') !== -1 || combined.indexOf('calendar') !== -1) {
+      return 'Field / EOJ Activity';
+    }
+    if (combined.indexOf('revision') !== -1 || combined.indexOf('estimate') !== -1 ||
+        combined.indexOf('carrier') !== -1 || combined.indexOf('xact') !== -1 ||
+        combined.indexOf('symbility') !== -1 || combined.indexOf('insurance') !== -1) {
+      return 'Revision / Insurance Activity';
+    }
+    if (combined.indexOf('payment') !== -1 || combined.indexOf('remittance') !== -1 ||
+        combined.indexOf('accounting') !== -1 || combined.indexOf('invoice') !== -1 ||
+        combined.indexOf('paid') !== -1) {
+      return 'Accounting / Payment Activity';
+    }
+    if (combined.indexOf('note') !== -1 || combined.indexOf('email') !== -1 ||
+        combined.indexOf('historical') !== -1 || combined.indexOf('communication') !== -1) {
+      return 'Notes & Communication';
+    }
+    if (combined.indexOf('system') !== -1 || combined.indexOf('health') !== -1 ||
+        combined.indexOf('condition') !== -1 || combined.indexOf('alert') !== -1 ||
+        combined.indexOf('intelligence') !== -1) {
+      return 'System Activity';
+    }
+    return 'Other Activity';
+  }
+
+  function fcvGetTimelineCategory(evt) {
+    var group = fcvGetTimelineEventGroup(evt);
+    var map = {
+      'Field / EOJ Activity': 'EOJ / Field Visit',
+      'Revision / Insurance Activity': 'Revision / Insurance',
+      'Accounting / Payment Activity': 'Accounting / Payment',
+      'Notes & Communication': 'Notes / Communication',
+      'System Activity': 'System Activity'
+    };
+    return map[group] || 'Claim Activity';
+  }
+
+  function fcvGetTimelineCategoryClass(category) {
+    var lc = fcvStrLower(category || '');
+    if (lc.indexOf('revision') !== -1 || lc.indexOf('insurance') !== -1) { return 'insurance'; }
+    if (lc.indexOf('eoj') !== -1 || lc.indexOf('field') !== -1)           { return 'field'; }
+    if (lc.indexOf('note') !== -1 || lc.indexOf('communication') !== -1)  { return 'note'; }
+    if (lc.indexOf('payment') !== -1 || lc.indexOf('accounting') !== -1)  { return 'payment'; }
+    if (lc.indexOf('system') !== -1)                                       { return 'system'; }
+    return 'other';
+  }
+
+  function fcvBuildTimelineMeta(evt) {
+    evt = evt || {};
+    var actor  = fcvPickVal([evt.actor, evt.Actor, evt.owner]);
+    var source = fcvPickVal([evt.source, evt.sourceSystem, evt.Source]);
+    var parts  = [actor, source].filter(Boolean);
+    if (!parts.length && evt.eventType) { parts.push(fcvPickVal([evt.eventType, evt.type])); }
+    return parts.join(' · ');
+  }
+</script>

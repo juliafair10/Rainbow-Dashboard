@@ -1,0 +1,108 @@
+<script>
+  // ============================================================
+  // ClaimAlerts.html
+  // Row 2 Right Bottom: Alerts — open + collapsed resolved
+  // ============================================================
+
+  function renderFcvAlerts(detail) {
+    var el = document.getElementById('fcvAlerts');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var activeAlerts = fcvGetActiveAlerts(detail);
+
+    // Resolved alerts: try to get from timeline events (alert-related)
+    var timelineEvents = fcvGetTimelineEvents(detail);
+    var resolvedAlertEvents = timelineEvents.filter(function(evt) {
+      var combined = fcvStrLower(fcvPickVal([evt.eventType, evt.type, evt.summary, evt.title, evt.source]));
+      return (combined.indexOf('alert') !== -1 && combined.indexOf('resolv') !== -1) ||
+             combined.indexOf('alert resolved') !== -1;
+    }).slice(0, 6);
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h3>Alerts</h3>';
+    html += '<p class="fcv-card-description">Open alerts from the Alert Engine. Resolved alerts collapse below.</p>';
+    html += '</div>';
+
+    // Open alerts
+    if (activeAlerts.length) {
+      html += '<p class="fcv-section-label">Open (' + activeAlerts.length + ')</p>';
+      html += '<div class="fcv-alert-list">';
+      activeAlerts.forEach(function(alert) {
+        html += renderFcvAlertItem(alert, false);
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="fcv-card-empty">No open alerts.</div>';
+    }
+
+    // Resolved alerts (collapsible)
+    if (resolvedAlertEvents.length) {
+      html += '<div style="margin-top: 12px;">';
+      html += '<button class="fcv-collapsible-toggle" onclick="fcvToggleResolvedAlerts(this)">▸ Show resolved alerts (' + resolvedAlertEvents.length + ')</button>';
+      html += '<div id="fcvResolvedAlertsList" style="display:none;">';
+      html += '<div class="fcv-alert-list" style="margin-top: 8px;">';
+      resolvedAlertEvents.forEach(function(evt) {
+        html += '<div class="fcv-alert-item fcv-alert-item--resolved">';
+        html += '<div class="fcv-alert-name">' + fcvEscape(fcvNormalizeTitle(fcvPickVal([evt.summary, evt.title]))) + '</div>';
+        var date = fcvFormatDate(fcvGetEventDate(evt));
+        if (date) { html += '<div class="fcv-alert-date">' + fcvEscape(date) + '</div>'; }
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function renderFcvAlertItem(alert, isResolved) {
+    var name     = fcvAlertName(alert);
+    var severity = fcvAlertSeverity(alert);
+    var reason   = '';
+    var action   = '';
+    var date     = '';
+    var source   = '';
+
+    if (typeof alert === 'object') {
+      reason = fcvPickVal([alert.reason, alert.Reason, alert.description]);
+      action = fcvPickVal([alert.recommendedAction, alert.Recommended_Action, alert.action]);
+      date   = fcvPickVal([alert.createdAt, alert.Created_At, alert.date, alert.Date]);
+      source = fcvPickVal([alert.sourceSystem, alert.Source_System, alert.source]);
+    }
+
+    var severityClass = severity === 'high' ? '' : (severity === 'low' ? ' fcv-alert-item--low' : ' fcv-alert-item--medium');
+    var resolvedClass = isResolved ? ' fcv-alert-item--resolved' : '';
+
+    var html = '<div class="fcv-alert-item' + severityClass + resolvedClass + '">';
+
+    if (!isResolved) {
+      var sevLabel = severity === 'high' ? 'High' : (severity === 'low' ? 'Low' : 'Medium');
+      var sevClass = severity === 'high' ? '' : (' fcv-alert-severity--' + severity);
+      html += '<span class="fcv-alert-severity' + sevClass + '">' + fcvEscape(sevLabel) + '</span>';
+    }
+
+    html += '<div class="fcv-alert-name">' + fcvEscape(name || 'Operational Alert') + '</div>';
+    if (reason) { html += '<div class="fcv-alert-reason">' + fcvEscape(fcvTruncate(reason, 160)) + '</div>'; }
+    if (action) { html += '<div class="fcv-alert-action">→ ' + fcvEscape(fcvTruncate(action, 120)) + '</div>'; }
+
+    var alertMeta = [];
+    if (date)   { alertMeta.push(fcvFormatDate(date)); }
+    if (source) { alertMeta.push(source); }
+    if (alertMeta.length) { html += '<div class="fcv-alert-date">' + fcvEscape(alertMeta.join(' · ')) + '</div>'; }
+
+    html += '</div>';
+    return html;
+  }
+
+  function fcvToggleResolvedAlerts(btn) {
+    var list = document.getElementById('fcvResolvedAlertsList');
+    if (!list) { return; }
+    var isHidden = list.style.display === 'none';
+    list.style.display = isHidden ? 'block' : 'none';
+    btn.textContent = isHidden ? '▾ Hide resolved alerts' : '▸ Show resolved alerts';
+  }
+</script>

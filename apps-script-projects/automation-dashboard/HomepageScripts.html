@@ -669,6 +669,14 @@
         return false;
       });
 
+      // Rainbow Interaction Standard: double-click → Full Claim Workspace
+      element.addEventListener('dblclick', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var claimId = item.claimId || item.targetId || '';
+        rainbowOpenFullClaim_(claimId);
+      });
+
       element.addEventListener('keydown', function(event) {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -869,6 +877,14 @@
         return false;
       });
 
+      // Rainbow Interaction Standard: double-click → Full Claim Workspace
+      element.addEventListener('dblclick', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var claimId = item.claimId || item.targetId || '';
+        rainbowOpenFullClaim_(claimId);
+      });
+
       element.addEventListener('keydown', function(event) {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -889,6 +905,13 @@
       targetRoute: item.targetRoute || '',
       sourceSection: item.sourceSection || ''
     });
+
+    // When a homepage drilldown targets a specific claim, open the Full Claim Workspace.
+    const claimId = item.claimId || item.targetId || '';
+    if (claimId && item.targetRoute.indexOf('claimShell') !== -1 && item.targetRoute.indexOf('claimId=') !== -1) {
+      navigateToRainbowRoute_('?view=fullClaim&claimId=' + encodeURIComponent(claimId));
+      return;
+    }
 
     navigateToRainbowRoute_(item.targetRoute);
   }

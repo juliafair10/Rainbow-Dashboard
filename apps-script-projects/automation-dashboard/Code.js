@@ -762,6 +762,10 @@ function doGet(e) {
     return renderClaimsShell_(e, 'Rainbow Claims Workspace');
   }
 
+  if (view === 'fullClaim') {
+    return renderFullClaimViewShell_(e, 'Rainbow Full Claim');
+  }
+
   if (view === 'intake') {
     return HtmlService
       .createTemplateFromFile('IntakeView')
@@ -774,6 +778,23 @@ function doGet(e) {
     .createHtmlOutputFromFile('Index')
     .setTitle(DASHBOARD_CONFIG.dashboardTitle)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function renderFullClaimViewShell_(e, title) {
+  const params = e && e.parameter ? e.parameter : {};
+  const template = HtmlService.createTemplateFromFile('ClaimViewShell');
+
+  template.claimId = String(params.claimId || '');
+  template.dashboardBaseUrl = ScriptApp.getService().getUrl() || '';
+
+  return template
+    .evaluate()
+    .setTitle(title || 'Rainbow Full Claim')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function getFullClaimPageData(claimId) {
+  return getClaimDetailPageData(claimId || '');
 }
 
 function renderClaimsShell_(e, title) {

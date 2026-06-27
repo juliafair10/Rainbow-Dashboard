@@ -1,0 +1,499 @@
+<script>
+  // ============================================================
+  // Rainbow Full Claim View — ClaimViewScripts.html
+  // Initialization, data loading, notes, compliance, utilities
+  // ============================================================
+
+  var fcvDetail = null;
+  var fcvClaimId = '';
+  var fcvActiveTimelineFilter = 'all';
+  var fcvResolvedConditionsVisible = false;
+  var fcvResolvedAlertsVisible = false;
+
+  document.addEventListener('DOMContentLoaded', function() {
+    initFullClaimView();
+  });
+
+  // ── Initialization ──────────────────────────────────────────
+
+  function initFullClaimView() {
+    fcvClaimId = (window.RAINBOW_FULL_CLAIM_ID || '').trim();
+
+    document.querySelectorAll('[data-fcv-nav]').forEach(function(btn) {
+      btn.addEventListener('click', function(event) {
+        event.preventDefault();
+        fcvNavigate(btn.getAttribute('data-fcv-nav') || '?view=claimShell');
+      });
+    });
+
+    if (!fcvClaimId) {
+      fcvRenderError('fcvHeader', 'No claim ID specified. Please open this page from a claim row or drawer.');
+      return;
+    }
+
+    loadFullClaimData(fcvClaimId);
+  }
+
+  function loadFullClaimData(claimId) {
+    google.script.run
+      .withSuccessHandler(function(response) {
+        var detail = response && response.data ? response.data : response;
+        fcvDetail = detail;
+        onFullClaimDataLoaded(detail);
+      })
+      .withFailureHandler(function(error) {
+        var msg = error && error.message ? error.message : String(error || 'Unknown error');
+        fcvRenderError('fcvHeader', 'Unable to load claim data: ' + msg);
+      })
+      .getFullClaimPageData(claimId);
+  }
+
+  function onFullClaimDataLoaded(detail) {
+    if (!detail) {
+      fcvRenderError('fcvHeader', 'Claim data returned empty.');
+      return;
+    }
+
+    // Render immediately: header, action bar, sidebar
+    renderFcvHeader(detail);
+    renderFcvActionBar(detail);
+    renderFcvSidebar(detail);
+
+    // Row 1: Operational Summary + Intelligence
+    renderFcvOperationalSummary(detail);
+    renderFcvOperationalIntelligence(detail);
+
+    // Row 2: Timeline (left) + Conditions + Alerts (right)
+    renderFcvTimeline(detail);
+    renderFcvConditions(detail);
+    renderFcvAlerts(detail);
+
+    // Row 3: Notes + Compliance
+    renderFcvNotes(detail);
+    renderFcvCompliance(detail);
+
+    // Row 4: Financial Tracks
+    renderFcvFinancialTracks(detail);
+
+    // Row 5: External Links
+    renderFcvExternalLinks(detail);
+
+    // Row 6: Documents (async deferred)
+    renderFcvDocuments(detail);
+  }
+
+  // ── Navigation ──────────────────────────────────────────────
+
+  function fcvNavigate(route) {
+    var baseUrl = window.RAINBOW_DASHBOARD_BASE_URL || '';
+    var normalized = (route && route.charAt(0) === '?') ? route : ('?' + String(route || '').replace(/^\?/, ''));
+    var target = baseUrl ? (baseUrl + normalized) : normalized;
+
+    try {
+      window.top.location.href = target;
+    } catch (e) {
+      window.location.href = target;
+    }
+  }
+
+  function fcvOpenClaimDrawer(claimId) {
+    fcvNavigate('?view=claimShell&claimId=' + encodeURIComponent(claimId));
+  }
+
+  // ── Row 3 Left: Operational Notes ───────────────────────────
+
+  function renderFcvNotes(detail) {
+    var el = document.getElementById('fcvNotes');
+    if (!el) { return; }
+
+    var events = fcvGetTimelineEvents(detail);
+    var noteEvents = events.filter(function(evt) {
+      var type = fcvStrLower(fcvPickVal([evt.eventType, evt.type, evt.Event_Type, evt.source, evt.sourceSystem]));
+      var summary = fcvStrLower(fcvPickVal([evt.summary, evt.title, evt.Summary]));
+      var combined = type + ' ' + summary;
+      return combined.indexOf('note') !== -1 ||
+             combined.indexOf('historical') !== -1 ||
+             combined.indexOf('communication') !== -1 ||
+             combined.indexOf('email') !== -1 ||
+             combined.indexOf('eoj') !== -1;
+    });
+
+    // Also include all events sorted newest-first as "operational notes"
+    var allSorted = events.slice().sort(function(a, b) {
+      return new Date(fcvGetEventDate(b)) - new Date(fcvGetEventDate(a));
+    });
+
+    var displayEvents = noteEvents.length ? noteEvents : allSorted.slice(0, 15);
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>Operational Notes</h2>';
+    html += '<p class="fcv-card-description">Chronological claim activity — notes, communications, and EOJ events.</p>';
+    html += '</div>';
+
+    if (!displayEvents.length) {
+      html += '<div class="fcv-card-empty">No notes or communications recorded yet.</div>';
+    } else {
+      html += '<div class="fcv-note-list">';
+      displayEvents.slice(0, 20).forEach(function(evt) {
+        html += renderFcvNoteItem(evt);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  function renderFcvNoteItem(evt) {
+    var type = fcvStrLower(fcvPickVal([evt.eventType, evt.type, evt.source, evt.sourceSystem]));
+    var summary = fcvPickVal([evt.summary, evt.title, evt.Summary]);
+    var detail = fcvPickVal([evt.detail, evt.details, evt.description]);
+    var actor = fcvPickVal([evt.actor, evt.Actor, evt.owner]);
+    var date = fcvFormatDate(fcvGetEventDate(evt));
+
+    var icon = '📝';
+    if (type.indexOf('eoj') !== -1) { icon = '✅'; }
+    else if (type.indexOf('historical') !== -1) { icon = '📋'; }
+    else if (type.indexOf('email') !== -1 || type.indexOf('communication') !== -1) { icon = '✉️'; }
+    else if (type.indexOf('system') !== -1 || type.indexOf('intelligence') !== -1) { icon = '⚙️'; }
+    else if (type.indexOf('payment') !== -1) { icon = '💰'; }
+    else if (type.indexOf('revision') !== -1 || type.indexOf('carrier') !== -1 || type.indexOf('insurance') !== -1) { icon = '📄'; }
+    else if (type.indexOf('monitor') !== -1) { icon = '🔍'; }
+
+    var metaParts = [];
+    if (date) { metaParts.push(date); }
+    if (actor) { metaParts.push(actor); }
+
+    var html = '<div class="fcv-note-item">';
+    html += '<span class="fcv-note-icon">' + icon + '</span>';
+    html += '<div class="fcv-note-body">';
+    html += '<div class="fcv-note-title">' + fcvEscape(fcvNormalizeTitle(summary)) + '</div>';
+    if (metaParts.length) {
+      html += '<div class="fcv-note-meta">' + fcvEscape(metaParts.join(' • ')) + '</div>';
+    }
+    if (detail && detail !== summary) {
+      var cleanDetail = fcvTruncate(detail, 200);
+      html += '<div class="fcv-note-detail">' + fcvEscape(cleanDetail) + '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // ── Row 3 Right: Compliance ──────────────────────────────────
+
+  function renderFcvCompliance(detail) {
+    var el = document.getElementById('fcvCompliance');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var header = detail.claimHeader || {};
+    var ctx = detail.workspaceContext || {};
+    var foundation = detail.claimFoundation || {};
+    var requirements = (ctx.requirements && ctx.requirements.open) ||
+                       (foundation.requirements && foundation.requirements.open) ||
+                       header.openRequirements ||
+                       [];
+    var openComplianceCount = 0;
+
+    if (detail.operationalContext && detail.operationalContext.openComplianceActions) {
+      openComplianceCount = Number(detail.operationalContext.openComplianceActions || 0);
+    }
+
+    var alerts = fcvGetActiveAlerts(detail);
+    var missingLinks = fcvGetMissingLinks(detail);
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>Compliance</h2>';
+    html += '<p class="fcv-card-description">Outstanding follow-up, missing documents, and open requirements.</p>';
+    html += '</div>';
+
+    var hasContent = false;
+
+    // Open compliance action count
+    if (openComplianceCount > 0) {
+      hasContent = true;
+      html += '<p class="fcv-section-label">Open Compliance Actions</p>';
+      html += '<div class="fcv-compliance-list">';
+      html += '<div class="fcv-compliance-item fcv-compliance-item--missing">';
+      html += '<div class="fcv-compliance-label">' + openComplianceCount + ' Open Compliance Action' + (openComplianceCount === 1 ? '' : 's') + '</div>';
+      html += '<div class="fcv-compliance-meta">Review in Fusion or Claims Workspace</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+
+    // Open requirements
+    if (Array.isArray(requirements) && requirements.length) {
+      hasContent = true;
+      html += '<p class="fcv-section-label" style="margin-top: 12px;">Open Requirements</p>';
+      html += '<div class="fcv-compliance-list">';
+      requirements.forEach(function(req) {
+        var label = typeof req === 'string' ? req : fcvPickVal([req.label, req.name, req.requirement, req.description]);
+        if (!label) { return; }
+        html += '<div class="fcv-compliance-item">';
+        html += '<div class="fcv-compliance-label">' + fcvEscape(label) + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Missing links
+    if (missingLinks.length) {
+      hasContent = true;
+      html += '<p class="fcv-section-label" style="margin-top: 12px;">Missing Links</p>';
+      html += '<div class="fcv-compliance-list">';
+      missingLinks.forEach(function(link) {
+        var label = fcvPickVal([link.linkType, link.label, link.type, String(link)]);
+        if (!label) { return; }
+        html += '<div class="fcv-compliance-item fcv-compliance-item--missing">';
+        html += '<div class="fcv-compliance-label">' + fcvEscape(label) + ' — Not linked</div>';
+        html += '<div class="fcv-compliance-meta">Add this link to resolve alert</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (!hasContent) {
+      html += '<div class="fcv-card-empty">No outstanding compliance items.</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  // ── Utility: External Links ──────────────────────────────────
+
+  function renderFcvExternalLinks(detail) {
+    var el = document.getElementById('fcvExternalLinks');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var links = Array.isArray(detail.externalLinks) ? detail.externalLinks : [];
+
+    // Canonical link types to always show
+    var knownTypes = [
+      { key: 'fusion',       label: 'Fusion',          icon: '📂' },
+      { key: 'claimfolder',  label: 'Claim Folder',    icon: '📁' },
+      { key: 'calendar',     label: 'Calendar',         icon: '📅' },
+      { key: 'xactanalysis', label: 'XactAnalysis',    icon: '📊' },
+      { key: 'xactimate',    label: 'Xactimate',       icon: '📊' },
+      { key: 'symbility',    label: 'Symbility',       icon: '📊' },
+      { key: 'claimx',       label: 'ClaimX',          icon: '🔗' },
+      { key: 'photos',       label: 'Photos',          icon: '📷' },
+      { key: 'lab',          label: 'Lab',             icon: '🧪' },
+      { key: 'asbestos',     label: 'Asbestos',        icon: '⚠️' },
+      { key: 'drive',        label: 'Drive Folder',    icon: '☁️' },
+      { key: 'customer',     label: 'Customer Folder', icon: '👤' },
+      { key: 'carrier',      label: 'Carrier Portal',  icon: '🏢' }
+    ];
+
+    // Build a lookup of available links
+    var resolved = {};
+    links.forEach(function(link) {
+      var url = fcvGetLinkUrl(link);
+      if (!url) { return; }
+      var typeStr = fcvStrLower(fcvPickVal([link.linkType, link.Link_Type, link.label, link.type]));
+      knownTypes.forEach(function(kt) {
+        if (typeStr.indexOf(kt.key) !== -1) {
+          if (!resolved[kt.key]) { resolved[kt.key] = url; }
+        }
+      });
+      // Also try fusion/drive by direct field
+      if (!resolved.fusion && (link.Fusion_URL || link.fusionUrl)) {
+        resolved.fusion = link.Fusion_URL || link.fusionUrl;
+      }
+      if (!resolved.drive && (link.Drive_Folder || link.driveFolder)) {
+        resolved.drive = link.Drive_Folder || link.driveFolder;
+      }
+      if (!resolved.xactanalysis && (link.XactAnalysis || link.XactAnalysis_URL)) {
+        resolved.xactanalysis = link.XactAnalysis || link.XactAnalysis_URL;
+      }
+    });
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>External Links</h2>';
+    html += '<p class="fcv-card-description">All operational links for this claim. Missing links appear with warning styling.</p>';
+    html += '</div>';
+    html += '<div class="fcv-link-grid">';
+
+    knownTypes.forEach(function(kt) {
+      var url = resolved[kt.key] || '';
+      if (url) {
+        html += '<a class="fcv-link-card" href="' + fcvEscape(url) + '" target="_blank" rel="noopener noreferrer">';
+        html += '<span class="fcv-link-icon">' + kt.icon + '</span>';
+        html += '<span class="fcv-link-title">' + fcvEscape(kt.label) + '</span>';
+        html += '<span class="fcv-link-open">Open ↗</span>';
+        html += '</a>';
+      } else {
+        html += '<div class="fcv-link-card fcv-link-card--missing">';
+        html += '<span class="fcv-link-icon">' + kt.icon + '</span>';
+        html += '<span class="fcv-link-title">' + fcvEscape(kt.label) + '</span>';
+        html += '<span class="fcv-link-missing-label">Not linked</span>';
+        html += '</div>';
+      }
+    });
+
+    html += '</div>';
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  // ── Shared Data Helpers ──────────────────────────────────────
+
+  function fcvGetTimelineEvents(detail) {
+    detail = detail || {};
+    var ts = detail.timelineSection || {};
+    if (Array.isArray(ts.events) && ts.events.length) { return ts.events; }
+    if (Array.isArray(ts.timelineEvents) && ts.timelineEvents.length) { return ts.timelineEvents; }
+    if (detail.fullClaimTimeline && Array.isArray(detail.fullClaimTimeline.items)) {
+      return detail.fullClaimTimeline.items;
+    }
+    if (Array.isArray(detail.recentTimelineEvents) && detail.recentTimelineEvents.length) {
+      return detail.recentTimelineEvents;
+    }
+    var foundation = detail.claimFoundation || {};
+    if (foundation.timeline && Array.isArray(foundation.timeline.events)) {
+      return foundation.timeline.events;
+    }
+    return [];
+  }
+
+  function fcvGetActiveConditions(detail) {
+    detail = detail || {};
+    var ctx = detail.workspaceContext || {};
+    var foundation = detail.claimFoundation || {};
+    var header = detail.claimHeader || {};
+    return (ctx.conditions && Array.isArray(ctx.conditions.active) ? ctx.conditions.active : null) ||
+           (foundation.conditions && Array.isArray(foundation.conditions.active) ? foundation.conditions.active : null) ||
+           (Array.isArray(header.activeConditions) ? header.activeConditions : []);
+  }
+
+  function fcvGetActiveAlerts(detail) {
+    detail = detail || {};
+    var ctx = detail.workspaceContext || {};
+    var foundation = detail.claimFoundation || {};
+    var header = detail.claimHeader || {};
+    return (ctx.alerts && Array.isArray(ctx.alerts.active) ? ctx.alerts.active : null) ||
+           (foundation.alerts && Array.isArray(foundation.alerts.active) ? foundation.alerts.active : null) ||
+           (Array.isArray(header.operationalAlerts) ? header.operationalAlerts : []) ||
+           (Array.isArray(header.activeAlerts) ? header.activeAlerts : []);
+  }
+
+  function fcvGetMissingLinks(detail) {
+    detail = detail || {};
+    var header = detail.claimHeader || {};
+    return Array.isArray(header.missingLinks) ? header.missingLinks : [];
+  }
+
+  function fcvGetLinkUrl(link) {
+    link = link || {};
+    return link.url || link.URL || link.Link_URL || link['Link URL'] ||
+           link.Fusion_URL || link.fusionUrl || link['Fusion URL'] ||
+           link.XactAnalysis || link.XactAnalysis_URL || link.xactAnalysisUrl ||
+           link.Xactimate_URL || link.xactimateUrl ||
+           link.Symbility || link.Symbility_URL || link.symbilityUrl ||
+           link.ClaimX || link.ClaimX_URL || link.claimXUrl ||
+           link.Drive_Folder || link.driveFolder || link['Drive Folder'] || '';
+  }
+
+  function fcvGetEventDate(evt) {
+    evt = evt || {};
+    var candidates = [evt.eventDate, evt.date, evt.Date, evt.createdAt, evt.timestamp];
+    for (var i = 0; i < candidates.length; i++) {
+      var v = candidates[i];
+      if (v instanceof Date && !isNaN(v.getTime())) { return v; }
+      if (v && String(v).trim()) { return v; }
+    }
+    return '';
+  }
+
+  // ── Utility: Value Extraction ────────────────────────────────
+
+  function fcvPickVal(candidates) {
+    candidates = candidates || [];
+    for (var i = 0; i < candidates.length; i++) {
+      var v = candidates[i];
+      if (v === null || v === undefined) { continue; }
+      if (Array.isArray(v) || typeof v === 'object') { continue; }
+      var s = String(v).trim();
+      var lo = s.toLowerCase();
+      if (s && lo !== 'undefined' && lo !== 'null' && lo !== 'nan') { return s; }
+    }
+    return '';
+  }
+
+  function fcvStrLower(val) {
+    return String(val || '').toLowerCase();
+  }
+
+  function fcvConditionLabel(condition) {
+    if (!condition) { return ''; }
+    if (typeof condition === 'string') { return condition; }
+    return fcvPickVal([
+      condition.label, condition.Label, condition.conditionType,
+      condition.Condition_Type, condition.name, condition.Name,
+      condition.type, condition.title
+    ]);
+  }
+
+  function fcvAlertName(alert) {
+    if (!alert) { return ''; }
+    if (typeof alert === 'string') { return alert; }
+    return fcvPickVal([
+      alert.alertName, alert.alertType, alert.Alert_Type,
+      alert.Alert_Name, alert.name, alert.type, alert.summary
+    ]);
+  }
+
+  function fcvAlertSeverity(alert) {
+    if (!alert || typeof alert === 'string') { return 'medium'; }
+    return fcvStrLower(fcvPickVal([alert.severity, alert.Severity, alert.priority])) || 'medium';
+  }
+
+  // ── Utility: Formatting ──────────────────────────────────────
+
+  function fcvFormatDate(val) {
+    if (!val) { return ''; }
+    var d = new Date(val);
+    if (isNaN(d.getTime())) { return String(val); }
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fcvNormalizeTitle(text) {
+    text = fcvPickVal([text]);
+    if (!text) { return 'Timeline Event'; }
+    text = text.replace(/\s+/g, ' ')
+               .replace(/\s+-\s*,?\s*-?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{4}.*/i, '')
+               .replace(/\s*,?\s*-\s*,?\s*$/g, '')
+               .trim();
+    if (!text) { return 'Timeline Event'; }
+    if (text.length > 120) { return text.substring(0, 117).trim() + '...'; }
+    return text;
+  }
+
+  function fcvTruncate(val, max) {
+    var s = fcvPickVal([val]);
+    if (!s || s.length <= max) { return s; }
+    return s.slice(0, max - 1).trim() + '…';
+  }
+
+  function fcvEscape(val) {
+    return String(val == null ? '' : val)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function fcvRenderError(targetId, message) {
+    var el = document.getElementById(targetId);
+    if (el) {
+      el.innerHTML = '<div class="fcv-card" style="color: rgba(220,80,40,0.85);">' +
+        fcvEscape(message) + '</div>';
+    }
+  }
+</script>

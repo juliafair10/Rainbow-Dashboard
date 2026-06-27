@@ -287,6 +287,13 @@
           window.history.pushState({ routeContext: routeContext }, '', buildClaimsRouteUrl_(routeContext));
           loadClaimDetail(claimId);
         });
+
+        // Rainbow Interaction Standard: double-click → Full Claim Workspace
+        row.addEventListener('dblclick', function(event) {
+          event.stopPropagation();
+          const claimId = row.getAttribute('data-claim-id');
+          rainbowOpenFullClaim_(claimId || '');
+        });
       }
     );
 
@@ -1025,7 +1032,12 @@
       event.preventDefault();
       event.stopPropagation();
 
-      renderFullClaimWorkspace_(detail);
+      const claimId = button.getAttribute('data-open-full-claim') || (detail && detail.claimId) || '';
+      if (claimId) {
+        navigateClaimsRoute_('?view=fullClaim&claimId=' + encodeURIComponent(claimId));
+      } else {
+        renderFullClaimWorkspace_(detail);
+      }
     });
   }
 

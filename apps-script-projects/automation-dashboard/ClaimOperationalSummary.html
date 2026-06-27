@@ -1,0 +1,372 @@
+<script>
+  // ============================================================
+  // ClaimOperationalSummary.html
+  // Renders: Header, Action Bar, Row 1 Left (Op Summary),
+  //          Row 1 Right (Op Intelligence)
+  // ============================================================
+
+  // ── Header ───────────────────────────────────────────────────
+
+  function renderFcvHeader(detail) {
+    var el = document.getElementById('fcvHeader');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var ctx = detail.workspaceContext || {};
+    var foundation = detail.claimFoundation || {};
+    var header = detail.claimHeader || {};
+    var fullHeader = detail.fullClaimHeader || {};
+
+    var name = fcvPickVal([ctx.claim && ctx.claim.displayName, fullHeader.title,
+                           header.displayName, header.customerName,
+                           header.claimNumber, fcvClaimId]) || 'Unnamed Claim';
+    var claimNumber = fcvPickVal([ctx.claim && ctx.claim.claimNumber, header.claimNumber, fullHeader.claimNumber]);
+    var jobNumber   = fcvPickVal([ctx.claim && ctx.claim.jobNumber,   header.jobNumber,   fullHeader.jobNumber]);
+    var carrier     = fcvPickVal([header.carrier, header.Carrier, foundation.raw && foundation.raw.claimHeader && foundation.raw.claimHeader.Carrier]);
+    var lossType    = fcvPickVal([header.lossType, header.Loss_Type, header.loss_type]);
+    var dateOfLoss  = fcvPickVal([header.dateOfLoss, header.Date_of_Loss, header.Date_Of_Loss, header.lossDate]);
+    var address     = fcvPickVal([ctx.claim && ctx.claim.propertyAddress, header.propertyAddress, header.address]);
+
+    var lifecycle = fcvPickVal([ctx.lifecycle && ctx.lifecycle.state, header.lifecycleState]);
+    var health    = fcvPickVal([ctx.health && ctx.health.level, header.healthLevel]);
+    var owner     = fcvPickVal([ctx.owner && ctx.owner.ownerLabel, fullHeader.ownerLabel]);
+    var condition = fcvPickVal([ctx.conditions && ctx.conditions.primaryCondition, fullHeader.primaryCondition]);
+    var alertCount = (ctx.alerts && ctx.alerts.count != null) ? ctx.alerts.count
+                   : (header.alertCount != null ? header.alertCount : fcvGetActiveAlerts(detail).length);
+
+    // Subline
+    var subParts = [];
+    if (claimNumber) { subParts.push('Claim ' + claimNumber); }
+    if (jobNumber)   { subParts.push('Job ' + jobNumber); }
+    if (carrier)     { subParts.push(carrier); }
+    if (address)     { subParts.push(address); }
+
+    // Intel items
+    var lastActivity = fcvPickVal([ctx.lastMeaningfulActivity, fullHeader.lastMeaningfulActivity, header.lastMeaningfulActivityAt]);
+    var nextAction   = fcvPickVal([ctx.nextAction && ctx.nextAction.title, fullHeader.nextAction, header.nextAction]);
+    var waitingOn    = fcvPickVal([ctx.waitingOn, condition]);
+
+    var html = '<div class="fcv-header">';
+    html += '<div class="fcv-header-top">';
+
+    // Left: Identity
+    html += '<div class="fcv-header-identity">';
+    html += '<p class="fcv-header-eyebrow">Full Claim Workspace</p>';
+    html += '<h1 class="fcv-header-name">' + fcvEscape(name) + '</h1>';
+    if (subParts.length) {
+      html += '<div class="fcv-header-subline">' + fcvEscape(subParts.join(' · ')) + '</div>';
+    }
+    html += '</div>';
+
+    // Right: Badges
+    html += '<div class="fcv-header-badges">';
+    html += '<div class="fcv-badge-row">';
+    if (lifecycle) { html += fcvRenderBadge('Lifecycle', lifecycle, 'lifecycle'); }
+    if (health)    { html += fcvRenderBadge('Health', health, 'health'); }
+    if (owner)     { html += fcvRenderBadge('Owner', owner, 'owner'); }
+    html += '</div>';
+    html += '<div class="fcv-badge-row">';
+    if (condition) { html += fcvRenderBadge('Condition', condition, 'condition'); }
+    if (alertCount > 0) { html += fcvRenderBadge('Alerts', String(alertCount) + ' Open', 'alert'); }
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>'; // header-top
+
+    // Intel row
+    var intelItems = [
+      { label: 'Job #',          value: jobNumber || 'Not recorded' },
+      { label: 'Carrier',        value: carrier || 'Not recorded' },
+      { label: 'Loss Type',      value: lossType || 'Not recorded' },
+      { label: 'Date of Loss',   value: dateOfLoss ? fcvFormatDate(dateOfLoss) : 'Not recorded' },
+      { label: 'Last Activity',  value: lastActivity ? fcvFormatDate(lastActivity) : 'Not recorded' }
+    ];
+
+    html += '<div class="fcv-header-intel">';
+    intelItems.forEach(function(item) {
+      html += '<div class="fcv-intel-item">';
+      html += '<span>' + fcvEscape(item.label) + '</span>';
+      html += '<strong>' + fcvEscape(item.value || 'Not recorded') + '</strong>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    html += '</div>'; // fcv-header
+    el.innerHTML = html;
+  }
+
+  function fcvRenderBadge(label, value, modifier) {
+    return '<span class="fcv-badge fcv-badge--' + fcvEscape(modifier) + '">' +
+      '<span>' + fcvEscape(label) + '</span>' +
+      '<strong>' + fcvEscape(value || 'Not recorded') + '</strong>' +
+      '</span>';
+  }
+
+  // ── Action Bar ───────────────────────────────────────────────
+
+  function renderFcvActionBar(detail) {
+    var el = document.getElementById('fcvActionBar');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var links = Array.isArray(detail.externalLinks) ? detail.externalLinks : [];
+
+    // Build URL lookup
+    var urlMap = {};
+    links.forEach(function(link) {
+      var url = fcvGetLinkUrl(link);
+      if (!url) { return; }
+      var type = fcvStrLower(fcvPickVal([link.linkType, link.Link_Type, link.label, link.type]));
+      if (type.indexOf('fusion') !== -1 || (link.Fusion_URL || link.fusionUrl)) {
+        urlMap.fusion = url || link.Fusion_URL || link.fusionUrl;
+      }
+      if (type.indexOf('xact') !== -1 || type.indexOf('symbility') !== -1) {
+        urlMap.estimate = url;
+      }
+      if (type.indexOf('drive') !== -1 || (link.Drive_Folder || link.driveFolder)) {
+        urlMap.drive = url || link.Drive_Folder || link.driveFolder;
+      }
+      if (type.indexOf('claimx') !== -1) { urlMap.claimx = url; }
+      if (type.indexOf('photo') !== -1)  { urlMap.photos = url; }
+      if (type.indexOf('calendar') !== -1) { urlMap.calendar = url; }
+    });
+
+    var claimId = fcvClaimId;
+
+    function makeBtn(label, url, primary) {
+      if (url) {
+        return '<a class="fcv-action-btn' + (primary ? ' fcv-action-btn--primary' : '') +
+               '" href="' + fcvEscape(url) + '" target="_blank" rel="noopener noreferrer">' +
+               fcvEscape(label) + '</a>';
+      }
+      return '<button type="button" class="fcv-action-btn" disabled>' + fcvEscape(label) + '</button>';
+    }
+
+    var html = '<div class="fcv-action-bar">';
+    html += makeBtn('📂 Open Fusion', urlMap.fusion || '');
+    html += makeBtn('📊 Open XactAnalysis', urlMap.estimate || '');
+    html += makeBtn('📊 Open Symbility', '');
+    html += makeBtn('📁 Claim Folder', urlMap.drive || '');
+    html += makeBtn('📷 Photos', urlMap.photos || '');
+    html += makeBtn('📅 Calendar', urlMap.calendar || '');
+    html += '<button type="button" class="fcv-action-btn" onclick="fcvOpenClaimDrawer(' + JSON.stringify(claimId) + ')">🗂 Open Drawer</button>';
+    html += '<button type="button" class="fcv-action-btn" onclick="fcvNavigate(\'?view=claimShell\')"  >← Claims Workspace</button>';
+    html += '</div>';
+
+    el.innerHTML = html;
+  }
+
+  // ── Row 1 Left: Operational Summary ─────────────────────────
+
+  function renderFcvOperationalSummary(detail) {
+    var el = document.getElementById('fcvOperationalSummary');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var ctx = detail.workspaceContext || {};
+    var opSummary = detail.fullClaimOperationalSummary || detail.operationalSummary || {};
+    var foundation = detail.claimFoundation || {};
+    var header = detail.claimHeader || {};
+    var fullHeader = detail.fullClaimHeader || {};
+
+    var summaryText = fcvPickVal([
+      ctx.summary && ctx.summary.operationalSummary,
+      opSummary.text,
+      foundation.summary && foundation.summary.operationalSummary
+    ]) || 'Operational summary not available for this claim.';
+
+    var supportingText = fcvPickVal([
+      ctx.summary && ctx.summary.supportingText,
+      opSummary.supportingText
+    ]) || 'Based on lifecycle, ownership, conditions, requirements, and recent activity.';
+
+    var lifecycle   = fcvPickVal([ctx.lifecycle && ctx.lifecycle.state, header.lifecycleState]) || 'Not recorded';
+    var owner       = fcvPickVal([ctx.owner && ctx.owner.ownerLabel, fullHeader.ownerLabel]) || 'Unassigned';
+    var health      = fcvPickVal([ctx.health && ctx.health.level, header.healthLevel]) || 'Not rated';
+    var condition   = fcvPickVal([ctx.conditions && ctx.conditions.primaryCondition, fullHeader.primaryCondition]) || 'No active condition';
+    var lastActiv   = fcvPickVal([ctx.lastMeaningfulActivity, fullHeader.lastMeaningfulActivity]);
+    var nextAction  = fcvPickVal([ctx.nextAction && ctx.nextAction.title, fullHeader.nextAction, header.nextAction]) || 'No recommended action';
+    var openReqCount = (ctx.requirements && ctx.requirements.count != null) ? ctx.requirements.count
+                     : (foundation.requirements ? foundation.requirements.count || 0 : 0);
+    var waitingOn   = fcvPickVal([ctx.waitingOn]) || condition;
+
+    var attentionReason = fcvPickVal([ctx.attentionReason, header.attentionReason, header.healthReason]);
+    var openRequirements = (ctx.requirements && Array.isArray(ctx.requirements.open)) ? ctx.requirements.open
+                         : (foundation.requirements && Array.isArray(foundation.requirements.open)) ? foundation.requirements.open
+                         : [];
+
+    var html = '<div class="fcv-op-summary-card">';
+    html += '<div class="fcv-card-header"><h2>Operational Summary</h2></div>';
+    html += '<p class="fcv-op-summary-text">' + fcvEscape(summaryText) + '</p>';
+    html += '<div class="fcv-muted">' + fcvEscape(supportingText) + '</div>';
+
+    // 6-fact grid
+    var facts = [
+      { label: 'Lifecycle',       value: lifecycle },
+      { label: 'Owner',           value: owner },
+      { label: 'Health',          value: health },
+      { label: 'Condition',       value: condition },
+      { label: 'Last Activity',   value: lastActiv ? fcvFormatDate(lastActiv) : 'Not recorded' },
+      { label: 'Next Action',     value: fcvTruncate(nextAction, 60) }
+    ];
+
+    html += '<div class="fcv-op-summary-facts">';
+    facts.forEach(function(f) {
+      html += '<div class="fcv-fact">';
+      html += '<span>' + fcvEscape(f.label) + '</span>';
+      html += '<strong>' + fcvEscape(f.value || 'Not recorded') + '</strong>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    // Current responsibility + open requirements
+    if (openRequirements.length || openReqCount > 0) {
+      html += '<div style="margin-top: 14px;">';
+      html += '<p class="fcv-section-label">Open Requirements</p>';
+      if (openRequirements.length) {
+        openRequirements.slice(0, 4).forEach(function(req) {
+          var label = typeof req === 'string' ? req : fcvPickVal([req.label, req.name, req.requirement, req.description]);
+          if (!label) { return; }
+          html += '<div class="fcv-kv">';
+          html += '<span class="fcv-kv-label">→</span>';
+          html += '<span class="fcv-kv-value">' + fcvEscape(label) + '</span>';
+          html += '</div>';
+        });
+      } else if (openReqCount > 0) {
+        html += '<div class="fcv-muted">' + openReqCount + ' open requirement' + (openReqCount === 1 ? '' : 's') + '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (attentionReason) {
+      html += '<div style="margin-top: 12px;">';
+      html += '<p class="fcv-section-label">Why Attention Is Needed</p>';
+      html += '<div class="fcv-muted">' + fcvEscape(attentionReason) + '</div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  // ── Row 1 Right: Operational Intelligence ───────────────────
+
+  function renderFcvOperationalIntelligence(detail) {
+    var el = document.getElementById('fcvOperationalIntelligence');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var oi = detail.operationalIntelligence || {};
+    var ctx = detail.workspaceContext || {};
+    var foundation = detail.claimFoundation || {};
+    var header = detail.claimHeader || {};
+
+    var rows = [];
+
+    // Operational priority / stale risk
+    var priority = fcvPickVal([oi.operationalPriority, ctx.operationalPriority]) || 'Normal';
+    var staleRisk = oi.staleRisk === true || ctx.staleRisk === true;
+    var days = (oi.health && oi.health.daysSinceMeaningfulActivity) ||
+               (ctx.health && ctx.health.daysSinceMeaningfulActivity) || 0;
+
+    if (staleRisk || days > 14) {
+      rows.push({ icon: '⚠️', level: 'risk', label: 'Stale Risk', value: days > 0 ? days + ' days since last activity' : 'No recent activity recorded' });
+    }
+
+    // Waiting on
+    var waitingOn = fcvPickVal([oi.waitingOn, ctx.waitingOn]) || '';
+    if (waitingOn && waitingOn.toLowerCase() !== 'unknown' && waitingOn.toLowerCase() !== 'no active condition') {
+      rows.push({ icon: '⏳', level: 'warn', label: 'Waiting On', value: waitingOn });
+    }
+
+    // Active alerts
+    var alertCount = (oi.alerts && oi.alerts.count != null) ? oi.alerts.count
+                   : (ctx.alerts && ctx.alerts.count != null ? ctx.alerts.count : fcvGetActiveAlerts(detail).length);
+    var highSeverity = fcvPickVal([(oi.alerts && oi.alerts.highestSeverity), (ctx.alerts && ctx.alerts.highestSeverity)]);
+    if (alertCount > 0) {
+      rows.push({ icon: '🚨', level: alertCount > 2 ? 'risk' : 'warn', label: 'Open Alerts', value: alertCount + ' open' + (highSeverity ? ' — highest: ' + highSeverity : '') });
+    }
+
+    // Revision status
+    var conditions = fcvGetActiveConditions(detail);
+    var hasRevision = conditions.some(function(c) {
+      return fcvStrLower(fcvConditionLabel(c)).indexOf('revision') !== -1;
+    });
+    if (hasRevision) {
+      rows.push({ icon: '📝', level: 'warn', label: 'Revision Active', value: 'Carrier revision in progress — estimate may need resubmission' });
+    }
+
+    // Insurance waiting
+    var waitingInsurance = conditions.some(function(c) {
+      var lc = fcvStrLower(fcvConditionLabel(c));
+      return lc.indexOf('coverage pending') !== -1 || lc.indexOf('waiting on payment') !== -1 || lc.indexOf('insurance') !== -1;
+    });
+    if (waitingInsurance) {
+      rows.push({ icon: '🏢', level: 'warn', label: 'Insurance Waiting', value: 'Pending insurance response or coverage decision' });
+    }
+
+    // Payment waiting
+    var waitingPayment = conditions.some(function(c) {
+      return fcvStrLower(fcvConditionLabel(c)).indexOf('payment') !== -1;
+    });
+    if (waitingPayment) {
+      rows.push({ icon: '💰', level: 'info', label: 'Payment Waiting', value: 'Payment pending from carrier or customer' });
+    }
+
+    // Financial tracks
+    var tracks = Array.isArray(detail.financialTracks) ? detail.financialTracks
+               : (foundation.financialTracks || []);
+    var pendingTracks = tracks.filter(function(t) {
+      var state = fcvStrLower(fcvPickVal([t.approvalState, t.paymentState, t.status]));
+      return state.indexOf('pending') !== -1 || state.indexOf('submitted') !== -1;
+    });
+    if (pendingTracks.length) {
+      rows.push({ icon: '📊', level: 'info', label: 'Pending Estimates', value: pendingTracks.length + ' track' + (pendingTracks.length === 1 ? '' : 's') + ' pending approval or payment' });
+    }
+
+    // Next recommended action
+    var nextAction = fcvPickVal([
+      oi.nextAction && oi.nextAction.title,
+      ctx.nextAction && ctx.nextAction.title,
+      header.nextAction
+    ]);
+    if (nextAction) {
+      rows.push({ icon: '✅', level: 'ok', label: 'Suggested Follow-Up', value: nextAction });
+    }
+
+    // Missing data
+    var missingLinks = fcvGetMissingLinks(detail);
+    if (missingLinks.length) {
+      rows.push({ icon: '🔗', level: 'warn', label: 'Missing Links', value: missingLinks.length + ' operational link' + (missingLinks.length === 1 ? '' : 's') + ' not yet recorded' });
+    }
+
+    // Health reason
+    var healthReason = fcvPickVal([(oi.health && oi.health.reason), (ctx.health && ctx.health.reason), header.healthReason]);
+    if (healthReason) {
+      rows.push({ icon: '❤️', level: 'info', label: 'Health Signal', value: healthReason });
+    }
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header"><h2>Operational Intelligence</h2>';
+    html += '<p class="fcv-card-description">Derived from existing engines — Health, Condition, Alert, Ownership, Timeline.</p></div>';
+
+    if (!rows.length) {
+      html += '<div class="fcv-card-empty">No risk signals or pending items detected.</div>';
+    } else {
+      html += '<div class="fcv-intel-list">';
+      rows.forEach(function(row) {
+        html += '<div class="fcv-intel-row fcv-intel-row--' + fcvEscape(row.level) + '">';
+        html += '<span class="fcv-intel-icon">' + row.icon + '</span>';
+        html += '<div class="fcv-intel-content">';
+        html += '<span class="fcv-intel-label">' + fcvEscape(row.label) + '</span>';
+        html += '<span class="fcv-intel-value">' + fcvEscape(row.value) + '</span>';
+        html += '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+</script>

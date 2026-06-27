@@ -87,6 +87,16 @@
       }
     });
 
+    // Rainbow Interaction Standard: double-click any claim element → Full Claim Workspace
+    document.addEventListener('dblclick', function(event) {
+      const claimButton = event.target.closest('[data-intake-claim-id]');
+      if (claimButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        rainbowOpenFullClaim_(claimButton.getAttribute('data-intake-claim-id') || '');
+      }
+    });
+
     document.querySelectorAll('[data-intake-filter]').forEach(function(button) {
       button.addEventListener('click', function() {
         activeIntakeIssueFilter = button.getAttribute('data-intake-filter') || 'all';

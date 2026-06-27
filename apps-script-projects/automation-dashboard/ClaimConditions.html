@@ -1,0 +1,85 @@
+<script>
+  // ============================================================
+  // ClaimConditions.html
+  // Row 2 Right Top: Conditions — current + history
+  // ============================================================
+
+  function renderFcvConditions(detail) {
+    var el = document.getElementById('fcvConditions');
+    if (!el) { return; }
+
+    detail = detail || {};
+    var activeConditions = fcvGetActiveConditions(detail);
+    var foundation = detail.claimFoundation || {};
+    var ctx = detail.workspaceContext || {};
+
+    // Try to get historical conditions from raw data (conditions sheet)
+    // The foundation only surfaces active conditions; historical are surfaced via timeline
+    // We'll show active conditions fully, and note history via timeline events
+    var timelineEvents = fcvGetTimelineEvents(detail);
+    var conditionEvents = timelineEvents.filter(function(evt) {
+      var combined = fcvStrLower(fcvPickVal([evt.eventType, evt.type, evt.summary, evt.title, evt.source]));
+      return combined.indexOf('condition') !== -1;
+    }).slice(0, 5);
+
+    var html = '<div class="fcv-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h3>Conditions</h3>';
+    html += '<p class="fcv-card-description">Current conditions and history from the Condition Engine.</p>';
+    html += '</div>';
+
+    // Current conditions
+    if (activeConditions.length) {
+      html += '<p class="fcv-section-label">Active</p>';
+      html += '<div class="fcv-condition-list">';
+      activeConditions.forEach(function(condition) {
+        var label  = fcvConditionLabel(condition);
+        if (!label) { return; }
+        var owner  = '';
+        var reason = '';
+        var added  = '';
+        if (typeof condition === 'object') {
+          owner  = fcvPickVal([condition.Owner_Area, condition.ownerArea, condition.owner]);
+          reason = fcvPickVal([condition.Reason, condition.reason, condition.notes]);
+          added  = fcvPickVal([condition.Opened_At, condition.openedAt, condition.Created_At, condition.createdAt]);
+        }
+        var metaParts = [];
+        if (added)  { metaParts.push('Added ' + fcvFormatDate(added)); }
+        if (owner)  { metaParts.push(owner); }
+
+        html += '<div class="fcv-condition-item">';
+        html += '<div class="fcv-condition-name">' + fcvEscape(label) + '</div>';
+        if (metaParts.length) {
+          html += '<div class="fcv-condition-meta">' + fcvEscape(metaParts.join(' · ')) + '</div>';
+        }
+        if (reason) {
+          html += '<div class="fcv-condition-reason">' + fcvEscape(fcvTruncate(reason, 140)) + '</div>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="fcv-card-empty">No active conditions.</div>';
+    }
+
+    // Historical: condition-related timeline events
+    if (conditionEvents.length) {
+      html += '<div style="margin-top: 14px;">';
+      html += '<p class="fcv-section-label">Condition History (from Timeline)</p>';
+      html += '<div class="fcv-condition-list">';
+      conditionEvents.forEach(function(evt) {
+        var title = fcvNormalizeTitle(fcvPickVal([evt.summary, evt.title, evt.Summary]));
+        var date  = fcvFormatDate(fcvGetEventDate(evt));
+        html += '<div class="fcv-condition-item fcv-condition-item--resolved">';
+        html += '<div class="fcv-condition-name">' + fcvEscape(title) + '</div>';
+        if (date) { html += '<div class="fcv-condition-meta">' + fcvEscape(date) + '</div>'; }
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    el.innerHTML = html;
+  }
+</script>

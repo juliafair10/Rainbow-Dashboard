@@ -1,0 +1,78 @@
+<script>
+  // ============================================================
+  // RainbowNavStandard.html
+  // Rainbow Interaction Standard — Platform-wide double-click to
+  // open Full Claim Workspace.
+  //
+  // Included by: HomepageShell, ClaimsShell, IntakeView
+  // (and any future workspace shell)
+  //
+  // Rules:
+  //   Single click  → existing behavior (unchanged)
+  //   Double click  → rainbowOpenFullClaim_(claimId)
+  //   Ctrl/Cmd+click → open Full Claim in new tab (optional, on links)
+  //
+  // This file defines two public helpers:
+  //   rainbowOpenFullClaim_(claimId)
+  //   rainbowAttachDoubleClick_(elements, claimIdFn)
+  //
+  // No business logic here. Navigation only.
+  // ============================================================
+
+  /**
+   * Open the Full Claim Workspace for a given claim ID.
+   * Auto-detects the correct navigation function for the current workspace.
+   * Works in Homepage, Claims, Intake, and any future workspace context.
+   *
+   * @param {string} claimId
+   */
+  function rainbowOpenFullClaim_(claimId) {
+    if (!claimId) { return; }
+
+    var route = '?view=fullClaim&claimId=' + encodeURIComponent(String(claimId));
+
+    // Detect which workspace we're in and reuse its navigation function.
+    // This avoids duplicating URL-building logic across workspaces.
+    if (typeof navigateToRainbowRoute_ === 'function') {
+      // Homepage context
+      navigateToRainbowRoute_(route);
+    } else if (typeof navigateClaimsRoute_ === 'function') {
+      // Claims Workspace context
+      navigateClaimsRoute_(route);
+    } else if (typeof openIntakeRoute_ === 'function') {
+      // Intake Workspace context
+      openIntakeRoute_(route);
+    } else {
+      // Fallback: build URL from any available base URL constant
+      var base = window.RAINBOW_DASHBOARD_WEB_APP_URL_FROM_SERVER
+               || window.RAINBOW_DASHBOARD_WEB_APP_URL
+               || window.RAINBOW_DASHBOARD_BASE_URL
+               || (window.location.origin + window.location.pathname);
+      try {
+        window.top.location.href = base + route;
+      } catch (e) {
+        window.location.href = base + route;
+      }
+    }
+  }
+
+  /**
+   * Attach double-click → Full Claim navigation to a set of elements.
+   * Single click behavior on those elements is NOT affected.
+   *
+   * @param {NodeList|Array} elements  Elements to wire
+   * @param {Function} claimIdFn       Called with the element, returns claimId string
+   */
+  function rainbowAttachDoubleClick_(elements, claimIdFn) {
+    if (!elements || !claimIdFn) { return; }
+
+    Array.prototype.forEach.call(elements, function(el) {
+      el.addEventListener('dblclick', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var claimId = claimIdFn(el);
+        rainbowOpenFullClaim_(claimId || '');
+      });
+    });
+  }
+</script>
