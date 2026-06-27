@@ -267,12 +267,151 @@ function testDailySync_DryRun() {
   };
 }
 
+function previewDailyHistoricalNotesArchiveUpsert() {
+  const file = getNewestNotesReportFile_();
+
+  if (!file) {
+    throw new Error('No supported .xlsx or .csv files found for daily preview.');
+  }
+
+  ensureHistoricalNotesSheets_();
+
+  const parsed = parseNotesReport_(file);
+  const cutoffDate = getDateDaysAgo_(CONFIG.DAILY_LOOKBACK_DAYS);
+  const normalizedNotes = normalizeNotesRows_(parsed.rows, file.getName(), cutoffDate);
+  const sheet = getOrCreateSheet_(CONFIG.HISTORICAL_NOTES_SHEET_NAME, HISTORICAL_NOTES_HEADERS);
+  const existing = getExistingNotesIndex_(sheet);
+
+  let wouldInsert = 0;
+  let wouldUpdate = 0;
+  let wouldSkipDuplicate = 0;
+  const sampleInserts = [];
+  const sampleDuplicates = [];
+
+  normalizedNotes.forEach(note => {
+    const existingEntry = existing[note.noteId];
+
+    if (!existingEntry) {
+      wouldInsert += 1;
+      if (sampleInserts.length < 10) {
+        sampleInserts.push({
+          noteId: note.noteId,
+          jobNumber: note.jobNumber,
+          customerName: note.customerName,
+          noteDate: note.noteDate,
+          noteTextPreview: String(note.noteText || '').slice(0, 160)
+        });
+      }
+      return;
+    }
+
+    const currentRow = existingEntry.values;
+    const currentNoteText = String(currentRow[7] || '');
+    const currentVisibility = String(currentRow[8] || '');
+    const incomingNoteText = String(note.noteText || '');
+    const incomingVisibility = String(note.visibility || '');
+
+    if (currentNoteText !== incomingNoteText || currentVisibility !== incomingVisibility) {
+      wouldUpdate += 1;
+    } else {
+      wouldSkipDuplicate += 1;
+      if (sampleDuplicates.length < 10) {
+        sampleDuplicates.push({
+          noteId: note.noteId,
+          jobNumber: note.jobNumber,
+          customerName: note.customerName,
+          noteDate: note.noteDate,
+          existingRowNumber: existingEntry.rowNumber
+        });
+      }
+    }
+  });
+
+  const result = {
+    success: true,
+    dryRun: true,
+    sourceFile: file.getName(),
+    cutoffDate,
+    parsedRows: parsed.rows.length,
+    normalizedDailyNotes: normalizedNotes.length,
+    wouldInsert,
+    wouldUpdate,
+    wouldSkipDuplicate,
+    sampleInserts,
+    sampleDuplicates
+  };
+
+  Logger.log('PREVIEW_DAILY_HISTORICAL_NOTES_ARCHIVE_UPSERT ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
 function runInitialHistoricalNotesBackfill() {
   return runHistoricalNotesSync_('BACKFILL', null);
 }
 
 function runDailyHistoricalNotesSync() {
   return runHistoricalNotesSync_('DAILY', getDateDaysAgo_(CONFIG.DAILY_LOOKBACK_DAYS));
+}
+
+
+function runDailyHistoricalNotesSyncWithLog() {
+  const result = runDailyHistoricalNotesSync();
+  Logger.log('RUN_DAILY_HISTORICAL_NOTES_SYNC_RESULT ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
+function createDailyHistoricalNotesSyncTrigger() {
+  deleteDailyHistoricalNotesSyncTriggers();
+
+  const trigger = ScriptApp.newTrigger('runDailyHistoricalNotesSyncWithLog')
+    .timeBased()
+    .everyDays(1)
+    .atHour(5)
+    .nearMinute(15)
+    .create();
+
+  const result = {
+    success: true,
+    message: 'Daily historical notes sync trigger created.',
+    functionName: 'runDailyHistoricalNotesSyncWithLog',
+    schedule: 'Daily around 5:15 AM script timezone',
+    triggerUniqueId: trigger.getUniqueId()
+  };
+
+  Logger.log('CREATE_DAILY_HISTORICAL_NOTES_SYNC_TRIGGER ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
+function deleteDailyHistoricalNotesSyncTriggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let deleted = 0;
+
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction && trigger.getHandlerFunction() === 'runDailyHistoricalNotesSyncWithLog') {
+      ScriptApp.deleteTrigger(trigger);
+      deleted += 1;
+    }
+  });
+
+  const result = {
+    success: true,
+    deleted
+  };
+
+  Logger.log('DELETE_DAILY_HISTORICAL_NOTES_SYNC_TRIGGERS ' + JSON.stringify(result, null, 2));
+  return result;
+}
+
+function listHistoricalNotesSyncTriggers() {
+  const triggers = ScriptApp.getProjectTriggers().map(trigger => ({
+    handlerFunction: trigger.getHandlerFunction ? trigger.getHandlerFunction() : '',
+    eventType: trigger.getEventType ? String(trigger.getEventType()) : '',
+    triggerSource: trigger.getTriggerSource ? String(trigger.getTriggerSource()) : '',
+    uniqueId: trigger.getUniqueId ? trigger.getUniqueId() : ''
+  }));
+
+  Logger.log('LIST_HISTORICAL_NOTES_SYNC_TRIGGERS ' + JSON.stringify(triggers, null, 2));
+  return triggers;
 }
 
 function runWeeklyHistoricalNotesReconciliation() {

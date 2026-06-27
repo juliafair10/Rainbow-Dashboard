@@ -448,3 +448,141 @@ function diagnoseHistoricalNotesForJob(jobNumber) {
 function diagnoseHistoricalNotesFor26A0034() {
   return diagnoseHistoricalNotesForJob('26A-0034-WTR');
 }
+
+/**
+ * testLatestHistoricalNotesImportVisibility()
+ *
+ * Diagnostic: samples the most recently imported historical notes and checks
+ * whether each one is present in Timeline_Events and visible through
+ * ClaimDetailService.getWorkspaceTimelineForClaim_.
+ *
+ * Run from the Apps Script editor after an import to verify end-to-end visibility.
+ */
+function testLatestHistoricalNotesImportVisibility() {
+  Logger.log('=== testLatestHistoricalNotesImportVisibility ===');
+
+  // Read Timeline_Events sheet directly for recently-written historical notes
+  var ss = SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
+  var sheet = ss.getSheetByName('Timeline_Events');
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    Logger.log('Timeline_Events sheet empty or not found');
+    return { error: 'Timeline_Events sheet empty or not found' };
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function(h) { return String(h || '').trim(); });
+
+  var eventIdIdx = headers.indexOf('Event ID');
+  var claimIdIdx = headers.indexOf('Claim ID') !== -1 ? headers.indexOf('Claim ID') : headers.indexOf('Claim_ID');
+  var jobNumIdx = headers.indexOf('Job Number') !== -1 ? headers.indexOf('Job Number') : headers.indexOf('Job_Number');
+  var dateIdx = headers.indexOf('Date') !== -1 ? headers.indexOf('Date') : headers.indexOf('Event_Date');
+  var sourceIdx = headers.indexOf('Source') !== -1 ? headers.indexOf('Source') : headers.indexOf('Event_Source');
+  var typeIdx = headers.indexOf('Event Type') !== -1 ? headers.indexOf('Event Type') : headers.indexOf('Event_Type');
+  var summaryIdx = headers.indexOf('Summary');
+
+  // Collect all historical-note rows
+  var noteRows = [];
+  for (var i = 1; i < values.length; i++) {
+    var rowSource = String(sourceIdx >= 0 ? values[i][sourceIdx] : '').trim().toLowerCase();
+    var rowType = String(typeIdx >= 0 ? values[i][typeIdx] : '').trim().toLowerCase();
+    var combined = rowSource + ' ' + rowType;
+
+    if (combined.indexOf('historical') !== -1 || combined.indexOf('note') !== -1) {
+      var rowDate = dateIdx >= 0 ? values[i][dateIdx] : '';
+      noteRows.push({
+        sheetRow: i + 1,
+        noteId: eventIdIdx >= 0 ? String(values[i][eventIdIdx] || '').trim() : '',
+        claimId: claimIdIdx >= 0 ? String(values[i][claimIdIdx] || '').trim() : '',
+        jobNumber: jobNumIdx >= 0 ? String(values[i][jobNumIdx] || '').trim() : '',
+        eventDate: rowDate,
+        source: sourceIdx >= 0 ? String(values[i][sourceIdx] || '').trim() : '',
+        eventType: typeIdx >= 0 ? String(values[i][typeIdx] || '').trim() : '',
+        summary: summaryIdx >= 0 ? String(values[i][summaryIdx] || '').substring(0, 80) : ''
+      });
+    }
+  }
+
+  // Sort newest event date first (these are the "most recently dated" historical notes)
+  noteRows.sort(function(a, b) {
+    var aMs = a.eventDate instanceof Date ? a.eventDate.getTime() : new Date(a.eventDate || 0).getTime();
+    var bMs = b.eventDate instanceof Date ? b.eventDate.getTime() : new Date(b.eventDate || 0).getTime();
+    return bMs - aMs;
+  });
+
+  Logger.log('Total historical note rows in Timeline_Events: ' + noteRows.length);
+
+  // Sample the 10 most recently dated historical notes
+  var sample = noteRows.slice(0, 10);
+
+  // For each, check visibility through ClaimDetailService
+  var results = sample.map(function(note) {
+    var verdict = 'UNKNOWN';
+    var serviceEventsReturned = 0;
+    var foundInService = false;
+
+    if (note.claimId) {
+      try {
+        var timeline = getWorkspaceTimelineForClaim_(note.claimId);
+        serviceEventsReturned = timeline.events.length;
+        foundInService = timeline.events.some(function(evt) {
+          var evtDate = String(evt.eventDate || evt.date || '');
+          var noteDate = String(note.eventDate || '');
+          var datesMatch = evtDate.indexOf(noteDate.substring(0, 10)) !== -1 ||
+                           noteDate.indexOf(evtDate.substring(0, 10)) !== -1;
+          var typeMatch = String(evt.eventType || '').toLowerCase().indexOf('historical') !== -1 ||
+                          String(evt.source || '').toLowerCase().indexOf('historical') !== -1;
+          return datesMatch && typeMatch;
+        });
+        verdict = foundInService ? 'VISIBLE' : 'HIDDEN (not in service payload)';
+      } catch (e) {
+        verdict = 'ERROR: ' + String(e.message || e).substring(0, 60);
+      }
+    } else {
+      verdict = 'NO_CLAIM_ID (import write error — check Timeline_Events headers)';
+    }
+
+    return {
+      noteId: note.noteId,
+      jobNumber: note.jobNumber,
+      claimId: note.claimId || '(empty)',
+      eventDate: String(note.eventDate || '').substring(0, 10),
+      source: note.source,
+      presentInTimeline_Events: true,
+      claimIdPopulated: !!note.claimId,
+      serviceEventsReturned: serviceEventsReturned,
+      visibleThroughClaimDetailService: foundInService,
+      verdict: verdict,
+      summary: note.summary
+    };
+  });
+
+  Logger.log('--- Sample of 10 most recently dated historical notes ---');
+  Logger.log(JSON.stringify(results, null, 2));
+
+  var hiddenCount = results.filter(function(r) { return !r.visibleThroughClaimDetailService; }).length;
+  var noClaimIdCount = results.filter(function(r) { return !r.claimIdPopulated; }).length;
+
+  Logger.log('--- Summary ---');
+  Logger.log('Sampled: ' + results.length + ' notes');
+  Logger.log('Visible through service: ' + (results.length - hiddenCount));
+  Logger.log('Hidden (not in service payload): ' + hiddenCount);
+  Logger.log('Missing Claim_ID (write error): ' + noClaimIdCount);
+
+  if (noClaimIdCount > 0) {
+    Logger.log('ROOT CAUSE: Claim_ID not written — check Timeline_Events sheet header format vs writeHistoricalTimelineEvents_ keys');
+  } else if (hiddenCount > 0) {
+    Logger.log('ROOT CAUSE: Notes in sheet but not in service payload — likely event cap in getWorkspaceTimelineForClaim_');
+  } else {
+    Logger.log('OK: all sampled notes visible through ClaimDetailService');
+  }
+
+  return {
+    totalHistoricalNoteRows: noteRows.length,
+    sampled: results.length,
+    visibleCount: results.length - hiddenCount,
+    hiddenCount: hiddenCount,
+    noClaimIdCount: noClaimIdCount,
+    results: results
+  };
+}

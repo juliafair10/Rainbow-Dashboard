@@ -1076,7 +1076,7 @@ function getWorkspaceTimelineForClaim_(claimId) {
 
         return {
           count: timelineResponse.data.count || normalizedTimelineEvents.length,
-          events: normalizedTimelineEvents.slice(0, 25),
+          events: normalizedTimelineEvents.slice(0, 200),
           recentEvents: normalizedTimelineEvents.slice(0, 5)
         };
       }
@@ -1135,7 +1135,7 @@ function getWorkspaceTimelineForClaim_(claimId) {
 
     return {
       count: events.length,
-      events: events.slice(0, 25),
+      events: events.slice(0, 200),
       recentEvents: events.slice(0, 5)
     };
   } catch (error) {
@@ -1307,6 +1307,129 @@ function testClaimDetail() {
   Logger.log(JSON.stringify(detail, null, 2));
 
   return detail;
+}
+
+/**
+ * testFullClaimLatestNotes(claimId)
+ *
+ * Diagnostic: traces the notes pipeline for a specific claim.
+ * Logs raw Timeline_Events rows, what ClaimDetailService returns,
+ * and whether each note would render in the Full Claim Workspace.
+ *
+ * Run from the Apps Script editor with a real claimId to diagnose
+ * why notes are (or aren't) appearing in the Full Claim Workspace.
+ */
+function testFullClaimLatestNotes(claimId) {
+  if (!claimId) {
+    var claims = ClaimsQueryService.getAllClaimSummaries({});
+    claimId = claims.length ? claims[0].claimId : null;
+  }
+
+  if (!claimId) {
+    Logger.log('testFullClaimLatestNotes: no claimId available');
+    return;
+  }
+
+  Logger.log('=== testFullClaimLatestNotes: ' + claimId + ' ===');
+
+  // 1. Read raw Timeline_Events sheet directly
+  var ss = SpreadsheetApp.openById(CLAIMS_DATABASE_SPREADSHEET_ID);
+  var sheet = ss.getSheetByName('Timeline_Events');
+  var rawNoteRows = [];
+  var allRawRows = [];
+
+  if (sheet && sheet.getLastRow() > 1) {
+    var values = sheet.getDataRange().getValues();
+    var headers = values[0].map(function(h) { return String(h || '').trim(); });
+    var claimIdIdx = headers.indexOf('Claim ID') !== -1 ? headers.indexOf('Claim ID') : headers.indexOf('Claim_ID');
+    var dateIdx = headers.indexOf('Date') !== -1 ? headers.indexOf('Date') : headers.indexOf('Event_Date');
+    var typeIdx = headers.indexOf('Event Type') !== -1 ? headers.indexOf('Event Type') : headers.indexOf('Event_Type');
+    var sourceIdx = headers.indexOf('Source') !== -1 ? headers.indexOf('Source') : headers.indexOf('Event_Source');
+    var summaryIdx = headers.indexOf('Summary');
+
+    for (var i = 1; i < values.length; i++) {
+      var rowClaimId = String(claimIdIdx >= 0 ? values[i][claimIdIdx] : '').trim();
+      if (!rowClaimId) continue;
+      var matchesClaimId = rowClaimId === claimId || rowClaimId === claimId.replace(/^CLM-/, '');
+      if (!matchesClaimId) continue;
+
+      var rowDate = dateIdx >= 0 ? values[i][dateIdx] : '';
+      var rowType = typeIdx >= 0 ? String(values[i][typeIdx] || '').trim() : '';
+      var rowSource = sourceIdx >= 0 ? String(values[i][sourceIdx] || '').trim() : '';
+      var rowSummary = summaryIdx >= 0 ? String(values[i][summaryIdx] || '').substring(0, 80) : '';
+
+      allRawRows.push({ rowNum: i + 1, claimId: rowClaimId, date: rowDate, type: rowType, source: rowSource, summary: rowSummary });
+
+      var combined = (rowType + ' ' + rowSource).toLowerCase();
+      if (combined.indexOf('note') !== -1 || combined.indexOf('historical') !== -1 ||
+          combined.indexOf('communication') !== -1 || combined.indexOf('email') !== -1) {
+        rawNoteRows.push({ rowNum: i + 1, claimId: rowClaimId, date: rowDate, type: rowType, source: rowSource, summary: rowSummary });
+      }
+    }
+
+    allRawRows.sort(function(a, b) {
+      return normalizeWorkspaceTimelineDate_(b.date).getTime() - normalizeWorkspaceTimelineDate_(a.date).getTime();
+    });
+    rawNoteRows.sort(function(a, b) {
+      return normalizeWorkspaceTimelineDate_(b.date).getTime() - normalizeWorkspaceTimelineDate_(a.date).getTime();
+    });
+  }
+
+  Logger.log('--- Raw Timeline_Events: latest 10 rows for claim ---');
+  Logger.log(JSON.stringify(allRawRows.slice(0, 10), null, 2));
+  Logger.log('Total raw rows for claim: ' + allRawRows.length);
+
+  Logger.log('--- Raw Timeline_Events: latest 10 note-type rows ---');
+  Logger.log(JSON.stringify(rawNoteRows.slice(0, 10), null, 2));
+  Logger.log('Total raw note rows for claim: ' + rawNoteRows.length);
+
+  // 2. What getWorkspaceTimelineForClaim_ returns
+  var timeline = getWorkspaceTimelineForClaim_(claimId);
+  Logger.log('--- getWorkspaceTimelineForClaim_ result ---');
+  Logger.log('events returned: ' + timeline.events.length + ' (of ' + timeline.count + ' total)');
+  Logger.log('event dates: ' + timeline.events.map(function(e) {
+    return String(e.eventDate || e.date || '').substring(0, 10) + '/' + String(e.eventType || e.source || '').substring(0, 18);
+  }).join(', '));
+
+  // 3. Which events are note-type in the returned set
+  var serviceNotes = timeline.events.filter(function(evt) {
+    var type = String(evt.eventType || evt.type || '').toLowerCase();
+    var src = String(evt.source || evt.sourceSystem || '').toLowerCase();
+    var sum = String(evt.summary || '').toLowerCase();
+    var combined = type + ' ' + src + ' ' + sum;
+    return combined.indexOf('note') !== -1 || combined.indexOf('historical') !== -1 ||
+           combined.indexOf('communication') !== -1 || combined.indexOf('email') !== -1;
+  });
+
+  Logger.log('--- Note-type events in service payload (' + serviceNotes.length + ') ---');
+  Logger.log(JSON.stringify(serviceNotes.map(function(e) {
+    return { date: e.eventDate, type: e.eventType, source: e.source, summary: String(e.summary || '').substring(0, 60) };
+  }), null, 2));
+
+  // 4. Verdict
+  Logger.log('--- Diagnosis ---');
+  Logger.log('Raw note rows in sheet: ' + rawNoteRows.length);
+  Logger.log('Total raw rows for claim in sheet: ' + allRawRows.length);
+  Logger.log('Events returned by service: ' + timeline.events.length + ' (cap was 25, now 200)');
+  Logger.log('Note-type events in service payload: ' + serviceNotes.length);
+  if (rawNoteRows.length > 0 && serviceNotes.length === 0) {
+    Logger.log('ISSUE: notes present in sheet but not in service payload — check sort order and event cap');
+  } else if (rawNoteRows.length === 0) {
+    Logger.log('ISSUE: no note-type rows found in sheet for this claim — check import or Claim_ID match');
+  } else {
+    Logger.log('OK: notes are present in sheet and visible in service payload');
+  }
+
+  return {
+    claimId: claimId,
+    rawTotalRows: allRawRows.length,
+    rawNoteRows: rawNoteRows.length,
+    serviceEventsReturned: timeline.events.length,
+    serviceNoteEvents: serviceNotes.length,
+    top10RawRows: allRawRows.slice(0, 10),
+    top10RawNoteRows: rawNoteRows.slice(0, 10),
+    serviceNotes: serviceNotes
+  };
 }
 
 /**
