@@ -95,6 +95,323 @@ function reconcileClaimConditions(claimId) {
   }, 'Claim conditions reconciled successfully.');
 }
 
+/**
+ * Revision request/completion sub-signals (later-stage-evidence follow-up,
+ * 2026-07-01)
+ *
+ * The shared content classifier (deriveRawTimelineActivityType_) only has
+ * one 'Revision' bucket, keyed to request-flavored language ("revisions
+ * requested", "please review for revisions", ...). It has no vocabulary at
+ * all for revision *completion/submission* language ("I have made the
+ * requested changes and uploaded the estimate for review"), so those notes
+ * fall through to whatever bucket happens to match next - often
+ * 'Insurance Review' purely because the word "estimate" appears, which is
+ * incidental, not a signal that carrier/insurance review activity actually
+ * occurred. That gap is exactly why the live diagnostic reported no
+ * revision-completion evidence for CLM-26A-0043-WTR even though the note
+ * is right there in the timeline.
+ *
+ * These two narrow, additive checks run directly against an activity's raw
+ * classification text (independent of the shared bucket) so this file can
+ * tell "someone requested changes" apart from "someone submitted changes"
+ * without touching deriveRawTimelineActivityType_ itself - which also
+ * drives Last_Revision_At in TimelineEngineService.js and must not change
+ * behavior there.
+ */
+function isRevisionRequestText_(rawText) {
+  return rawText.indexOf('REVISIONS REQUESTED') !== -1 ||
+    rawText.indexOf('PLEASE REVIEW FOR REVISIONS') !== -1 ||
+    rawText.indexOf('REQUESTED BELOW') !== -1;
+}
+
+function isRevisionCompletionText_(rawText) {
+  return rawText.indexOf('MADE THE REQUESTED CHANGES') !== -1 ||
+    rawText.indexOf('UPLOADED THE ESTIMATE') !== -1 ||
+    rawText.indexOf('REVISIONS COMPLETE') !== -1 ||
+    rawText.indexOf('REVISION COMPLETE') !== -1 ||
+    rawText.indexOf('RESUBMITTED') !== -1 ||
+    rawText.indexOf('RE-SUBMITTED') !== -1 ||
+    rawText.indexOf('CHANGES UPLOADED') !== -1;
+}
+
+/**
+ * evaluateConditionResolutionRecommendation_ (Phase 5, strengthened for the
+ * later-stage-evidence fix, 2026-07-01 - and its field-mapping/vocabulary
+ * follow-up, same day)
+ *
+ * Recommends resolving an open Revision Active condition when genuine
+ * (non-echoed) timeline evidence shows: the latest genuine revision
+ * request/completion activity is older than the latest genuine
+ * payment/accounting activity, that payment/accounting activity occurred
+ * after the revision activity, and no genuine newer revision *request*
+ * exists after that payment/accounting activity. Read-only - never calls
+ * resolveCondition or mutates Claim_Conditions.
+ */
+function evaluateConditionResolutionRecommendation_(claimId, condition) {
+  const notApplicable = {
+    recommendedConditionResolution: false,
+    resolutionRecommendationReason: '',
+    confidence: 'low',
+    latestGenuineRevisionEventAt: '',
+    latestPaymentOrAccountingEventAt: '',
+    newerRevisionRequestAfterPayment: false
+  };
+
+  if (!condition || condition.Condition_Type !== 'Revision Active') {
+    return notApplicable;
+  }
+
+  const activitiesResult = synthesizeClaimActivities(claimId);
+  if (!activitiesResult.success) {
+    return {
+      recommendedConditionResolution: false,
+      resolutionRecommendationReason: 'Unable to synthesize claim activity for resolution review.',
+      confidence: 'low',
+      latestGenuineRevisionEventAt: '',
+      latestPaymentOrAccountingEventAt: '',
+      newerRevisionRequestAfterPayment: false
+    };
+  }
+
+  // Quoted/Echoed Note Guard (health pipeline repair - later-stage evidence
+  // fix): activities synthesized from the raw-timeline fallback path carry
+  // isQuotedEcho/genuineEffectiveDate flags (see
+  // TimelineSynthesisService.js). A row flagged as a quoted echo of an
+  // older message is excluded here from acting as new revision or
+  // payment/accounting evidence - it is still visible in the claim's
+  // timeline, just not trusted for this chronology comparison. Activities
+  // from the grouped-synthesis path don't carry these flags and default to
+  // "not an echo" (isQuotedEcho undefined => treated as false).
+  function activityEffectiveDate_(activity) {
+    return activity.genuineEffectiveDate || activity.endDate || activity.startDate || 0;
+  }
+  function activityRawText_(activity) {
+    return String(activity.rawText || '');
+  }
+  function isRevisionRequestActivity_(activity) {
+    return activity.activityType === 'Revision' && !isRevisionCompletionText_(activityRawText_(activity));
+  }
+  function isRevisionCompletionActivity_(activity) {
+    return isRevisionCompletionText_(activityRawText_(activity)) || isRevisionRequestText_(activityRawText_(activity));
+  }
+  function isGenuinePaymentOrApprovalActivity_(activity) {
+    // Exclude a completion/request note that happened to land in the
+    // Payment/Insurance Review bucket from also counting as approval
+    // evidence for itself.
+    return (activity.activityType === 'Payment' || activity.activityType === 'Insurance Review') &&
+      !isRevisionCompletionText_(activityRawText_(activity)) &&
+      !isRevisionRequestText_(activityRawText_(activity));
+  }
+
+  const genuineActivities = (activitiesResult.data.activities || []).filter(function(activity) {
+    return activity.isQuotedEcho !== true;
+  });
+
+  const activities = genuineActivities.slice().sort(function(a, b) {
+    return new Date(activityEffectiveDate_(a)).getTime() - new Date(activityEffectiveDate_(b)).getTime();
+  });
+
+  const conditionOpenedAt = condition.Opened_At ? new Date(condition.Opened_At) : null;
+
+  const relevantActivities = activities.filter(function(activity) {
+    if (!conditionOpenedAt || isNaN(conditionOpenedAt.getTime())) {
+      return true;
+    }
+    const activityDate = new Date(activityEffectiveDate_(activity));
+    return !isNaN(activityDate.getTime()) && activityDate.getTime() >= conditionOpenedAt.getTime();
+  });
+
+  // "Revision activity" for the purpose of finding the anchor point and
+  // populating latestGenuineRevisionEventAt covers BOTH a request (the
+  // classifier's own 'Revision' bucket, minus anything that's actually
+  // completion language) AND a completion/submission note (which the
+  // shared classifier often mis-buckets, hence the dedicated text check).
+  const revisionActivities = relevantActivities.filter(function(activity) {
+    return isRevisionRequestActivity_(activity) || isRevisionCompletionActivity_(activity);
+  });
+  const paymentActivities = relevantActivities.filter(isGenuinePaymentOrApprovalActivity_);
+
+  const latestGenuineRevisionEventAt = revisionActivities.length
+    ? activityEffectiveDate_(revisionActivities[revisionActivities.length - 1])
+    : '';
+  const latestPaymentOrAccountingEventAt = paymentActivities.length
+    ? activityEffectiveDate_(paymentActivities[paymentActivities.length - 1])
+    : '';
+
+  // Does any genuine revision REQUEST (not completion) occur after the
+  // latest genuine payment/accounting activity? Computed directly over the
+  // full (condition-scoped) relevant-activity sequence, independent of the
+  // "last revision before this" logic below, since this is the exact
+  // question the diagnostic needs answered either way.
+  let lastPaymentIndex = -1;
+  relevantActivities.forEach(function(activity, index) {
+    if (isGenuinePaymentOrApprovalActivity_(activity)) {
+      lastPaymentIndex = index;
+    }
+  });
+  const newerRevisionRequestAfterPayment = lastPaymentIndex !== -1 && relevantActivities.some(function(activity, index) {
+    return index > lastPaymentIndex && isRevisionRequestActivity_(activity);
+  });
+
+  let lastRevisionIndex = -1;
+  relevantActivities.forEach(function(activity, index) {
+    if (isRevisionRequestActivity_(activity) || isRevisionCompletionActivity_(activity)) {
+      lastRevisionIndex = index;
+    }
+  });
+
+  const baseFields = {
+    latestGenuineRevisionEventAt: latestGenuineRevisionEventAt,
+    latestPaymentOrAccountingEventAt: latestPaymentOrAccountingEventAt,
+    newerRevisionRequestAfterPayment: newerRevisionRequestAfterPayment
+  };
+
+  if (lastRevisionIndex === -1) {
+    return Object.assign({
+      recommendedConditionResolution: false,
+      resolutionRecommendationReason: 'No genuine revision completion/submission activity found since the condition opened.',
+      confidence: 'low'
+    }, baseFields);
+  }
+
+  const activitiesAfterLastRevision = relevantActivities.slice(lastRevisionIndex + 1);
+
+  // Only a REQUEST re-opens the loop - a completion/submission note found
+  // later (there shouldn't be one, since lastRevisionIndex already points
+  // at the latest of either) would not disqualify the recommendation.
+  const hasNewerRevisionRequest = activitiesAfterLastRevision.some(isRevisionRequestActivity_);
+
+  if (hasNewerRevisionRequest) {
+    return Object.assign({
+      recommendedConditionResolution: false,
+      resolutionRecommendationReason: 'Newer genuine revision request exists after the most recent revision activity.',
+      confidence: 'low'
+    }, baseFields);
+  }
+
+  const approvalActivity = activitiesAfterLastRevision.find(isGenuinePaymentOrApprovalActivity_);
+
+  if (!approvalActivity) {
+    return Object.assign({
+      recommendedConditionResolution: false,
+      resolutionRecommendationReason: 'No genuine payment or approval activity found after the last revision submission.',
+      confidence: 'low'
+    }, baseFields);
+  }
+
+  return Object.assign({
+    recommendedConditionResolution: true,
+    resolutionRecommendationReason: 'Revision activity appears complete and payment/approval activity (' +
+      approvalActivity.activityType + ') genuinely occurred after the last revision event, with no newer genuine revision request since.',
+    confidence: 'medium'
+  }, baseFields);
+}
+
+/**
+ * debugConditionResolutionEvidenceForClaim_ (later-stage-evidence follow-up,
+ * 2026-07-01)
+ *
+ * Read-only debug/diagnostic aid, not part of the health or condition
+ * pipeline. Prints every candidate timeline row for a claim's open
+ * Revision Active condition, in chronology order, with the exact fields
+ * requested for the live-bug investigation: event id, event timestamp,
+ * event type, the raw Event_Type value ("event category" - this schema has
+ * no distinct Event_Category column, noted below), summary, the exact
+ * detail/body text used for classification, the synthesized activity type,
+ * isQuotedOrEchoed, isRevisionRequest, isRevisionCompletion,
+ * isPaymentOrAccounting, and excludedReason for any row that didn't make it
+ * into the recommendation's relevant-activity set.
+ */
+function debugConditionResolutionEvidenceForClaim_(claimId, conditionOverride) {
+  const condition = conditionOverride || (function() {
+    const conditions = getRows(CLAIM_SHEET_NAMES.conditions).filter(function(row) {
+      return row.Claim_ID === claimId &&
+        row.Condition_Type === 'Revision Active' &&
+        String(row.Condition_Status || '').toLowerCase() !== 'closed' &&
+        String(row.Condition_Status || '').toLowerCase() !== 'resolved';
+    });
+    return conditions.length ? conditions[0] : null;
+  })();
+
+  if (!condition) {
+    const noConditionResult = { claimId: claimId, note: 'No open Revision Active condition found for this claim.' };
+    Logger.log(JSON.stringify(noConditionResult, null, 2));
+    return noConditionResult;
+  }
+
+  const activitiesResult = synthesizeClaimActivities(claimId);
+  if (!activitiesResult.success) {
+    const failureResult = { claimId: claimId, note: 'synthesizeClaimActivities failed.', result: activitiesResult };
+    Logger.log(JSON.stringify(failureResult, null, 2));
+    return failureResult;
+  }
+
+  function activityEffectiveDate_(activity) {
+    return activity.genuineEffectiveDate || activity.endDate || activity.startDate || 0;
+  }
+  function activityRawText_(activity) {
+    return String(activity.rawText || '');
+  }
+
+  const conditionOpenedAt = condition.Opened_At ? new Date(condition.Opened_At) : null;
+
+  const rows = (activitiesResult.data.activities || [])
+    .slice()
+    .sort(function(a, b) {
+      return new Date(activityEffectiveDate_(a)).getTime() - new Date(activityEffectiveDate_(b)).getTime();
+    })
+    .map(function(activity) {
+      const sourceEvent = (activity.events && activity.events[0]) || {};
+      const effectiveDate = activityEffectiveDate_(activity);
+      const rawText = activityRawText_(activity);
+      const isQuotedOrEchoed = activity.isQuotedEcho === true;
+      const isPaymentOrAccounting = (activity.activityType === 'Payment' || activity.activityType === 'Insurance Review') &&
+        !isRevisionCompletionText_(rawText) && !isRevisionRequestText_(rawText);
+      const isRevisionRequest = activity.activityType === 'Revision' && !isRevisionCompletionText_(rawText);
+      const isRevisionCompletion = isRevisionCompletionText_(rawText) || isRevisionRequestText_(rawText);
+
+      let excludedReason = '';
+      if (isQuotedOrEchoed) {
+        excludedReason = 'Excluded: flagged as a quoted/echoed reply fragment, not a new event.';
+      } else if (conditionOpenedAt && !isNaN(conditionOpenedAt.getTime())) {
+        const effectiveDateObj = new Date(effectiveDate);
+        if (isNaN(effectiveDateObj.getTime()) || effectiveDateObj.getTime() < conditionOpenedAt.getTime()) {
+          excludedReason = 'Excluded: effective date is before the condition\'s Opened_At.';
+        }
+      }
+
+      return {
+        eventId: sourceEvent.Timeline_Event_ID || sourceEvent.Event_ID || sourceEvent['Event ID'] || '',
+        eventTimestamp: effectiveDate,
+        eventType: sourceEvent.Event_Type || sourceEvent['Event Type'] || '',
+        eventCategory: sourceEvent.Event_Category || sourceEvent['Event Category'] || '(no Event_Category column in this schema - Event_Type shown above is the closest equivalent)',
+        summary: sourceEvent.Summary || '',
+        classificationText: rawText,
+        synthesizedActivityType: activity.activityType,
+        isQuotedOrEchoed: isQuotedOrEchoed,
+        isRevisionRequest: isRevisionRequest,
+        isRevisionCompletion: isRevisionCompletion,
+        isPaymentOrAccounting: isPaymentOrAccounting,
+        excludedReason: excludedReason
+      };
+    });
+
+  const result = {
+    claimId: claimId,
+    conditionId: condition.Condition_ID || '',
+    conditionOpenedAt: condition.Opened_At || '',
+    rowCount: rows.length,
+    rows: rows
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testDebugConditionResolutionEvidenceForKnownClaim() {
+  return debugConditionResolutionEvidenceForClaim_('CLM-26A-0043-WTR');
+}
+
 function addConditionFromEngine_(claimId, conditionName, source) {
   if (!claimId || !conditionName) {
     return validationErrorResponse(['Claim_ID and conditionName are required to add a condition.']);
@@ -512,6 +829,13 @@ function appendConditionEngineFallbackRow_(claimId, conditionName, status, sourc
     Closed_At: status === 'Resolved' ? nowIso() : '',
     Started_At: status === 'Active' ? nowIso() : '',
     Resolved_At: status === 'Resolved' ? nowIso() : '',
+    // Phase 4 (health pipeline repair): reuses the same
+    // resolveConditionFollowUpDate_ helper ConditionService.addCondition
+    // uses, so both condition-creation paths default Revision Active the
+    // same way. This engine-driven path has no caller-supplied date to
+    // preserve (reconcileClaimConditions doesn't pass one through), so it
+    // only ever produces the Revision Active default or empty.
+    Follow_Up_Date: status === 'Active' ? resolveConditionFollowUpDate_(conditionName, {}) : '',
     Source_System: 'claims-service',
     Reason: status + ' by Condition Engine.',
     Notes: status + ' by Condition Engine.',
@@ -837,6 +1161,23 @@ function batchReconcileClaimConditions() {
   Logger.log('CONDITION_BATCH_RECONCILE_SUMMARY ' + JSON.stringify(summary));
 
   return successResponse(summary, 'Batch condition reconciliation completed.');
+}
+
+function runMorningConditionReconciliation_() {
+  // Phase 1 (health pipeline repair): called from
+  // MorningAutomationService.runRainbowMorningAutomation() so condition
+  // reconciliation runs automatically instead of only from manual test
+  // functions. reconcileClaimConditions() only ever adds conditions that
+  // aren't already active (see the "toRemove" policy in
+  // reconcileClaimConditions() above), so repeated runs are idempotent -
+  // re-running this against an unchanged claim produces no new rows.
+  //
+  // batchReconcileClaimConditions()/reconcileAllClaimConditions() already
+  // return a well-formed successResponse/errorResponse, so this wrapper
+  // passes that result through unchanged (it does not re-wrap it in an
+  // unconditional successResponse) so a genuine reconciliation failure is
+  // correctly reported as a failed morning automation step.
+  return batchReconcileClaimConditions();
 }
 
 function testConditionEngineBatchReadiness() {

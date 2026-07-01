@@ -163,6 +163,13 @@ function routeClaimServiceRequest_(e, method) {
       case 'processEojOutputs':
         return jsonResponse_(processEojOutputs(payload));
 
+      case 'diagnoseClaimHealth':
+        return jsonResponse_(
+          diagnoseClaimHealth(
+            payload.claimId || (e.parameter && e.parameter.claimId)
+          )
+        );
+
       default:
         return jsonResponse_(errorResponse('Unknown action: ' + action, { action: action }));
     }

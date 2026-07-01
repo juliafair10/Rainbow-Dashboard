@@ -41,7 +41,7 @@ function addCondition(claimId, conditionType, details) {
     Source_System: (details && details.Source_System) || CLAIM_SERVICE.name,
     Source_Record_ID: (details && details.Source_Record_ID) || '',
     Reason: (details && details.Reason) || '',
-    Follow_Up_Date: (details && details.Follow_Up_Date) || '',
+    Follow_Up_Date: resolveConditionFollowUpDate_(conditionType, details),
     Owner_Area: (details && details.Owner_Area) || '',
     Notes: (details && details.Notes) || '',
     Created_At: now,
@@ -95,6 +95,48 @@ function addCondition(claimId, conditionType, details) {
     appendResult: appendResult,
     created: true
   }, 'Condition added successfully.');
+}
+
+/**
+ * resolveConditionFollowUpDate_ (Phase 4 - health pipeline repair)
+ *
+ * Shared by ConditionService.addCondition and
+ * ConditionEngineService.appendConditionEngineFallbackRow_ so both
+ * condition-creation paths behave the same way:
+ *   - a caller-supplied Follow_Up_Date (e.g. from EOJ outputs flowing
+ *     through processEojOutputs -> addCondition) is always preserved as-is.
+ *   - Revision Active gets a default follow-up date based on the existing
+ *     HEALTH_CONFIG.revisionStaleDays cadence when no date was supplied,
+ *     so newly created revision conditions get a grace period instead of
+ *     immediately falling back to day-count staleness.
+ *   - Monitoring Active (and everything else) gets no synthetic default -
+ *     only a supplied date is preserved. There is no monitoring-specific
+ *     next-visit-date field wired into claims-service today (Last_MICA_
+ *     Expected_Update_Date exists in the schema but nothing populates it),
+ *     so inventing a default here would not reflect real EOJ data.
+ *   - Empty stays empty, matching the existing fallback behavior in
+ *     HealthEngineService.evaluateConditionHealth_ (no Follow_Up_Date is
+ *     not an error, it's the documented fallback path).
+ */
+function resolveConditionFollowUpDate_(conditionType, details) {
+  const suppliedFollowUpDate = (details && (details.Follow_Up_Date || details.Next_Monitoring_Date)) || '';
+
+  if (suppliedFollowUpDate) {
+    return suppliedFollowUpDate;
+  }
+
+  if (conditionType === 'Revision Active') {
+    return calculateDefaultRevisionFollowUpDate_();
+  }
+
+  return '';
+}
+
+function calculateDefaultRevisionFollowUpDate_() {
+  const followUpDate = new Date();
+  const revisionStaleDays = (typeof HEALTH_CONFIG !== 'undefined' && HEALTH_CONFIG.revisionStaleDays) || 5;
+  followUpDate.setDate(followUpDate.getDate() + revisionStaleDays);
+  return followUpDate.toISOString();
 }
 
 function resolveCondition(conditionId) {

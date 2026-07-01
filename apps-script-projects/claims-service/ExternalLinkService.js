@@ -764,6 +764,211 @@ function runEnrichClaimNumbersFromExternalLinks_(dryRun) {
 }
 
 // ---------------------------------------------------------------------------
+// Carrier enrichment: External_Links → Claims
+// ---------------------------------------------------------------------------
+
+/**
+ * For every Claims row where Carrier is blank and Job_Number matches an
+ * External_Links row that carries a non-blank Carrier value, writes the
+ * carrier name into the Claims row.
+ *
+ * Safety guards (mirrors step 4 pattern):
+ *   - Never overwrites a non-blank Claims.Carrier value.
+ *   - Skips Claims rows where Job_Number is blank.
+ *   - Skips EL rows where Carrier is blank.
+ *   - Conflict detection: if two EL rows for the same job number disagree on
+ *     carrier, both are excluded.
+ *
+ * @param {boolean} [dryRun=false]
+ * @returns {Object} enrichment summary
+ */
+function runEnrichClaimFieldsFromExternalLinks_(dryRun) {
+  var ss = SpreadsheetApp.openById(CLAIMS_DATABASE_SPREADSHEET_ID);
+
+  // ── Read External_Links sheet ─────────────────────────────────────────────
+  var elSheet = ss.getSheetByName(CLAIM_SHEET_NAMES.externalLinks);
+
+  if (!elSheet) {
+    return { success: false, message: 'External_Links sheet not found.' };
+  }
+
+  var elValues = elSheet.getDataRange().getValues();
+
+  if (elValues.length < 2) {
+    return { success: true, message: 'External_Links sheet has no data rows.', rowsUpdated: 0, eligibleUpdates: 0 };
+  }
+
+  var elHeaderRowIndex = findElhHeaderRowIndex_(elValues);
+  var elHeaders        = elValues[elHeaderRowIndex].map(function(h) { return String(h || '').trim().toLowerCase(); });
+  var elColMap         = buildElhColumnIndexMap_(elValues[elHeaderRowIndex]);
+
+  // Find the Carrier column in External_Links (written by insurance-intake-automation Fix B).
+  var elCarrierCol = elHeaders.indexOf('carrier');
+
+  if (elCarrierCol === -1) {
+    // Carrier column not yet present — Fix B has not run or the sheet predates it.
+    // Return gracefully so the morning automation is not blocked.
+    Logger.log('[EnrichClaimFields] Carrier column not found in External_Links — skipping carrier enrichment.');
+    return { success: true, message: 'Carrier column not found in External_Links; no enrichment performed.', rowsUpdated: 0, eligibleUpdates: 0 };
+  }
+
+  if (elColMap.jobNumber === -1) {
+    return { success: false, message: 'Job Number column not found in External_Links sheet.' };
+  }
+
+  // ── Build EL lookup: normalizedJobNumber → carrier ────────────────────────
+  // Conflict: two rows with same job number but different carrier values → skip both.
+  var elByJobNumber  = {};   // normalizedJobNumber → carrierString
+  var elConflicts    = {};   // normalizedJobNumber → true
+
+  elValues.slice(elHeaderRowIndex + 1).forEach(function(row) {
+    var jobNum  = normalizeElhKey_(row[elColMap.jobNumber]);
+    var carrier = String(row[elCarrierCol] || '').trim();
+
+    if (!jobNum || !carrier) {
+      return;
+    }
+
+    if (elConflicts[jobNum]) {
+      return;
+    }
+
+    if (elByJobNumber[jobNum]) {
+      if (elByJobNumber[jobNum].toUpperCase() !== carrier.toUpperCase()) {
+        elConflicts[jobNum] = true;
+        delete elByJobNumber[jobNum];
+      }
+      // Exact match (case-insensitive) → keep existing; no conflict.
+      return;
+    }
+
+    elByJobNumber[jobNum] = carrier;
+  });
+
+  // ── Read Claims sheet ─────────────────────────────────────────────────────
+  var claimsSheet = ss.getSheetByName(CLAIM_SHEET_NAMES.claims);
+
+  if (!claimsSheet) {
+    return { success: false, message: 'Claims sheet not found.' };
+  }
+
+  var claimsValues = claimsSheet.getDataRange().getValues();
+
+  if (claimsValues.length < 2) {
+    return { success: true, message: 'Claims sheet has no data rows.', rowsUpdated: 0, eligibleUpdates: 0 };
+  }
+
+  // Build a column map that includes Carrier in addition to the standard fields.
+  var claimsHeaders = claimsValues[0].map(function(h) {
+    return String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  });
+
+  var claimsColMap = {
+    claimId:      claimsHeaders.indexOf('claimid'),
+    jobNumber:    claimsHeaders.indexOf('jobnumber'),
+    customerName: claimsHeaders.indexOf('customername'),
+    carrier:      claimsHeaders.indexOf('carrier')
+  };
+
+  if (claimsColMap.jobNumber === -1) {
+    return { success: false, message: 'Job_Number column not found in Claims sheet.' };
+  }
+
+  if (claimsColMap.carrier === -1) {
+    return { success: false, message: 'Carrier column not found in Claims sheet.' };
+  }
+
+  // ── Scan Claims rows, build proposals ─────────────────────────────────────
+  var claimsChecked      = 0;
+  var skippedNoJobNumber = 0;
+  var skippedHasCarrier  = 0;
+  var skippedNoElRow     = 0;
+  var skippedConflict    = 0;
+  var proposals          = [];
+
+  claimsValues.slice(1).forEach(function(row, relativeIndex) {
+    claimsChecked++;
+
+    var jobNumber       = normalizeElhKey_(row[claimsColMap.jobNumber]);
+    var currentCarrier  = String(row[claimsColMap.carrier] || '').trim();
+    var claimId         = claimsColMap.claimId !== -1 ? String(row[claimsColMap.claimId] || '').trim() : '';
+    var customerName    = claimsColMap.customerName !== -1 ? String(row[claimsColMap.customerName] || '').trim() : '';
+
+    if (!jobNumber) {
+      skippedNoJobNumber++;
+      return;
+    }
+
+    // Guard: never overwrite an existing carrier value.
+    if (currentCarrier) {
+      skippedHasCarrier++;
+      return;
+    }
+
+    if (elConflicts[jobNumber]) {
+      skippedConflict++;
+      return;
+    }
+
+    if (!elByJobNumber[jobNumber]) {
+      skippedNoElRow++;
+      return;
+    }
+
+    // Sheet row is 1-based: row 1 is header, first data row is 2.
+    proposals.push({
+      sheetRow:        relativeIndex + 2,
+      claimId:         claimId,
+      jobNumber:       jobNumber,
+      customerName:    customerName,
+      proposedCarrier: elByJobNumber[jobNumber]
+    });
+  });
+
+  // ── Apply writes (live run only) ──────────────────────────────────────────
+  var rowsUpdated = 0;
+
+  if (!dryRun) {
+    proposals.forEach(function(p) {
+      claimsSheet.getRange(p.sheetRow, claimsColMap.carrier + 1).setValue(p.proposedCarrier);
+      rowsUpdated++;
+    });
+
+    if (rowsUpdated > 0) {
+      SpreadsheetApp.flush();
+    }
+  }
+
+  var summary = {
+    success:                  true,
+    dryRun:                   dryRun,
+    generatedAt:              new Date().toISOString(),
+    claimsChecked:            claimsChecked,
+    elJobsWithCarrier:        Object.keys(elByJobNumber).length,
+    eligibleUpdates:          proposals.length,
+    conflicts:                Object.keys(elConflicts).length,
+    rowsUpdated:              dryRun ? 0 : rowsUpdated,
+    skippedNoJobNumber:       skippedNoJobNumber,
+    skippedHasCarrier:        skippedHasCarrier,
+    skippedNoElRow:           skippedNoElRow,
+    skippedConflict:          skippedConflict,
+    sampleProposals:          proposals.slice(0, 10)
+  };
+
+  Logger.log(
+    '[EnrichClaimFields] ' + (dryRun ? 'PREVIEW' : 'RUN') +
+    ': claimsChecked=' + claimsChecked +
+    ' eligible=' + proposals.length +
+    ' conflicts=' + Object.keys(elConflicts).length +
+    ' rowsUpdated=' + (dryRun ? '(dryRun)' : rowsUpdated) +
+    ' skippedHasCarrier=' + skippedHasCarrier +
+    ' skippedNoElRow=' + skippedNoElRow
+  );
+
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
 
 function testAddFusionLink() {
   return addExternalLink('CLM-20260605-821496', {

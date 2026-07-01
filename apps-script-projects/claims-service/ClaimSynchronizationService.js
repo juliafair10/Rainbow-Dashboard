@@ -34,6 +34,12 @@
  *     External_Links may carry the real insurance claim number even when the DOJ report
  *     does not. Fills remaining fallback Claim_Numbers on Claims rows from EL.
  *
+ *   Step 4B — Enrich Claims rows with Carrier from External_Links (Fix B / 2026-06-30)
+ *     Insurance Intake automation writes Carrier to External_Links (Fix B). This step
+ *     promotes that carrier name into the Claims.Carrier column for DOJ-bootstrapped
+ *     rows that have no carrier. Never overwrites a non-blank Claims.Carrier.
+ *     Gracefully no-ops if Carrier column not yet present in External_Links.
+ *
  *   Step 5 — Associate Claim_IDs onto External_Links (pass 2)
  *     After step 4 writes real Claim_Numbers to Claims rows, EL rows that only carry a
  *     real Claim_Number (no Job_Number) can now match. Pass 2 picks these up.
@@ -181,6 +187,22 @@ function synchronizeClaimsFoundation(options) {
   } else {
     report.success = false;
     report.errors.push(step4.error);
+  }
+
+  // ── Step 4B: Enrich Claims rows with Carrier from External_Links ─────────
+  // After step 4 writes real Claim_Numbers to Claims rows, this step promotes
+  // the Carrier value written by insurance-intake-automation (Fix B) from
+  // External_Links into the Claims row.
+  // Safety: never overwrites a non-blank Claims.Carrier. Skips EL rows where
+  // Carrier is blank or conflicted. Gracefully no-ops if Carrier column not
+  // yet present in External_Links (Fix B not yet deployed to intake project).
+  var step4b = runSyncStep_('enrichCarrierFromExternalLinks', quiet, function() {
+    return runEnrichClaimFieldsFromExternalLinks_(dryRun);
+  });
+  report.steps.push(step4b);
+  if (!step4b.success) {
+    report.success = false;
+    report.errors.push(step4b.error);
   }
 
   // ── Step 5: Associate Claim_IDs onto External_Links — pass 2 ─────────────

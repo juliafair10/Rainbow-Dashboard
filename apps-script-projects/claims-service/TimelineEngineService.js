@@ -510,18 +510,75 @@ function normalizeTimelineEngineDate_(value) {
 
 function rebuildTimelineDerivedFieldsForClaim_(claimId) {
   const lastMeaningfulActivity = deriveLastMeaningfulActivityForClaim_(claimId);
+  const lastRevisionActivity = deriveLastRevisionActivityForClaim_(claimId);
 
-  if (!lastMeaningfulActivity) {
+  if (!lastMeaningfulActivity && !lastRevisionActivity) {
     return successResponse({
       claimId: claimId,
-      lastMeaningfulActivity: null
+      lastMeaningfulActivity: null,
+      lastRevisionActivity: null
     }, 'No meaningful timeline activity found for claim.');
   }
 
   ensureTimelineEngineClaimsColumn_('Last_Meaningful_Activity_At');
-  return updateClaim(claimId, {
-    Last_Meaningful_Activity_At: lastMeaningfulActivity.Event_Date
+  ensureTimelineEngineClaimsColumn_('Last_Revision_At');
+
+  const updates = {};
+
+  if (lastMeaningfulActivity) {
+    updates.Last_Meaningful_Activity_At = lastMeaningfulActivity.Event_Date;
+  }
+
+  if (lastRevisionActivity) {
+    updates.Last_Revision_At = lastRevisionActivity._Timeline_Source_Date;
+  }
+
+  return updateClaim(claimId, updates);
+}
+
+/**
+ * deriveLastRevisionActivityForClaim_ (Phase 3 - health pipeline repair)
+ *
+ * Mirrors deriveLastMeaningfulActivityForClaim_ above, but narrows to
+ * events that are specifically revision-related rather than "meaningful
+ * claim activity" in general. Reuses the existing content-aware classifier
+ * from TimelineSynthesisService.js (deriveRawTimelineActivityType_) instead
+ * of introducing a new keyword list - that classifier already checks
+ * Revision before Payment/Insurance Review, so a payment/accounting-only
+ * note (no "REVISION" text) is never misread as revision momentum.
+ */
+function deriveLastRevisionActivityForClaim_(claimId) {
+  if (!claimId) {
+    return null;
+  }
+
+  const timelineRows = getTimelineEngineRowsForClaim_(claimId);
+
+  const revisionEvents = timelineRows
+    .filter(function(event) {
+      return !!event._Timeline_Source_Date;
+    })
+    .filter(function(event) {
+      return typeof deriveRawTimelineActivityType_ === 'function' &&
+        deriveRawTimelineActivityType_(event) === 'Revision';
+    })
+    // Quoted/Echoed Note Guard (health pipeline repair - later-stage
+    // evidence fix): a row that is itself a quote of an older message must
+    // not be allowed to become Last_Revision_At, since that would make a
+    // stale revision request look like fresh revision momentum. Row is
+    // still filtered out of the *candidate* list here, not deleted from
+    // the timeline.
+    .filter(function(event) {
+      return typeof isQuotedEchoEvent_ !== 'function' || !isQuotedEchoEvent_(event, timelineRows);
+    });
+
+  revisionEvents.sort(function(a, b) {
+    const aDate = normalizeTimelineEngineDate_(a._Timeline_Source_Date).getTime();
+    const bDate = normalizeTimelineEngineDate_(b._Timeline_Source_Date).getTime();
+    return bDate - aDate;
   });
+
+  return revisionEvents.length > 0 ? revisionEvents[0] : null;
 }
 
 
@@ -544,6 +601,7 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
   }
 
   ensureTimelineEngineClaimsColumn_('Last_Meaningful_Activity_At');
+  ensureTimelineEngineClaimsColumn_('Last_Revision_At');
 
   const claimsValues = claimsSheet.getDataRange().getValues();
   if (claimsValues.length < 2) {
@@ -564,6 +622,15 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
   const lastMeaningfulIndex = getTimelineEngineHeaderIndex_(claimsHeaders, [
     'Last_Meaningful_Activity_At',
     'Last Meaningful Activity At'
+  ]);
+  // Phase 3 (health pipeline repair): Last_Revision_At was just ensured
+  // above, so this should always resolve - but this is intentionally not
+  // added to the hard failure check below, so a missing revision column
+  // degrades to "revision tracking skipped" rather than blocking the
+  // Last_Meaningful_Activity_At rebuild that already runs in production.
+  const lastRevisionIndex = getTimelineEngineHeaderIndex_(claimsHeaders, [
+    'Last_Revision_At',
+    'Last Revision At'
   ]);
 
   if (claimIdIndex === -1 || lastMeaningfulIndex === -1) {
@@ -594,8 +661,20 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
   }
 
   const latestMeaningfulByClaim = {};
+  const latestRevisionByClaim = {};
+  // Quoted/Echoed Note Guard (health pipeline repair - later-stage evidence
+  // fix): the guard needs to see every timeline row for a claim to detect
+  // same-timestamp batch-echo clusters, not just the rows classified as
+  // 'Revision'. Collected during the single pass below (no second sheet
+  // scan) and only consulted, never mutated - the underlying timeline rows
+  // are untouched either way.
+  const allEventsByClaim = {};
+  const revisionCandidatesByClaim = {};
   Object.keys(activeClaimLookup).forEach(function(claimId) {
     latestMeaningfulByClaim[claimId] = null;
+    latestRevisionByClaim[claimId] = null;
+    allEventsByClaim[claimId] = [];
+    revisionCandidatesByClaim[claimId] = [];
   });
 
   const timelineValues = timelineSheet.getDataRange().getValues();
@@ -637,6 +716,36 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
 
     const rawEventType = timelineEventTypeIndex >= 0 ? row[timelineEventTypeIndex] : '';
     const rawSummary = timelineSummaryIndex >= 0 ? row[timelineSummaryIndex] : '';
+    const rawDetail = timelineDetailsIndex >= 0 ? row[timelineDetailsIndex] : '';
+    const lightweightEvent = {
+      Event_Type: rawEventType,
+      Summary: rawSummary,
+      Detail: rawDetail,
+      Event_Date: rawEventDate
+    };
+
+    if (allEventsByClaim[matchedClaimId]) {
+      allEventsByClaim[matchedClaimId].push(lightweightEvent);
+    }
+
+    // Phase 3 (health pipeline repair): revision-specific tracking reuses
+    // the same row data already read for the meaningful-activity check
+    // above (no second sheet scan) and reuses the existing content-aware
+    // classifier from TimelineSynthesisService.js rather than a new
+    // keyword list. Checked independently of isBulkTimelineMeaningfulActivity_
+    // below so it isn't skipped when Event_Type alone wouldn't otherwise
+    // register as meaningful.
+    if (typeof deriveRawTimelineActivityType_ === 'function') {
+      const revisionActivityType = deriveRawTimelineActivityType_(lightweightEvent);
+
+      if (revisionActivityType === 'Revision' && revisionCandidatesByClaim[matchedClaimId]) {
+        revisionCandidatesByClaim[matchedClaimId].push({
+          date: eventDate,
+          rawDate: rawEventDate,
+          event: lightweightEvent
+        });
+      }
+    }
 
     if (!isBulkTimelineMeaningfulActivity_(rawEventType)) {
       continue;
@@ -652,6 +761,38 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
       };
     }
   }
+
+  // Quoted/Echoed Note Guard (health pipeline repair - later-stage evidence
+  // fix): resolve the real latest revision event per claim only after every
+  // row for that claim has been seen, so the guard can compare each
+  // candidate against its full set of siblings (needed for the
+  // same-timestamp batch-echo fallback). Rows flagged as echoes are simply
+  // excluded from becoming Last_Revision_At - nothing is deleted or
+  // rewritten in Timeline_Events.
+  Object.keys(revisionCandidatesByClaim).forEach(function(claimId) {
+    const candidates = revisionCandidatesByClaim[claimId];
+    if (!candidates.length) {
+      return;
+    }
+
+    const siblings = allEventsByClaim[claimId] || [];
+    const genuineCandidates = candidates.filter(function(candidate) {
+      return typeof isQuotedEchoEvent_ !== 'function' || !isQuotedEchoEvent_(candidate.event, siblings);
+    });
+
+    if (!genuineCandidates.length) {
+      return;
+    }
+
+    genuineCandidates.sort(function(a, b) {
+      return b.date.getTime() - a.date.getTime();
+    });
+
+    latestRevisionByClaim[claimId] = {
+      date: genuineCandidates[0].date,
+      rawDate: genuineCandidates[0].rawDate
+    };
+  });
 
   const lastMeaningfulValues = claimsSheet.getRange(2, lastMeaningfulIndex + 1, claimsValues.length - 1, 1).getValues();
   let updatedCount = 0;
@@ -685,9 +826,39 @@ function bulkRebuildTimelineDerivedFieldsForActiveClaims() {
 
   claimsSheet.getRange(2, lastMeaningfulIndex + 1, claimsValues.length - 1, 1).setValues(lastMeaningfulValues);
 
+  // Phase 3 (health pipeline repair): batch read/write Last_Revision_At the
+  // same way Last_Meaningful_Activity_At is handled above - one column read,
+  // one column write, only for claims whose revision-specific activity
+  // actually changed.
+  let revisionUpdatedCount = 0;
+
+  if (lastRevisionIndex !== -1) {
+    const lastRevisionValues = claimsSheet.getRange(2, lastRevisionIndex + 1, claimsValues.length - 1, 1).getValues();
+
+    activeClaimRows.forEach(function(claimRow) {
+      const latestRevision = latestRevisionByClaim[claimRow.claimId];
+
+      if (!latestRevision) {
+        return;
+      }
+
+      const localColumnIndex = claimRow.valuesIndex - 1;
+      const currentValue = lastRevisionValues[localColumnIndex][0];
+      const nextValue = latestRevision.rawDate instanceof Date ? latestRevision.rawDate.toISOString() : latestRevision.rawDate;
+
+      if (String(currentValue || '') !== String(nextValue || '')) {
+        lastRevisionValues[localColumnIndex][0] = nextValue;
+        revisionUpdatedCount++;
+      }
+    });
+
+    claimsSheet.getRange(2, lastRevisionIndex + 1, claimsValues.length - 1, 1).setValues(lastRevisionValues);
+  }
+
   return successResponse({
     activeClaimCount: activeClaimRows.length,
     updatedCount: updatedCount,
+    revisionUpdatedCount: revisionUpdatedCount,
     timelineRowsProcessed: Math.max(timelineValues.length - 1, 0),
     elapsedMs: new Date().getTime() - startedAt.getTime(),
     sampleResults: sampleResults

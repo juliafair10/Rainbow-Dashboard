@@ -4,6 +4,35 @@
  * Orchestrates Rainbow's morning report intake and daily timeline enrichment.
  * Historical Notes uses the incremental timeline importer so the morning run
  * only processes notes that are newer than the last imported timeline note.
+ *
+ * Step order (Phase Fix-2 — 2026-07-01):
+ *   1. processDailyOpenJobsEmailIntake        — save XLSX attachment to Drive
+ *   2. importLatestDailyOpenJobsReport        — bootstrap new Claims rows + update Last Activity Date
+ *   3. reconcileDailyOpenJobsRemovedClaims    — mark removed jobs Operationally Complete
+ *   4. processComplianceTasksEmailIntake      — save compliance XLSX
+ *   5. importNewHistoricalNotes               — enrich Timeline_Events for matched claims
+ *   6. rebuildTimelineDerivedFieldsForActiveClaims
+ *   7. synchronizeClaimsFoundation
+ *   8. reconcileClaimConditions               — batchReconcileClaimConditions() (ConditionEngineService.js)
+ *   9. applyClaimHealth                       — batchApplyClaimHealth() (HealthEngineService.js)
+ *  10. refreshHomepageData
+ *
+ * importLatestDailyOpenJobsReport must run BEFORE reconcileDailyOpenJobsRemovedClaims
+ * so that newly bootstrapped claims are present in Claims before the reconciliation
+ * evaluates which active claims are missing from the report.
+ *
+ * reconcileClaimConditions runs BEFORE applyClaimHealth so a condition added
+ * earlier in the same run (or by the historical notes / timeline steps above)
+ * is reflected in that day's health evaluation, matching how these two were
+ * previously chained together whenever they were run manually. refreshHomepageData
+ * runs last so it reflects the freshly recalculated health/conditions rather
+ * than the previous day's snapshot.
+ *
+ * Both new steps are idempotent: reconcileClaimConditions only adds conditions
+ * that aren't already active (never removes, per its "toRemove" policy), and
+ * applyClaimHealth only writes a new Claim_Health_History row when the health
+ * level actually changes (recordHealthHistoryIfChanged_). Re-running this
+ * function against unchanged claims is safe and produces no duplicate writes.
  */
 
 function runRainbowMorningAutomation() {
@@ -13,6 +42,11 @@ function runRainbowMorningAutomation() {
   steps.push(runMorningAutomationStep_(
     'processDailyOpenJobsEmailIntake',
     processDailyOpenJobsEmailIntake
+  ));
+
+  steps.push(runMorningAutomationStep_(
+    'importLatestDailyOpenJobsReport',
+    importLatestDailyOpenJobsReport
   ));
 
   steps.push(runMorningAutomationStep_(
@@ -41,6 +75,16 @@ function runRainbowMorningAutomation() {
   ));
 
   steps.push(runMorningAutomationStep_(
+    'reconcileClaimConditions',
+    runMorningConditionReconciliation_
+  ));
+
+  steps.push(runMorningAutomationStep_(
+    'applyClaimHealth',
+    runMorningHealthEvaluation_
+  ));
+
+  steps.push(runMorningAutomationStep_(
     'refreshHomepageData',
     runMorningHomepageRefresh_
   ));
@@ -48,8 +92,6 @@ function runRainbowMorningAutomation() {
   // Future morning workflow placeholders. Do not enable until the owning
   // import/refresh functions exist and are explicitly approved for automation.
   // importLatestComplianceTasksReport();
-  // batchReconcileClaimConditions();
-  // testBatchApplyClaimHealth();
   // refreshHomepageData();
 
   const completedAt = nowIso();

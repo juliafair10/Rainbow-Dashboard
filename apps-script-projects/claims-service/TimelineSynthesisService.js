@@ -34,9 +34,17 @@ function synthesizeActivitiesFromRawTimeline_(claimId) {
     return [];
   }
 
-  const events = timelineResult.data.timeline || [];
+  const rawEvents = timelineResult.data.timeline || [];
+  // Field-mapping fix (later-stage-evidence follow-up, 2026-07-01): see
+  // normalizeRawTimelineEventForSynthesis_ below for why this mapping step
+  // is required - getTimelineForClaim() can return rows keyed by the raw
+  // (space-stripped) sheet headers (Date, Details, Source, Claim_ID, ...)
+  // rather than the Event_Date/Detail/Event_Source names every function in
+  // this file expects. Every event is normalized once here so
+  // classification and date derivation both see the real values.
+  const events = rawEvents.map(normalizeRawTimelineEventForSynthesis_);
 
-  return events.map(function(event) {
+  return events.map(function(event, index) {
     const activityType = deriveRawTimelineActivityType_(event);
     const label = deriveRawTimelineActivityLabel_(activityType, event);
 
@@ -48,14 +56,164 @@ function synthesizeActivitiesFromRawTimeline_(claimId) {
       isMeaningful: isRawTimelineActivityMeaningful_(activityType, event),
       startDate: normalizeRawTimelineDate_(event.Event_Date || event.Created_At),
       endDate: normalizeRawTimelineDate_(event.Event_Date || event.Created_At),
+      // Quoted/Echoed Note Guard (health pipeline repair, later-stage
+      // evidence fix): flags rows that are themselves quotes of older
+      // messages rather than new operational events. Never used to hide or
+      // delete the row - only to keep it from being mistaken for new
+      // revision/payment/etc. activity by chronology-sensitive logic.
+      isQuotedEcho: isQuotedEchoEvent_(event, events),
+      genuineEffectiveDate: getGenuineEffectiveDate_(event),
+      // Exposed for diagnostics/debugging (later-stage-evidence follow-up):
+      // the exact normalized text this event was classified from.
+      rawText: getRawTimelineText_(event),
       claimId: event.Claim_ID || claimId,
       sourceGroups: 0,
       sourceEvents: 1,
       summary: label,
       groups: [],
-      events: [event]
+      events: [rawEvents[index]]
     };
   });
+}
+
+/**
+ * normalizeRawTimelineEventForSynthesis_ (later-stage-evidence follow-up,
+ * 2026-07-01)
+ *
+ * Root cause of the live bug where evaluateConditionResolutionRecommendation_
+ * found no payment/accounting or revision-completion evidence at all:
+ * getTimelineForClaim() resolves rows through TimelineService.js, which can
+ * return either of two shapes -
+ *   - the primary lookup path (SheetService.findRows/getRows) normalizes
+ *     the ACTUAL sheet headers ("Event ID", "Claim ID", "Date",
+ *     "Event Type", "Details", "Source", ...) by stripping spaces, giving
+ *     keys like Event_ID, Claim_ID, Date, Event_Type, Details, Source -
+ *     NOT Event_Date / Detail / Event_Source.
+ *   - the manual fallback path (getTimelineRowsForClaimFallback_) already
+ *     maps into Event_Date / Detail / Event_Source / Claim_ID directly.
+ * Every function below (getRawTimelineText_, deriveRawTimelineActivityType_,
+ * the Quoted/Echoed Note Guard, date derivation) assumes the second shape.
+ * Fed the first shape, event.Event_Date was always undefined, so every
+ * synthesized activity's date silently defaulted to null - which then
+ * failed any "at/after the condition opened" comparison and got the
+ * activity filtered out entirely, even though the real timeline clearly
+ * had the evidence. This normalizes either shape into the one every
+ * downstream function expects, without changing those functions.
+ */
+function normalizeRawTimelineEventForSynthesis_(event) {
+  return {
+    Event_Type: event.Event_Type || event['Event Type'] || '',
+    Event_Source: event.Event_Source || event.Source || event['Event Source'] || event['Source System'] || '',
+    Source_System: event.Source_System || event['Source System'] || '',
+    Summary: event.Summary || '',
+    Detail: event.Detail || event.Details || event['Details'] || '',
+    Related_Workflow: event.Related_Workflow || event['Related Workflow'] || '',
+    Visibility: event.Visibility || '',
+    Event_Date: event.Event_Date || event.Date || event['Event Date'] || event.date ||
+      event.Created_At || event['Created At'] || '',
+    Created_At: event.Created_At || event['Created At'] || '',
+    Claim_ID: event.Claim_ID || event['Claim ID'] || ''
+  };
+}
+
+/**
+ * Quoted / Echoed Note Guard (health pipeline repair - later-stage evidence
+ * fix, 2026-07-01)
+ *
+ * Historical-notes imports occasionally re-import an entire reply thread as
+ * a single batch, stamping every quoted fragment inside it with the import
+ * timestamp instead of that fragment's true original date. That produces
+ * timeline rows that look like brand-new, later events but are actually
+ * echoes of much older messages - which can fool any "did X happen after Y"
+ * chronology check (e.g. "is there a newer revision request after
+ * payment?").
+ *
+ * A row is treated as a quoted/echoed fragment - never deleted, never
+ * hidden, still visible in the claim's timeline - when it carries one of
+ * these signals:
+ *   1. It embeds an explicit reply attribution ("By <name> On <date>"),
+ *      the hallmark of a quoted reply.
+ *   2. It embeds two or more distinguishable "On <date>" references,
+ *      meaning it's stitching together multiple older statements into one
+ *      later imported note.
+ *   3. It shares its exact stored timestamp (to the second) with a sibling
+ *      row in the same claim's timeline that itself matches signal 1 or 2 -
+ *      i.e. it's part of the same batch re-import of a thread, even if this
+ *      particular fragment has no date embedded in it.
+ */
+var QUOTED_REPLY_ATTRIBUTION_PATTERN_ = /\bBY\s+[A-Z0-9,'.\-\s]{2,60}?\s+ON\s+\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
+var EMBEDDED_DATE_PATTERN_ = /\bON\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
+
+function getQuotedEchoSignals_(event) {
+  const text = getRawTimelineText_(event);
+  const attributionMatches = text.match(QUOTED_REPLY_ATTRIBUTION_PATTERN_) || [];
+  const embeddedDateMatches = text.match(EMBEDDED_DATE_PATTERN_) || [];
+
+  const embeddedDates = embeddedDateMatches.map(function(match) {
+    const dateText = match.replace(/^.*ON\s+/, '');
+    const parsed = new Date(dateText);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  }).filter(function(d) { return d !== null; });
+
+  return {
+    hasReplyAttribution: attributionMatches.length > 0,
+    embeddedDateCount: embeddedDateMatches.length,
+    embeddedDates: embeddedDates
+  };
+}
+
+function isQuotedEchoEvent_(event, siblingEvents) {
+  const signals = getQuotedEchoSignals_(event);
+
+  if (signals.hasReplyAttribution || signals.embeddedDateCount >= 2) {
+    return true;
+  }
+
+  if (!siblingEvents || !siblingEvents.length) {
+    return false;
+  }
+
+  const eventTimestamp = normalizeRawTimelineDate_(event.Event_Date || event.Created_At);
+  if (!eventTimestamp) {
+    return false;
+  }
+
+  return siblingEvents.some(function(sibling) {
+    if (sibling === event) {
+      return false;
+    }
+
+    const siblingTimestamp = normalizeRawTimelineDate_(sibling.Event_Date || sibling.Created_At);
+    if (siblingTimestamp !== eventTimestamp) {
+      return false;
+    }
+
+    const siblingSignals = getQuotedEchoSignals_(sibling);
+    return siblingSignals.hasReplyAttribution || siblingSignals.embeddedDateCount >= 2;
+  });
+}
+
+/**
+ * For a row flagged as a quoted echo, its embedded "On <date>" attribution
+ * is a better estimate of the fragment's true origin than the batch-import
+ * timestamp stored on the row. Falls back to the stored date when no
+ * embedded date is present (e.g. a same-batch sibling flagged only via the
+ * timestamp-cluster rule).
+ */
+function getGenuineEffectiveDate_(event) {
+  const signals = getQuotedEchoSignals_(event);
+
+  if (signals.embeddedDates.length) {
+    const mostRecentEmbedded = signals.embeddedDates.reduce(function(latest, d) {
+      return (!latest || d.getTime() > latest.getTime()) ? d : latest;
+    }, null);
+
+    if (mostRecentEmbedded) {
+      return mostRecentEmbedded.toISOString();
+    }
+  }
+
+  return normalizeRawTimelineDate_(event.Event_Date || event.Created_At);
 }
 
 function deriveRawTimelineActivityType_(event) {

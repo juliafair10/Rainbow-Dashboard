@@ -84,9 +84,31 @@ function applyClaimHealth(claimId) {
     const evaluatedAt = evaluation.data.evaluatedAt || nowIso();
 
     const updateResult = updateHealthEngineClaimRow_(targetClaimId, {
+      // Canonical, live-read fields (see ClaimsQueryService.js's pick_()
+      // calls, which check these legacy names first) - do not remove or
+      // stop writing these.
       'Health Status': evaluation.data.healthLevel,
       'Health Reason': evaluation.data.healthReason,
-      'Last Updated': evaluatedAt
+      'Last Updated': evaluatedAt,
+
+      // Phase 6 (schema drift stabilization): additive, compatibility-only
+      // dual-write. Operational_Health/Health_Updated_At/Updated_At exist
+      // as real, distinct columns in the Claims sheet schema (Config.js)
+      // but nothing has ever written them, so they've been blank on every
+      // claim. Writing them here lets them start accumulating real data
+      // without any read path depending on them yet (no read path changes
+      // in this phase), so a future migration has real history to migrate
+      // from instead of starting from empty columns. updateHealthEngineClaimRow_
+      // silently skips any key here that doesn't match an existing header,
+      // so this is safe even if a column is ever removed.
+      //
+      // There is no separate "Health_Reason" (underscore) column distinct
+      // from "Health Reason" in the live sheet - both normalize to the same
+      // header key under this function's matching, so there is nothing
+      // additional to dual-write for the reason text itself.
+      'Operational_Health': evaluation.data.healthLevel,
+      'Health_Updated_At': evaluatedAt,
+      'Updated_At': evaluatedAt
     });
 
     if (!updateResult.success) {
@@ -499,6 +521,184 @@ function batchApplyClaimHealth() {
   }
 }
 
+function runMorningHealthEvaluation_() {
+  // Phase 1 (health pipeline repair): called from
+  // MorningAutomationService.runRainbowMorningAutomation() so health gets
+  // recalculated automatically instead of only from manual test functions
+  // (testApplyClaimHealth/testBatchApplyClaimHealth). batchApplyClaimHealth()
+  // is idempotent by construction - recordHealthHistoryIfChanged_() only
+  // appends a Claim_Health_History row when the health level actually
+  // changes, so re-running this against an unchanged claim writes nothing
+  // new. This wrapper passes the batch result through unchanged (it does
+  // not re-wrap it in an unconditional successResponse) so a genuine
+  // evaluation failure is correctly reported as a failed morning
+  // automation step.
+  return batchApplyClaimHealth();
+}
+
+/**
+ * diagnoseClaimHealth (Phase 2 - health pipeline repair)
+ *
+ * Read-only diagnostic for a single claim. Runs the exact same
+ * gatherHealthInputs_/evaluateHealthDriver_ logic applyClaimHealth uses,
+ * but never writes anything - it only compares what the engine would
+ * currently compute against what's actually displayed on the Claims sheet,
+ * so staleness (health not recalculated recently) is visible without
+ * opening the Apps Script editor.
+ */
+function diagnoseClaimHealth(claimId) {
+  try {
+    const targetClaimId = claimId || getFirstClaimIdForHealthTest_();
+    const inputs = gatherHealthInputs_(targetClaimId);
+    const claim = inputs.claim;
+
+    const healthDriver = evaluateHealthDriver_(inputs);
+
+    const displayedHealthStatus = inputs.operationalHealth || 'Healthy';
+    const displayedHealthReason = getHealthEngineValueFromRow_(claim, ['Health_Reason', 'Health Reason']) || '';
+
+    const evaluatedHealthStatus = healthDriver.healthLevel || 'Healthy';
+    const evaluatedHealthReason = healthDriver.healthReason || '';
+
+    const isDisplayedHealthStale = (displayedHealthStatus !== evaluatedHealthStatus) ||
+      (String(displayedHealthReason).trim() !== String(evaluatedHealthReason).trim());
+
+    const openConditions = (inputs.activeConditions || []).map(function(condition) {
+      // Phase 5 (health pipeline repair): read-only resolution
+      // recommendation, surfaced per open condition. Never closes anything -
+      // see evaluateConditionResolutionRecommendation_ in
+      // ConditionEngineService.js.
+      const resolutionRecommendation = typeof evaluateConditionResolutionRecommendation_ === 'function'
+        ? evaluateConditionResolutionRecommendation_(targetClaimId, condition)
+        : {
+            recommendedConditionResolution: false,
+            resolutionRecommendationReason: '',
+            confidence: 'low',
+            latestGenuineRevisionEventAt: '',
+            latestPaymentOrAccountingEventAt: '',
+            newerRevisionRequestAfterPayment: false
+          };
+
+      return {
+        conditionId: condition.Condition_ID || '',
+        conditionType: condition.Condition_Type || '',
+        status: condition.Condition_Status || '',
+        openedAt: condition.Opened_At || '',
+        daysOpen: condition.Opened_At ? daysSince_(condition.Opened_At) : null,
+        followUpDate: condition.Follow_Up_Date || '',
+        hasFollowUpDate: !!condition.Follow_Up_Date,
+        isPastFollowUp: isConditionPastFollowUp_(condition),
+        recommendedConditionResolution: resolutionRecommendation.recommendedConditionResolution,
+        resolutionRecommendationReason: resolutionRecommendation.resolutionRecommendationReason,
+        confidence: resolutionRecommendation.confidence,
+        // Later-stage-evidence fix (2026-07-01): exact evidence backing the
+        // recommendation above, per your required diagnostic fields.
+        latestGenuineRevisionEventAt: resolutionRecommendation.latestGenuineRevisionEventAt || '',
+        latestPaymentOrAccountingEventAt: resolutionRecommendation.latestPaymentOrAccountingEventAt || '',
+        newerRevisionRequestAfterPayment: !!resolutionRecommendation.newerRevisionRequestAfterPayment
+      };
+    });
+
+    const alertRows = getRows(CLAIM_SHEET_NAMES.alerts).filter(function(alert) {
+      return alert.Claim_ID === targetClaimId && isOpenStatus_(alert.Alert_Status || alert.Status);
+    });
+
+    const activeAlerts = alertRows.map(function(alert) {
+      return {
+        alertId: alert.Alert_ID || '',
+        alertType: alert.Alert_Type || '',
+        severity: alert.Severity || '',
+        reason: alert.Reason || '',
+        createdAt: alert.Created_At || ''
+      };
+    });
+
+    const daysSinceLastMeaningfulActivity = inputs.lastMeaningfulActivityAt
+      ? daysSince_(inputs.lastMeaningfulActivityAt)
+      : null;
+
+    const daysSinceLastRevisionActivity = inputs.lastRevisionAt
+      ? daysSince_(inputs.lastRevisionAt)
+      : null;
+
+    const recommendedNextAction = buildDiagnosticRecommendedAction_(
+      isDisplayedHealthStale,
+      evaluatedHealthStatus,
+      evaluatedHealthReason
+    );
+
+    const diagnostic = {
+      claimId: targetClaimId,
+      insured: getHealthEngineValueFromRow_(claim, ['Customer_Name', 'Customer Name']) || '',
+      claimNumber: getHealthEngineValueFromRow_(claim, ['Claim_Number', 'Claim Number']) || '',
+      lifecycleState: inputs.lifecycleState || '',
+      ownershipArea: inputs.ownershipArea || '',
+
+      currentHealthStatus: displayedHealthStatus,
+      currentHealthReason: displayedHealthReason,
+
+      evaluatedHealthStatus: evaluatedHealthStatus,
+      evaluatedHealthReason: evaluatedHealthReason,
+
+      openConditions: openConditions,
+      activeAlerts: activeAlerts,
+
+      lastMeaningfulActivityAt: inputs.lastMeaningfulActivityAt || '',
+      daysSinceLastMeaningfulActivity: daysSinceLastMeaningfulActivity,
+
+      lastRevisionActivityAt: inputs.lastRevisionAt || '',
+      daysSinceLastRevisionActivity: daysSinceLastRevisionActivity,
+
+      followUpDates: openConditions.map(function(condition) {
+        return {
+          conditionType: condition.conditionType,
+          followUpDate: condition.followUpDate
+        };
+      }),
+
+      conditionDriver: healthDriver.conditionType || healthDriver.driver || '',
+
+      isDisplayedHealthStale: isDisplayedHealthStale,
+      recommendedNextAction: recommendedNextAction,
+
+      evaluatedAt: nowIso()
+    };
+
+    return successResponse(diagnostic, 'Claim health diagnostic generated successfully.');
+
+  } catch (error) {
+    writeServiceLog('diagnoseClaimHealth', 'Error', error.message, {
+      claimId: claimId || '',
+      error: error
+    });
+
+    return errorResponse('Failed to generate claim health diagnostic.', {
+      message: error.message,
+      stack: error.stack
+    });
+  }
+}
+
+function buildDiagnosticRecommendedAction_(isDisplayedHealthStale, evaluatedHealthStatus, evaluatedHealthReason) {
+  if (isDisplayedHealthStale) {
+    return 'Displayed health does not match current evaluation - re-run health evaluation ' +
+      '(batchApplyClaimHealth) to bring it current. Evaluated status would be "' +
+      evaluatedHealthStatus + '": ' + evaluatedHealthReason;
+  }
+
+  if (evaluatedHealthStatus === 'Healthy') {
+    return 'No action needed - claim is healthy as of the last evaluation.';
+  }
+
+  return 'Review driving condition - ' + evaluatedHealthReason;
+}
+
+function testDiagnoseClaimHealth() {
+  const response = diagnoseClaimHealth('CLM-26A-0043-WTR');
+  Logger.log(JSON.stringify(response, null, 2));
+  return response;
+}
+
 function gatherHealthInputs_(claimId) {
   const claims = findHealthEngineClaimsRows_();
   const claim = claims.find(function(row) {
@@ -678,6 +878,37 @@ function evaluateConditionHealth_(condition, inputs) {
     }
 
     if (isDateOlderThanDays_(inputs.lastRevisionAt || inputs.lastMeaningfulActivityAt, HEALTH_CONFIG.revisionStaleDays)) {
+      // Later-stage-evidence fix (2026-07-01): a stale day-count alone used
+      // to fall straight through to At Risk (which climbs to Escalated via
+      // applyEscalationPersistence_ the longer the condition sits open).
+      // Before doing that, check whether genuine (non-echoed) timeline
+      // evidence shows the claim has actually moved past this condition -
+      // i.e. real payment/accounting activity occurred after the last
+      // genuine revision request/completion, with no newer genuine
+      // revision request since. If so, do not let it escalate. This does
+      // NOT auto-close the condition and does NOT mark the claim Healthy
+      // on its own - it surfaces a review-level Attention Soon so a person
+      // confirms and resolves the condition.
+      const resolution = typeof evaluateConditionResolutionRecommendation_ === 'function'
+        ? evaluateConditionResolutionRecommendation_(inputs.claimId, condition)
+        : { recommendedConditionResolution: false };
+
+      if (resolution.recommendedConditionResolution) {
+        const staleButResolvedDriver = buildHealthDriver_(
+          'Attention Soon',
+          'Revision condition appears stale because later payment/accounting activity occurred. Review and resolve the condition if appropriate.',
+          conditionType
+        );
+        staleButResolvedDriver.suppressed = true;
+        staleButResolvedDriver.suppressionReason = 'Genuine payment/accounting activity (' +
+          (resolution.latestPaymentOrAccountingEventAt || 'unknown date') +
+          ') occurred after the last genuine revision activity (' +
+          (resolution.latestGenuineRevisionEventAt || 'unknown date') +
+          '), with no newer genuine revision request since - stale-revision escalation suppressed pending manual review. Condition remains open.';
+        staleButResolvedDriver.confidence = resolution.confidence || 'medium';
+        return staleButResolvedDriver;
+      }
+
       return buildHealthDriver_('At Risk', 'Revision is active, but revision momentum appears stale.', conditionType);
     }
 

@@ -67,7 +67,12 @@ const CLAIM_FOUNDATION_SHEETS = {
     'Is_Active', 'Is_Not_Sold', 'Is_Operationally_Complete', 'Created_At',
     'Updated_At', 'Owner_Updated_At', 'Last_Meaningful_Activity_At', 'Last_EOJ_At',
     'Last_Payment_At', 'Last_Revision_At', 'Last_Carrier_Activity_At',
-    'Last_Follow_Up_At', 'Last_Condition_Update_At', 'Last_Alert_Update_At', 'Notes'
+    'Last_Follow_Up_At', 'Last_Condition_Update_At', 'Last_Alert_Update_At', 'Notes',
+    // Phase 3.5 — EOJ snapshot columns (added by runPhase35ClaimsSnapshotMigration())
+    'Last_EOJ_Technician', 'Last_EOJ_Visit_Type', 'Last_EOJ_Job_Status',
+    'Last_EOJ_Work_Summary', 'Last_EOJ_Insurance_Summary',
+    // Phase 3.5 — MICA/Mitigate snapshot columns
+    'Last_MICA_Status', 'Last_MICA_Expected_Update_Date'
   ],
 
   Timeline_Events: [
@@ -187,6 +192,41 @@ const CLAIM_HEALTH_LEVELS = [
   'Escalated',
   'Critical'
 ];
+
+/**
+ * Health column canonical/compatibility mapping (Phase 6 - schema drift
+ * stabilization, documentation only, no migration performed).
+ *
+ * The live Claims sheet has two overlapping sets of health columns because
+ * newer columns were added to this schema (CLAIM_FOUNDATION_SHEETS.Claims
+ * above) without the write path ever being updated to use them:
+ *
+ *   CANONICAL (short-term source of truth - read and written today):
+ *     - "Health Status"   (legacy, space-separated header)
+ *     - "Health Reason"   (legacy, space-separated header)
+ *     - "Last Updated"    (legacy, space-separated header)
+ *   Read by: ClaimsQueryService.js's pick_() calls (checked before the
+ *   underscore variants). Written by: HealthEngineService.applyClaimHealth
+ *   via updateHealthEngineClaimRow_.
+ *
+ *   COMPATIBILITY (real, distinct columns; additively dual-written as of
+ *   Phase 6 so they start accumulating real data; not read by anything yet):
+ *     - "Operational_Health"
+ *     - "Health_Updated_At"
+ *     - "Updated_At"
+ *
+ *   NOT A SEPARATE COLUMN: "Health_Reason" (underscore) does not exist as
+ *   its own column distinct from "Health Reason" in the live sheet - the two
+ *   names normalize identically wherever header-normalization is used, so
+ *   there is nothing to dual-write there. If a real migration ever happens,
+ *   either rename "Health Reason" or explicitly add a new column first.
+ *
+ *   "Ownership_Area" and "Primary_Owner" are NOT drift - they are two
+ *   different concepts (functional queue vs. individual person) and both
+ *   are legitimately populated by OwnershipService.setOwnership.
+ *
+ * No historical data has been migrated and no old columns have been removed.
+ */
 
 const HEALTH_CONFIG = {
   staleAttentionDays: 7,
