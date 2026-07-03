@@ -48,7 +48,9 @@ function processUnprocessedEOJs() {
     foundCount: rows.length,
     processedCount: 0,
     errorCount: 0,
-    errors: []
+    bridgeErrorCount: 0,
+    errors: [],
+    bridgeErrors: []
   };
 
   rows.forEach(row => {
@@ -65,7 +67,31 @@ function processUnprocessedEOJs() {
         writeEojToClaimsDatabase_(interpreted);
       } catch (bridgeErr) {
         const bridgeMsg = bridgeErr && bridgeErr.message ? bridgeErr.message : String(bridgeErr);
-        Logger.log('ClaimsBridge error (non-fatal) for row ' + row.rowNumber + ': ' + bridgeMsg);
+        const bridgeStack = bridgeErr && bridgeErr.stack ? bridgeErr.stack : '';
+        const bridgeContext = {
+          rowNumber: row.rowNumber,
+          eojId: row.eojId,
+          claimNumber: interpreted.claimNumber || interpreted.claim_number || '',
+          customerName: interpreted.customerName || interpreted.customer_name || interpreted.insuredName || '',
+          error: bridgeMsg
+        };
+
+        result.bridgeErrorCount++;
+        result.bridgeErrors.push(bridgeContext);
+
+        Logger.log(
+          'ClaimsBridge error (non-fatal) for row ' + row.rowNumber + ': ' + bridgeMsg +
+          (bridgeStack ? '\n' + bridgeStack : '')
+        );
+
+        if (typeof notifyClaimsBridgeFailure_ === 'function') {
+          try {
+            notifyClaimsBridgeFailure_(bridgeContext, bridgeErr, interpreted);
+          } catch (notifyErr) {
+            Logger.log('ClaimsBridge failure notification error (non-fatal) for row ' + row.rowNumber + ': ' +
+              (notifyErr && notifyErr.message ? notifyErr.message : String(notifyErr)));
+          }
+        }
       }
 
       // Create Todoist task if office follow-up was requested. Non-fatal.
@@ -112,6 +138,8 @@ function processUnprocessedEOJs() {
     result.status = 'Partial Success';
   } else if (result.errorCount > 0) {
     result.status = 'Error';
+  } else if (result.bridgeErrorCount > 0) {
+    result.status = 'Success With Bridge Warnings';
   }
 
   Logger.log(JSON.stringify(result, null, 2));

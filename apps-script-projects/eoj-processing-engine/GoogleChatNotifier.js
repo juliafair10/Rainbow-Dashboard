@@ -59,6 +59,53 @@ function postEojToGoogleChat(interpreted) {
 }
 
 /**
+ * Posts a high-priority Google Chat notification when the EOJ -> Claims bridge
+ * fails. This is intentionally non-fatal.
+ *
+ * @param {Object} bridgeContext
+ * @param {Error} bridgeErr
+ * @param {Object} interpreted
+ * @returns {{ok:boolean, reason?:string}}
+ */
+function notifyClaimsBridgeFailure_(bridgeContext, bridgeErr, interpreted) {
+  try {
+    var webhookUrl = PropertiesService.getScriptProperties().getProperty('GOOGLE_CHAT_WEBHOOK_URL');
+
+    if (!webhookUrl) {
+      Logger.log('GoogleChatNotifier: GOOGLE_CHAT_WEBHOOK_URL not set for bridge notification.');
+      return { ok: false, reason: 'Webhook not configured' };
+    }
+
+    var lines = [
+      '⚠️ EOJ → Claims Bridge Failure',
+      '',
+      'The EOJ processed successfully, but the Claims Database update failed.',
+      ''
+    ];
+
+    if (bridgeContext.rowNumber) lines.push('*EOJ Row:* ' + bridgeContext.rowNumber);
+    if (bridgeContext.eojId) lines.push('*EOJ ID:* ' + bridgeContext.eojId);
+    if (bridgeContext.claimNumber) lines.push('*Claim #:* ' + bridgeContext.claimNumber);
+    if (bridgeContext.customerName) lines.push('*Customer:* ' + bridgeContext.customerName);
+
+    lines.push('');
+    lines.push('*Error:* ' + (bridgeContext.error || (bridgeErr && bridgeErr.message) || 'Unknown error'));
+
+    UrlFetchApp.fetch(webhookUrl, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ text: lines.join('\n') }),
+      muteHttpExceptions: true
+    });
+
+    return { ok: true };
+  } catch (err) {
+    Logger.log('Bridge failure notification error (non-fatal): ' + (err && err.message ? err.message : String(err)));
+    return { ok: false, reason: String(err) };
+  }
+}
+
+/**
  * Build the plain-text notification message.
  * Format is preserved from the existing Zapier/Google Sheets notification style.
  * Update this function to redesign the format without touching processing logic.
