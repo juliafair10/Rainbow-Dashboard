@@ -91,12 +91,19 @@ function notifyClaimsBridgeFailure_(bridgeContext, bridgeErr, interpreted) {
     lines.push('');
     lines.push('*Error:* ' + (bridgeContext.error || (bridgeErr && bridgeErr.message) || 'Unknown error'));
 
-    UrlFetchApp.fetch(webhookUrl, {
+    var response = UrlFetchApp.fetch(webhookUrl, {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ text: lines.join('\n') }),
       muteHttpExceptions: true
     });
+
+    var code = response.getResponseCode();
+
+    if (code < 200 || code >= 300) {
+      Logger.log('Bridge failure notification HTTP ' + code + ' — ' + response.getContentText().slice(0, 300));
+      return { ok: false, reason: 'Google Chat webhook returned HTTP ' + code };
+    }
 
     return { ok: true };
   } catch (err) {
