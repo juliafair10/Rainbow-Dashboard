@@ -766,6 +766,10 @@ function doGet(e) {
     return renderFullClaimViewShell_(e, 'Rainbow Full Claim');
   }
 
+  if (view === 'eojAdmin' || view === 'eojadmin') {
+    return renderEojAdminShell_();
+  }
+
   if (view === 'intake') {
     return HtmlService
       .createTemplateFromFile('IntakeView')
@@ -790,6 +794,16 @@ function renderFullClaimViewShell_(e, title) {
   return template
     .evaluate()
     .setTitle(title || 'Rainbow Full Claim')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function renderEojAdminShell_() {
+  const template = HtmlService.createTemplateFromFile('EojAdminShell');
+  template.dashboardBaseUrl = ScriptApp.getService().getUrl() || '';
+
+  return template
+    .evaluate()
+    .setTitle('Rainbow EOJ Admin')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 

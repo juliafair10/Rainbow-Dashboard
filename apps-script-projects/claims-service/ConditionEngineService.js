@@ -1165,7 +1165,8 @@ function batchReconcileClaimConditions() {
 
 function runMorningConditionReconciliation_() {
   // Phase 1 (health pipeline repair): called from
-  // MorningAutomationService.runRainbowMorningAutomation() so condition
+  // MorningAutomationService.runMorningIntelligence() (itself invoked by
+  // runRainbowMorningAutomation()) so condition
   // reconciliation runs automatically instead of only from manual test
   // functions. reconcileClaimConditions() only ever adds conditions that
   // aren't already active (see the "toRemove" policy in

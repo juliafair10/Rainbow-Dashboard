@@ -8,10 +8,12 @@ function interpretBasicEOJ_(parsed, row, runId) {
   const monitoringOutput = buildMonitoringOutput_(parsed);
   const asbestosOutput = buildAsbestosOutput_(parsed);
   const itelOutput = buildItelOutput_(parsed);
+  const micaOutput = buildMicaOutput_(parsed);
+  const jobStatusOutput = buildJobStatusOutput_(parsed);
   const reviewOutput = buildReviewOutput_(base, followUpOutput, asbestosOutput, itelOutput, monitoringOutput);
   const conditionOutput = buildConditionOutput_(monitoringOutput, asbestosOutput, itelOutput, parsed);
   const alertOutput = buildAlertOutput_(reviewOutput, followUpOutput, asbestosOutput, itelOutput);
-  const timelineEvent = buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput);
+  const timelineEvent = buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput, micaOutput);
   const operationalObjects = buildOperationalObjects_(base, timelineEvent, conditionOutput, alertOutput, followUpOutput, equipmentOutput, reviewOutput);
 
   return {
@@ -33,10 +35,13 @@ function interpretBasicEOJ_(parsed, row, runId) {
     followUpOutput,
     equipmentOutput,
     reviewOutput,
+    micaOutput,
+    jobStatusOutput,
+    monitoringOutput,
     operationalObjects,
     rawParsed: parsed,
     status: CONFIG.STATUS.PROCESSED,
-    notes: 'Session 3 operational object layer completed.'
+    notes: 'Phase 3.5 — EOJ Integration Hardening.'
   };
 }
 
@@ -94,14 +99,25 @@ function buildBaseEOJContext_(parsed, row, processedAt) {
   };
 }
 
-function buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput) {
+function buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, monitoringOutput, asbestosOutput, itelOutput, micaOutput) {
   const events = [];
 
+  // Phase F: Always write 'EOJ Submitted' as the canonical entry event.
+  // HomepageDataService.buildHomepageRecentActivity_() filters for this type —
+  // without it, inspection/monitoring visits never appear in Homepage Recent Activity.
+  events.push(buildTimelineEvent_(base, 'EOJ Submitted', {
+    visit_type:      base.visitType,
+    job_status:      getNestedValue_(parsed, ['jobStatus']),
+    work_performed:  getNestedValue_(parsed, ['workPerformed']),
+    field_work_complete: booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete']))
+  }));
+
+  // Visit-specific event — preserves full field detail separate from the entry event.
   events.push(buildTimelineEvent_(base, normalizeVisitEventType_(base.visitType), {
-    work_performed: getNestedValue_(parsed, ['workPerformed']),
-    technician_notes: getNestedValue_(parsed, ['technicianNotes']),
-    other_visit_notes: getNestedValue_(parsed, ['otherVisitNotes']),
-    remaining_work: getNestedValue_(parsed, ['remainingWork']),
+    work_performed:      getNestedValue_(parsed, ['workPerformed']),
+    technician_notes:    getNestedValue_(parsed, ['technicianNotes']),
+    other_visit_notes:   getNestedValue_(parsed, ['otherVisitNotes']),
+    remaining_work:      getNestedValue_(parsed, ['remainingWork']),
     field_work_complete: booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete']))
   }));
 
@@ -123,6 +139,11 @@ function buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, mon
     events.push(buildTimelineEvent_(base, 'Monitoring Updated', monitoringOutput));
   }
 
+  // Phase C: MICA/Mitigate timeline event — written whenever MICA activity is reported.
+  if (micaOutput && micaOutput.has_mica_activity) {
+    events.push(buildTimelineEvent_(base, 'Mitigate Status Updated', micaOutput));
+  }
+
   if (followUpOutput.follow_up_required) {
     events.push(buildTimelineEvent_(base, 'Follow-Up Requested', followUpOutput));
   }
@@ -141,7 +162,7 @@ function buildTimelineEvents_(base, parsed, equipmentOutput, followUpOutput, mon
 
   return {
     event_count: events.length,
-    primary_event_type: events[0] ? events[0].event_type : 'EOJ Processed',
+    primary_event_type: 'EOJ Submitted',
     events
   };
 }
@@ -374,15 +395,49 @@ function buildFollowUpOutput_(parsed) {
   };
 }
 
+// Phase C: reads MICA/Mitigate status fields from the EOJ JSON payload.
+// Internal field keys are 'MICA'; user-facing strings say 'Mitigate'.
+function buildMicaOutput_(parsed) {
+  var micaStatus      = getNestedValue_(parsed, ['micaStatus']);
+  var delayReason     = getNestedValue_(parsed, ['micaDelayReason']);
+  var expectedDate    = getNestedValue_(parsed, ['micaExpectedUpdateDate']);
+  var planUpdated     = booleanFromAny_(getNestedValue_(parsed, ['mitigationPlanUpdated']));
+  var planSummary     = getNestedValue_(parsed, ['mitigationPlanSummary']);
+
+  return {
+    mica_status:               micaStatus,
+    mica_delay_reason:         delayReason,
+    mica_expected_update_date: expectedDate,
+    mitigation_plan_updated:   planUpdated,
+    mitigation_plan_summary:   planSummary,
+    // True when any MICA-related data was reported on this EOJ.
+    has_mica_activity: !!(micaStatus || delayReason || planUpdated || planSummary || expectedDate)
+  };
+}
+
+// Phase B: reads job status, work summary, and insurance summary from the EOJ JSON payload.
+function buildJobStatusOutput_(parsed) {
+  return {
+    job_status:            getNestedValue_(parsed, ['jobStatus']),
+    work_performed:        getNestedValue_(parsed, ['workPerformed']),
+    for_insurance_summary: firstNonBlank_(
+      getNestedValue_(parsed, ['forInsuranceSummary']),
+      getNestedValue_(parsed, ['workSummaryForInsurance']),
+      getNestedValue_(parsed, ['insuranceSummary'])
+    )
+  };
+}
+
 function buildConditionOutput_(monitoringOutput, asbestosOutput, itelOutput, parsed) {
   return {
-    monitoring_active: monitoringOutput.monitoring_active,
+    monitoring_active:        monitoringOutput.monitoring_active,
     next_monitoring_required: monitoringOutput.next_monitoring_required,
     asbestos_testing_pending: asbestosOutput.testing_required && !asbestosOutput.samples_taken,
-    asbestos_samples_taken: asbestosOutput.samples_taken,
-    itel_sample_needed: itelOutput.sample_required,
-    field_work_complete: booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete'])),
-    equipment_still_needed: booleanFromAny_(getNestedValue_(parsed, ['equipmentStillNeeded']))
+    // Phase A: when samples are taken we're waiting on lab results — write that condition.
+    waiting_on_lab_results:   asbestosOutput.samples_taken,
+    itel_sample_needed:       itelOutput.sample_required,
+    field_work_complete:      booleanFromAny_(getNestedValue_(parsed, ['fieldWorkComplete'])),
+    equipment_still_needed:   booleanFromAny_(getNestedValue_(parsed, ['equipmentStillNeeded']))
   };
 }
 

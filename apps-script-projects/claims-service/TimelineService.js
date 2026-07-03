@@ -38,6 +38,39 @@ function appendTimelineEvent(claimId, event) {
   }, 'Timeline event appended successfully.');
 }
 
+// ============================================================
+// Phase 10D — Claim Activity Center: Claim Actions
+//
+// Thin wrapper around the existing appendTimelineEvent() so the Full Claim
+// page's "Claim Actions" panel can log that an operational shortcut was
+// used (Bill Inspection & Close, Follow Up on Coverage, Request Revision,
+// Schedule Monitoring), without introducing any new storage or engine
+// behavior. Does not touch the Health/Condition/Timeline engines.
+// ============================================================
+function createClaimActivityEvent(claimId, actionKey, actionLabel, note) {
+  if (!claimId) {
+    return validationErrorResponse(['Claim_ID is required to log a claim action.']);
+  }
+  if (!actionKey) {
+    return validationErrorResponse(['actionKey is required to log a claim action.']);
+  }
+
+  const label = normalizeString(actionLabel || actionKey);
+  const summary = 'Claim Action: ' + label;
+  const detailText = note ? String(note) : ('Triggered from the Full Claim Activity Center (' + actionKey + ').');
+
+  return appendTimelineEvent(claimId, {
+    Event_Type: 'Claim Action',
+    Event_Source: 'Claim Activity Center',
+    Source_System: 'automation-dashboard',
+    Source_Record_ID: actionKey,
+    Summary: summary,
+    Detail: detailText,
+    Actor: 'Julia',
+    Related_Workflow: 'Claim Actions'
+  });
+}
+
 function appendTimelineEvents(claimId, events) {
   if (!Array.isArray(events)) {
     return validationErrorResponse(['events must be an array.']);
@@ -486,4 +519,241 @@ function testTimelineSheetStructure() {
 
   Logger.log(JSON.stringify(response, null, 2));
   return response;
+}
+
+// ============================================================
+// DIAGNOSTIC ONLY — Phase 10D EOJ Reports investigation.
+// Read-only. Does not modify any data, and does not touch
+// getEojReportsForClaim_() or any other production logic.
+//
+// Purpose: EOJ Reports on the Full Claim page shows "No EOJ reports
+// recorded" even though the Timeline clearly has EOJ events for the
+// same claim. getEojReportsForClaim_() (ClaimDetailService.js) builds
+// its groups from getTimelineForClaim()'s output, filtering rows whose
+// Event_Source/Source_System contains "eoj", then grouping by
+// Source_Record_ID. This function dumps exactly what that call chain
+// actually returns for a known EOJ claim — plus a completely raw,
+// assumption-free read of the sheet itself — so we can see the real
+// column names/values before changing any code.
+// ============================================================
+
+function diagnoseEojTimelineRawDataForKnownClaim() {
+  return diagnoseEojTimelineRawData('CLM-26N-0135-WTR');
+}
+
+function diagnoseEojTimelineRawData(claimId) {
+  claimId = claimId || 'CLM-26N-0135-WTR';
+  Logger.log('========================================================');
+  Logger.log('diagnoseEojTimelineRawData: ' + claimId);
+  Logger.log('========================================================');
+
+  // ── 1. Exactly what getEojReportsForClaim_() sees ─────────────────────
+  // (via getTimelineForClaim(), the same function it calls internally)
+  const serviceResult = getTimelineForClaim(claimId);
+  Logger.log('--- getTimelineForClaim(' + claimId + ') — full response ---');
+  Logger.log(JSON.stringify(serviceResult, null, 2));
+
+  const serviceRows = (serviceResult && serviceResult.success && serviceResult.data && Array.isArray(serviceResult.data.timeline))
+    ? serviceResult.data.timeline
+    : [];
+
+  Logger.log('getTimelineForClaim row count: ' + serviceRows.length);
+
+  serviceRows.forEach(function(row, i) {
+    Logger.log('--- getTimelineForClaim row ' + i + ' — key fields ---');
+    Logger.log('  Event_Type:       ' + JSON.stringify(row.Event_Type));
+    Logger.log('  Event_Source:     ' + JSON.stringify(row.Event_Source));
+    Logger.log('  Source_System:    ' + JSON.stringify(row.Source_System));
+    Logger.log('  Source_Record_ID: ' + JSON.stringify(row.Source_Record_ID));
+    Logger.log('  Actor:            ' + JSON.stringify(row.Actor));
+    Logger.log('  Event_Date:       ' + JSON.stringify(row.Event_Date));
+    Logger.log('  Created_At:       ' + JSON.stringify(row.Created_At));
+    Logger.log('  Summary:          ' + JSON.stringify(row.Summary));
+    Logger.log('  Detail:           ' + JSON.stringify(row.Detail));
+    Logger.log('--- getTimelineForClaim row ' + i + ' — ALL keys (full object) ---');
+    Logger.log(JSON.stringify(row, null, 2));
+  });
+
+  // ── 2. Completely raw sheet read — no header assumptions, no filters ──
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.timeline);
+
+  if (!sheet) {
+    Logger.log('RAW SHEET: sheet "' + CLAIM_SHEET_NAMES.timeline + '" not found in spreadsheet ' + CLAIM_FOUNDATION_SPREADSHEET_ID + '.');
+    return { claimId: claimId, serviceRowCount: serviceRows.length, rawSheetFound: false };
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const literalRow1 = values.length ? values[0] : [];
+  const detectedHeaderRowIndex = findTimelineHeaderRowIndex_(values);
+  const detectedHeaders = values.length ? values[detectedHeaderRowIndex] : [];
+
+  Logger.log('--- RAW SHEET structure ---');
+  Logger.log('Sheet name: ' + sheet.getName());
+  Logger.log('Total rows (incl. header): ' + values.length);
+  Logger.log('Total columns: ' + (values.length ? values[0].length : 0));
+  Logger.log('Literal row 1 (what getRows()/getHeaders() in SheetService.js assumes is the header row): ' + JSON.stringify(literalRow1));
+  Logger.log('Header row detected by findTimelineHeaderRowIndex_() (0-based index, scans first 10 rows for Claim_ID): ' + detectedHeaderRowIndex);
+  Logger.log('Headers at that detected row: ' + JSON.stringify(detectedHeaders));
+  if (detectedHeaderRowIndex !== 0) {
+    Logger.log('*** NOTE: detected header row is NOT row 1. getRows()/getHeaders() (used by getTimelineForClaim -> findRows) always reads row 1 as the header row and would misalign every column if this sheet\'s real header row is elsewhere. ***');
+  }
+
+  // Header-agnostic scan: any row where claimId literally appears anywhere
+  // in the row, regardless of which column that is or what the header says.
+  const rawMatches = [];
+  for (let r = 1; r < values.length; r++) {
+    const rowValues = values[r];
+    const rowText = rowValues.map(function(v) { return String(v === null || v === undefined ? '' : v); }).join(' | ');
+    if (rowText.indexOf(claimId) !== -1) {
+      rawMatches.push({ sheetRowNumber: r + 1, values: rowValues });
+    }
+  }
+
+  Logger.log('RAW SHEET rows where "' + claimId + '" appears anywhere in the row: ' + rawMatches.length);
+
+  rawMatches.forEach(function(match) {
+    Logger.log('--- RAW sheet row ' + match.sheetRowNumber + ' (every column, labeled using literal row 1 headers) ---');
+    literalRow1.forEach(function(header, colIndex) {
+      const label = header || ('(column ' + (colIndex + 1) + ' — blank header)');
+      Logger.log('  [' + label + ']: ' + JSON.stringify(match.values[colIndex]));
+    });
+  });
+
+  const summary = {
+    claimId: claimId,
+    serviceRowCount: serviceRows.length,
+    rawTotalSheetRows: values.length - 1,
+    rawMatchCount: rawMatches.length,
+    literalRow1Headers: literalRow1,
+    detectedHeaderRowIndex: detectedHeaderRowIndex,
+    detectedHeaders: detectedHeaders
+  };
+
+  Logger.log('--- SUMMARY ---');
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
+}
+
+// ============================================================
+// DIAGNOSTIC ONLY — follow-up to diagnoseEojTimelineRawData().
+// Read-only, sheet-wide. Does not modify any data or touch
+// getEojReportsForClaim_() / any production logic.
+//
+// Purpose: diagnoseEojTimelineRawData() showed that CLM-26N-0135-WTR's
+// 4 EOJ-sourced Timeline_Events rows are test rows from
+// eoj-processing-engine's testClaimsBridge() (Job Number "DIAG-001"),
+// with empty Details on every one. Before deciding how to fix anything,
+// check whether that's true sheet-wide: are there REAL (non-test) EOJ
+// rows for other claims, and do any of them have Details populated?
+// This answers "is the schema gap universal, or specific to old/test
+// rows" using actual data instead of assumption.
+// ============================================================
+
+function diagnoseEojTimelineAcrossAllClaims() {
+  Logger.log('========================================================');
+  Logger.log('diagnoseEojTimelineAcrossAllClaims — sheet-wide EOJ scan');
+  Logger.log('========================================================');
+
+  const ss = SpreadsheetApp.openById(CLAIM_FOUNDATION_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.timeline);
+
+  if (!sheet) {
+    Logger.log('Sheet "' + CLAIM_SHEET_NAMES.timeline + '" not found.');
+    return { found: false };
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values.length ? values[0] : [];
+  const idx = {};
+  headers.forEach(function(h, i) { idx[String(h).trim()] = i; });
+
+  Logger.log('Total rows (incl. header): ' + values.length);
+  Logger.log('Headers: ' + JSON.stringify(headers));
+
+  const sourceCol = idx['Source'];
+  const eventTypeCol = idx['Event Type'];
+  const detailsCol = idx['Details'];
+  const claimIdCol = idx['Claim ID'];
+  const jobNumberCol = idx['Job Number'];
+  const actorCol = idx['Actor'];
+  const dateCol = idx['Date'];
+  const summaryCol = idx['Summary'];
+
+  Logger.log('Column indexes — Source:' + sourceCol + ' EventType:' + eventTypeCol +
+    ' Details:' + detailsCol + ' ClaimID:' + claimIdCol + ' JobNumber:' + jobNumberCol);
+
+  if (sourceCol === undefined) {
+    Logger.log('*** No "Source" column found — cannot scan by Source === "EOJ". Stopping. ***');
+    return { found: true, sourceColumnPresent: false };
+  }
+
+  let eojSourceCount = 0;
+  let eojSourceWithDetails = 0;
+  const eojByClaim = {};
+  const realEojSamples = [];
+  const testEojSamples = [];
+
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    const sourceVal = String(row[sourceCol] || '');
+    if (sourceVal.toLowerCase() !== 'eoj') { continue; }
+
+    eojSourceCount++;
+    const detailsVal = detailsCol !== undefined ? String(row[detailsCol] || '') : '';
+    if (detailsVal.trim()) { eojSourceWithDetails++; }
+
+    const claimId = claimIdCol !== undefined ? String(row[claimIdCol] || '') : '';
+    const jobNumber = jobNumberCol !== undefined ? String(row[jobNumberCol] || '') : '';
+
+    eojByClaim[claimId] = (eojByClaim[claimId] || 0) + 1;
+
+    const record = {
+      sheetRow: r + 1,
+      claimId: claimId,
+      jobNumber: jobNumber,
+      eventType: eventTypeCol !== undefined ? row[eventTypeCol] : '',
+      actor: actorCol !== undefined ? row[actorCol] : '',
+      date: dateCol !== undefined ? row[dateCol] : '',
+      summary: summaryCol !== undefined ? row[summaryCol] : '',
+      detailsPresent: !!detailsVal.trim(),
+      detailsPreview: detailsVal.slice(0, 160)
+    };
+
+    if (jobNumber === 'DIAG-001') {
+      if (testEojSamples.length < 5) { testEojSamples.push(record); }
+    } else if (realEojSamples.length < 20) {
+      realEojSamples.push(record);
+    }
+  }
+
+  const distinctClaimsWithEoj = Object.keys(eojByClaim).filter(function(c) { return c; });
+
+  Logger.log('--- EOJ-sourced rows (Source === "EOJ") sheet-wide ---');
+  Logger.log('Total EOJ-sourced rows: ' + eojSourceCount);
+  Logger.log('EOJ-sourced rows with non-empty Details: ' + eojSourceWithDetails);
+  Logger.log('Distinct Claim_IDs with at least one EOJ-sourced row: ' + distinctClaimsWithEoj.length);
+  Logger.log('Claim_ID -> EOJ row count: ' + JSON.stringify(eojByClaim));
+
+  Logger.log('--- Sample REAL (Job Number != "DIAG-001") EOJ rows (up to 20) ---');
+  Logger.log(JSON.stringify(realEojSamples, null, 2));
+
+  Logger.log('--- Sample TEST (Job Number === "DIAG-001") EOJ rows (up to 5) ---');
+  Logger.log(JSON.stringify(testEojSamples, null, 2));
+
+  const summary = {
+    totalSheetRows: values.length - 1,
+    eojSourceCount: eojSourceCount,
+    eojSourceWithDetails: eojSourceWithDetails,
+    distinctClaimsWithEoj: distinctClaimsWithEoj.length,
+    eojByClaim: eojByClaim,
+    realEojSampleCount: realEojSamples.length,
+    testEojSampleCount: testEojSamples.length
+  };
+
+  Logger.log('--- SUMMARY ---');
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
 }

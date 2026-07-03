@@ -5,28 +5,47 @@
  * Historical Notes uses the incremental timeline importer so the morning run
  * only processes notes that are newer than the last imported timeline note.
  *
- * Step order (Phase Fix-2 — 2026-07-01):
- *   1. processDailyOpenJobsEmailIntake        — save XLSX attachment to Drive
- *   2. importLatestDailyOpenJobsReport        — bootstrap new Claims rows + update Last Activity Date
- *   3. reconcileDailyOpenJobsRemovedClaims    — mark removed jobs Operationally Complete
- *   4. processComplianceTasksEmailIntake      — save compliance XLSX
- *   5. importNewHistoricalNotes               — enrich Timeline_Events for matched claims
- *   6. rebuildTimelineDerivedFieldsForActiveClaims
- *   7. synchronizeClaimsFoundation
- *   8. reconcileClaimConditions               — batchReconcileClaimConditions() (ConditionEngineService.js)
- *   9. applyClaimHealth                       — batchApplyClaimHealth() (HealthEngineService.js)
- *  10. refreshHomepageData
+ * Phase structure (Orchestration Refactor — 2026-07-01):
+ * runRainbowMorningAutomation() is a thin wrapper that calls three
+ * independently-callable phase functions in sequence and merges their step
+ * results into one combined summary/log entry, exactly as before. This is an
+ * orchestration-only change — no business logic moved, no steps added or
+ * removed, no trigger changes. The single 6 AM trigger still calls
+ * runRainbowMorningAutomation().
  *
- * importLatestDailyOpenJobsReport must run BEFORE reconcileDailyOpenJobsRemovedClaims
- * so that newly bootstrapped claims are present in Claims before the reconciliation
- * evaluates which active claims are missing from the report.
+ *   Phase 1 — runMorningDataRefresh()
+ *     1. processDailyOpenJobsEmailIntake        — save XLSX attachment to Drive
+ *     2. importLatestDailyOpenJobsReport        — bootstrap new Claims rows + update Last Activity Date
+ *     3. reconcileDailyOpenJobsRemovedClaims    — mark removed jobs Operationally Complete
+ *     4. processComplianceTasksEmailIntake      — save compliance XLSX
+ *     5. importNewHistoricalNotes               — enrich Timeline_Events for matched claims
+ *     6. synchronizeClaimsFoundation
+ *
+ *   Phase 2 — runMorningIntelligence()
+ *     1. rebuildTimelineDerivedFieldsForActiveClaims
+ *     2. reconcileClaimConditions               — batchReconcileClaimConditions() (ConditionEngineService.js)
+ *     3. applyClaimHealth                       — batchApplyClaimHealth() (HealthEngineService.js)
+ *
+ *   Phase 3 — runMorningBrief()
+ *     1. refreshHomepageData
+ *
+ * reconcileDailyOpenJobsRemovedClaims stays in Phase 1, immediately after
+ * importLatestDailyOpenJobsReport, in its current relative position (2026-07-01
+ * refactor decision). It has intelligence-like lifecycle logic, but it is
+ * currently part of reconciling the Claims table against the Daily Open Jobs
+ * report, so Phase 2's intelligence steps operate on the already-reconciled
+ * dataset. Revisit once lifecycle/removed-claim handling is separated more
+ * cleanly. importLatestDailyOpenJobsReport must still run BEFORE
+ * reconcileDailyOpenJobsRemovedClaims so that newly bootstrapped claims are
+ * present in Claims before the reconciliation evaluates which active claims
+ * are missing from the report.
  *
  * reconcileClaimConditions runs BEFORE applyClaimHealth so a condition added
  * earlier in the same run (or by the historical notes / timeline steps above)
  * is reflected in that day's health evaluation, matching how these two were
  * previously chained together whenever they were run manually. refreshHomepageData
- * runs last so it reflects the freshly recalculated health/conditions rather
- * than the previous day's snapshot.
+ * runs last (Phase 3) so it reflects the freshly recalculated health/conditions
+ * rather than the previous day's snapshot.
  *
  * Both new steps are idempotent: reconcileClaimConditions only adds conditions
  * that aren't already active (never removes, per its "toRemove" policy), and
@@ -36,6 +55,44 @@
  */
 
 function runRainbowMorningAutomation() {
+  const startedAt = nowIso();
+
+  const dataRefresh = runMorningDataRefresh();
+  const intelligence = runMorningIntelligence();
+  const brief = runMorningBrief();
+
+  const steps = [].concat(dataRefresh.steps, intelligence.steps, brief.steps);
+
+  const completedAt = nowIso();
+  const summary = {
+    startedAt: startedAt,
+    completedAt: completedAt,
+    steps: steps,
+    successCount: steps.filter(function(step) {
+      return step.success;
+    }).length,
+    failureCount: steps.filter(function(step) {
+      return !step.success;
+    }).length
+  };
+
+  logRainbowMorningAutomation_(
+    summary.failureCount === 0 ? 'Success' : 'Warning',
+    'Rainbow morning automation completed.',
+    summary
+  );
+
+  return successResponse(summary, 'Rainbow morning automation completed.');
+}
+
+/**
+ * Phase 1 — Data Refresh.
+ * Raw intake + repair/enrichment steps, plus the DOJ removed-claims lifecycle
+ * reconciliation (kept here per the 2026-07-01 refactor decision — see header
+ * comment above). Independently callable for manual testing; not wired to its
+ * own trigger.
+ */
+function runMorningDataRefresh() {
   const startedAt = nowIso();
   const steps = [];
 
@@ -59,19 +116,36 @@ function runRainbowMorningAutomation() {
     processComplianceTasksEmailIntake
   ));
 
+  // Future morning workflow placeholder. Do not enable until the owning
+  // import function is explicitly approved for automation.
+  // importLatestComplianceTasksReport();
+
   steps.push(runMorningAutomationStep_(
     'importNewHistoricalNotes',
     runMorningHistoricalNotesImport_
   ));
 
   steps.push(runMorningAutomationStep_(
-    'rebuildTimelineDerivedFieldsForActiveClaims',
-    runMorningTimelineRebuild_
-  ));
-
-  steps.push(runMorningAutomationStep_(
     'synchronizeClaimsFoundation',
     runMorningSynchronizeClaimsFoundation_
+  ));
+
+  return buildMorningPhaseSummary_('dataRefresh', startedAt, steps);
+}
+
+/**
+ * Phase 2 — Intelligence Engine.
+ * Derived/deterministic calculations over the data refreshed in Phase 1:
+ * timeline-derived fields, condition reconciliation, health evaluation.
+ * Independently callable for manual testing; not wired to its own trigger.
+ */
+function runMorningIntelligence() {
+  const startedAt = nowIso();
+  const steps = [];
+
+  steps.push(runMorningAutomationStep_(
+    'rebuildTimelineDerivedFieldsForActiveClaims',
+    runMorningTimelineRebuild_
   ));
 
   steps.push(runMorningAutomationStep_(
@@ -84,20 +158,35 @@ function runRainbowMorningAutomation() {
     runMorningHealthEvaluation_
   ));
 
+  return buildMorningPhaseSummary_('intelligence', startedAt, steps);
+}
+
+/**
+ * Phase 3 — Morning Brief / Actions.
+ * Uses completed intelligence only; currently just the homepage refresh.
+ * Independently callable for manual testing; not wired to its own trigger.
+ */
+function runMorningBrief() {
+  const startedAt = nowIso();
+  const steps = [];
+
   steps.push(runMorningAutomationStep_(
     'refreshHomepageData',
     runMorningHomepageRefresh_
   ));
 
-  // Future morning workflow placeholders. Do not enable until the owning
-  // import/refresh functions exist and are explicitly approved for automation.
-  // importLatestComplianceTasksReport();
+  // Future morning workflow placeholder. Do not enable until the owning
+  // refresh function is explicitly approved for automation.
   // refreshHomepageData();
 
-  const completedAt = nowIso();
-  const summary = {
+  return buildMorningPhaseSummary_('brief', startedAt, steps);
+}
+
+function buildMorningPhaseSummary_(phaseName, startedAt, steps) {
+  return {
+    phase: phaseName,
     startedAt: startedAt,
-    completedAt: completedAt,
+    completedAt: nowIso(),
     steps: steps,
     successCount: steps.filter(function(step) {
       return step.success;
@@ -106,14 +195,6 @@ function runRainbowMorningAutomation() {
       return !step.success;
     }).length
   };
-
-  logRainbowMorningAutomation_(
-    summary.failureCount === 0 ? 'Success' : 'Warning',
-    'Rainbow morning automation completed.',
-    summary
-  );
-
-  return successResponse(summary, 'Rainbow morning automation completed.');
 }
 
 function runMorningHistoricalNotesImport_() {
@@ -297,6 +378,30 @@ function testRunRainbowMorningAutomation() {
 
 function testMorningHomepageRefresh() {
   var result = runMorningHomepageRefresh_();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Manual per-phase test entry points (2026-07-01 orchestration refactor).
+// Mirror testRunRainbowMorningAutomation() but run a single phase in
+// isolation. Not wired to any trigger.
+// ---------------------------------------------------------------------------
+
+function testRunMorningDataRefresh() {
+  var result = runMorningDataRefresh();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testRunMorningIntelligence() {
+  var result = runMorningIntelligence();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testRunMorningBrief() {
+  var result = runMorningBrief();
   Logger.log(JSON.stringify(result, null, 2));
   return result;
 }

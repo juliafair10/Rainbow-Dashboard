@@ -124,6 +124,14 @@ function routeClaimServiceRequest_(e, method) {
       case 'appendTimelineEvent':
         return jsonResponse_(appendTimelineEvent(payload.claimId, payload.event || {}));
 
+      case 'createClaimActivityEvent':
+        return jsonResponse_(createClaimActivityEvent(
+          payload.claimId || (e.parameter && e.parameter.claimId),
+          payload.actionKey || (e.parameter && e.parameter.actionKey),
+          payload.actionLabel || (e.parameter && e.parameter.actionLabel),
+          payload.note || (e.parameter && e.parameter.note)
+        ));
+
       case 'upsertCondition':
         return jsonResponse_(upsertCondition(payload.claimId, payload.condition || {}));
 

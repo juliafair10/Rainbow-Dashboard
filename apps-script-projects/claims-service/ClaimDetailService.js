@@ -6,18 +6,46 @@
  */
 
 function getClaimDetail(claimId) {
+  Logger.log('CLAIM_DETAIL_START ' + claimId);
   if (!claimId) {
     throw new Error('claimId is required');
   }
 
+  var detailStartedAt = new Date().getTime();
+  var detailTimings = [];
+
+  function markDetailTiming_(label, startedAt) {
+    detailTimings.push({
+      label: label,
+      ms: new Date().getTime() - startedAt
+    });
+  }
+
+  var timingStartedAt = new Date().getTime();
   var drawer = ClaimDrawerService.getClaimDrawer(claimId);
+  markDetailTiming_('ClaimDrawerService.getClaimDrawer', timingStartedAt);
+
+  timingStartedAt = new Date().getTime();
   var externalLinks = ClaimExternalLinkService.getClaimExternalLinks(claimId);
+  markDetailTiming_('ClaimExternalLinkService.getClaimExternalLinks', timingStartedAt);
+
+  timingStartedAt = new Date().getTime();
   var financialTracks = ClaimFinancialTrackService.getClaimFinancialTracks(claimId);
+  markDetailTiming_('ClaimFinancialTrackService.getClaimFinancialTracks', timingStartedAt);
+
+  timingStartedAt = new Date().getTime();
   var timeline = getWorkspaceTimelineForClaim_(claimId);
+  markDetailTiming_('getWorkspaceTimelineForClaim_', timingStartedAt);
+
+  timingStartedAt = new Date().getTime();
   var fullClaimTimeline = buildFullClaimTimelineModel_(timeline.events);
+  markDetailTiming_('buildFullClaimTimelineModel_', timingStartedAt);
+
+  timingStartedAt = new Date().getTime();
   var workspaceSummary = typeof enrichClaimWorkspaceSummary_ === 'function'
     ? enrichClaimWorkspaceSummary_(drawer.claimSummary)
     : drawer.claimSummary;
+  markDetailTiming_('enrichClaimWorkspaceSummary_', timingStartedAt);
 
   var detail = {
     claimId: claimId,
@@ -94,26 +122,92 @@ function getClaimDetail(claimId) {
   // fullClaimHeader/fullClaimTimeline references inside buildClaimFoundation_ have fallbacks,
   // so calling it before those are set is safe.
   detail.fullClaimTimeline = fullClaimTimeline;
+  timingStartedAt = new Date().getTime();
   var claimFoundation = (typeof buildClaimFoundation_ === 'function')
     ? buildClaimFoundation_(claimId, detail)
     : null;
+  markDetailTiming_('buildClaimFoundation_', timingStartedAt);
 
+  timingStartedAt = new Date().getTime();
   detail.fullClaimHeader = buildFullClaimHeaderModel_(detail, claimFoundation);
   detail.fullClaimOperationalSummary = buildFullClaimOperationalSummaryModel_(detail, detail.fullClaimHeader, claimFoundation);
   detail.fullClaimCurrentState = buildFullClaimCurrentStateModel_(detail, detail.fullClaimHeader, claimFoundation);
   detail.operationalSummary = detail.fullClaimOperationalSummary;
+  markDetailTiming_('full claim model builders', timingStartedAt);
 
   detail.claimFoundation = claimFoundation;
 
+  timingStartedAt = new Date().getTime();
   detail.operationalIntelligence = (typeof buildOperationalIntelligence_ === 'function')
     ? buildOperationalIntelligence_(detail.claimFoundation, detail)
     : null;
+  markDetailTiming_('buildOperationalIntelligence_', timingStartedAt);
 
+  timingStartedAt = new Date().getTime();
   detail.workspaceContext = (typeof buildWorkspaceContext_ === 'function')
     ? buildWorkspaceContext_(detail.claimFoundation, detail.operationalIntelligence, detail)
     : null;
+  markDetailTiming_('buildWorkspaceContext_', timingStartedAt);
+
+  // Phase 10D - Claim Activity Center: EOJ Reports.
+  // Performance: EOJ Reports are intentionally deferred from the initial claim
+  // detail payload because the recovery lookup reads cross-project EOJ sheets.
+  // The dashboard should lazy-load them after the claim shell appears.
+  detail.eojReports = [];
+  detail.eojReportsDeferred = true;
+  detail.eojReportsError = '';
+  markDetailTiming_('getEojReportsForClaim_ deferred from initial load', new Date().getTime());
+
+  detail.performanceTimings = detailTimings;
+
+  var totalMs = new Date().getTime() - detailStartedAt;
+
+  Logger.log('CLAIM_DETAIL_TIMINGS ' + JSON.stringify({
+    claimId: claimId,
+    totalMs: totalMs,
+    timings: detailTimings
+  }));
+
+  if (totalMs > 1000) {
+    Logger.log('CLAIM_DETAIL_SLOW ' + claimId + ' ' + totalMs + 'ms');
+  }
 
   return detail;
+}
+
+function getClaimEojReports(claimId) {
+  if (!claimId) {
+    throw new Error('claimId is required');
+  }
+
+  var startedAt = new Date().getTime();
+  try {
+    var reports = getEojReportsForClaim_(claimId);
+    var elapsedMs = new Date().getTime() - startedAt;
+
+    Logger.log('CLAIM_EOJ_REPORTS_TIMINGS ' + JSON.stringify({
+      claimId: claimId,
+      totalMs: elapsedMs,
+      reportCount: Array.isArray(reports) ? reports.length : 0
+    }));
+
+    return {
+      claimId: claimId,
+      reports: Array.isArray(reports) ? reports : [],
+      reportCount: Array.isArray(reports) ? reports.length : 0,
+      elapsedMs: elapsedMs,
+      error: ''
+    };
+  } catch (error) {
+    Logger.log('getClaimEojReports failed for ' + claimId + ': ' + error);
+    return {
+      claimId: claimId,
+      reports: [],
+      reportCount: 0,
+      elapsedMs: new Date().getTime() - startedAt,
+      error: String(error && error.message ? error.message : error)
+    };
+  }
 }
 
 function buildFullClaimHeaderModel_(detail, claimFoundation) {
@@ -764,7 +858,12 @@ function buildFullClaimTimelineItemModel_(event) {
     source: source,
     actor: actor,
     eventType: eventType,
-    detail: detail
+    detail: detail,
+    isEojGrouped: event.isEojGrouped === true,
+    eojEventCount: event.eojEventCount || '',
+    eojId: event.eojId || event.sourceRecordId || '',
+    sourceRecordId: event.sourceRecordId || '',
+    groupedEventTypes: event.groupedEventTypes || []
   };
 
   model.meta = formatFullClaimTimelineMeta_(model);
@@ -1061,7 +1160,26 @@ function getFullClaimTimelineEventActor_(event) {
   ]);
 }
 
+function cacheWorkspaceTimelineResult_(cache, cacheKey, result) {
+  try {
+    cache.put(cacheKey, JSON.stringify(result), 300);
+  } catch (cacheWriteError) {
+    Logger.log('cacheWorkspaceTimelineResult_: cache write skipped for ' + cacheKey + ': ' + cacheWriteError);
+  }
+}
+
 function getWorkspaceTimelineForClaim_(claimId) {
+  var cacheKey = 'CLAIM_WORKSPACE_TIMELINE_' + String(claimId || '').trim();
+  var cache = CacheService.getScriptCache();
+  var cachedTimeline = cache.get(cacheKey);
+
+  if (cachedTimeline) {
+    try {
+      return JSON.parse(cachedTimeline);
+    } catch (cacheReadError) {
+      Logger.log('getWorkspaceTimelineForClaim_: cache parse failed for ' + claimId + ': ' + cacheReadError);
+    }
+  }
   try {
     if (typeof getTimelineForClaim === 'function') {
       var timelineResponse = getTimelineForClaim(claimId);
@@ -1073,12 +1191,17 @@ function getWorkspaceTimelineForClaim_(claimId) {
         var normalizedTimelineEvents = timelineRows
           .map(normalizeWorkspaceTimelineEvent_)
           .sort(sortWorkspaceTimelineEventsNewestFirst_);
+        var displayTimelineEvents = collapseEojWorkspaceTimelineEventsForDisplay_(normalizedTimelineEvents);
 
-        return {
-          count: timelineResponse.data.count || normalizedTimelineEvents.length,
-          events: normalizedTimelineEvents.slice(0, 200),
-          recentEvents: normalizedTimelineEvents.slice(0, 5)
+        var cachedResult = {
+          count: displayTimelineEvents.length,
+          rawCount: timelineResponse.data.count || normalizedTimelineEvents.length,
+          events: displayTimelineEvents.slice(0, 200),
+          rawEvents: normalizedTimelineEvents.slice(0, 200),
+          recentEvents: displayTimelineEvents.slice(0, 5)
         };
+        cacheWorkspaceTimelineResult_(cache, cacheKey, cachedResult);
+        return cachedResult;
       }
     }
 
@@ -1132,12 +1255,17 @@ function getWorkspaceTimelineForClaim_(claimId) {
              recordClaimNumber === normalizedClaimId ||
              recordClaimNumber === normalizedJobNumber;
     }).map(normalizeWorkspaceTimelineEvent_).sort(sortWorkspaceTimelineEventsNewestFirst_);
+    var collapsedEvents = collapseEojWorkspaceTimelineEventsForDisplay_(events);
 
-    return {
-      count: events.length,
-      events: events.slice(0, 200),
-      recentEvents: events.slice(0, 5)
+    var fallbackCachedResult = {
+      count: collapsedEvents.length,
+      rawCount: events.length,
+      events: collapsedEvents.slice(0, 200),
+      rawEvents: events.slice(0, 200),
+      recentEvents: collapsedEvents.slice(0, 5)
     };
+    cacheWorkspaceTimelineResult_(cache, cacheKey, fallbackCachedResult);
+    return fallbackCachedResult;
   } catch (error) {
     Logger.log('Workspace timeline unavailable for ' + claimId + ': ' + error);
     return {
@@ -1145,6 +1273,259 @@ function getWorkspaceTimelineForClaim_(claimId) {
       events: [],
       recentEvents: []
     };
+  }
+}
+
+function collapseEojWorkspaceTimelineEventsForDisplay_(events) {
+  events = Array.isArray(events) ? events : [];
+
+  var output = [];
+  var eojGroupOrder = [];
+  var eojGroups = {};
+
+  events.forEach(function(event) {
+    if (!isWorkspaceTimelineEojEvent_(event)) {
+      output.push(event);
+      return;
+    }
+
+    var key = getWorkspaceTimelineEojGroupKey_(event);
+    if (!eojGroups[key]) {
+      eojGroups[key] = [];
+      eojGroupOrder.push(key);
+    }
+    eojGroups[key].push(event);
+  });
+
+  eojGroupOrder.forEach(function(key) {
+    output.push(buildGroupedWorkspaceEojTimelineEvent_(key, eojGroups[key]));
+  });
+
+  return output.sort(sortWorkspaceTimelineEventsNewestFirst_);
+}
+
+function isWorkspaceTimelineEojEvent_(event) {
+  event = event || {};
+
+  var detailPayload = getWorkspaceTimelineEojDetailPayload_(event);
+  var source = String(event.source || event.sourceSystem || event.Source || event.Event_Source || '').toLowerCase().trim();
+  var eventType = String(event.eventType || event.Event_Type || event.type || '').toLowerCase().trim();
+  var combined = [
+    source,
+    eventType,
+    String(event.summary || event.Summary || '').toLowerCase(),
+    String(event.details || event.Detail || event.Details || '').toLowerCase()
+  ].join(' ');
+
+  if (source.indexOf('eoj') !== -1) {
+    return true;
+  }
+
+  if (event.sourceRecordId || event.relatedEojId || event.eojId || detailPayload.eoj_id || detailPayload.eojId || detailPayload.source_id) {
+    return true;
+  }
+
+  var eojEventTypes = [
+    'eoj submitted',
+    'inspection completed',
+    'monitoring visit completed',
+    'demo visit completed',
+    'demolition completed',
+    'equipment pickup visit completed',
+    'pickup / completion completed',
+    'equipment updated',
+    'equipment pickup completed',
+    'monitoring updated',
+    'mitigate status updated',
+    'mica status updated',
+    'follow-up requested',
+    'follow up requested',
+    'asbestos testing requested',
+    'asbestos samples taken',
+    'itel sample required'
+  ];
+
+  if (eojEventTypes.indexOf(eventType) !== -1) {
+    return true;
+  }
+
+  return combined.indexOf('eoj report') !== -1 ||
+         combined.indexOf('eoj submitted') !== -1 ||
+         combined.indexOf('source_record_id') !== -1 ||
+         combined.indexOf('eoj_id') !== -1;
+}
+
+function getWorkspaceTimelineEojGroupKey_(event) {
+  event = event || {};
+  var detailPayload = getWorkspaceTimelineEojDetailPayload_(event);
+  var eojId = getFullClaimFirstValue_([
+    event.sourceRecordId,
+    event.relatedEojId,
+    event.eojId,
+    event.sourceId,
+    detailPayload.eoj_id,
+    detailPayload.eojId,
+    detailPayload.source_id,
+    detailPayload.Source_Record_ID
+  ]);
+
+  if (eojId) {
+    return 'eoj:' + eojId;
+  }
+
+  var claimId = getFullClaimFirstValue_([event.claimId, event.Claim_ID, event['Claim ID']]);
+  var date = normalizeWorkspaceTimelineDate_(event.eventDate || event.date || event.createdAt);
+  var dateKey = date && !isNaN(date.getTime()) && date.getTime() !== 0
+    ? [date.getFullYear(), date.getMonth() + 1, date.getDate()].join('-')
+    : String(event.eventDate || event.date || '');
+  var actor = String(event.actor || event.Actor || '').toLowerCase().trim();
+  var createdAt = normalizeWorkspaceTimelineDate_(event.createdAt || event.eventDate || event.date);
+  var createdBucket = createdAt && !isNaN(createdAt.getTime()) && createdAt.getTime() !== 0
+    ? Math.floor(createdAt.getTime() / (1000 * 60 * 60 * 6))
+    : '';
+
+  return ['eoj-fallback', claimId, dateKey, actor, createdBucket].join(':');
+}
+
+function buildGroupedWorkspaceEojTimelineEvent_(groupKey, rows) {
+  rows = (rows || []).slice().sort(sortWorkspaceTimelineEventsNewestFirst_);
+
+  var primary = getWorkspaceTimelinePrimaryEojRow_(rows) || rows[0] || {};
+  var detailPayload = getWorkspaceTimelineEojDetailPayload_(primary);
+  var eojId = groupKey.indexOf('eoj:') === 0 ? groupKey.replace(/^eoj:/, '') : '';
+
+  if (!eojId) {
+    rows.some(function(row) {
+      var rowDetail = getWorkspaceTimelineEojDetailPayload_(row);
+      eojId = getFullClaimFirstValue_([
+        row.sourceRecordId,
+        row.relatedEojId,
+        row.eojId,
+        rowDetail.eoj_id,
+        rowDetail.eojId,
+        rowDetail.source_id
+      ]);
+      return !!eojId;
+    });
+  }
+
+  var actor = getFullClaimFirstValue_([
+    primary.actor,
+    detailPayload.technician,
+    detailPayload.Technician
+  ]);
+  var visitType = getFullClaimFirstValue_([
+    detailPayload.visit_type,
+    detailPayload.visitType,
+    primary.visitType,
+    inferWorkspaceTimelineEojVisitType_(rows)
+  ]);
+  var title = 'EOJ Report Submitted';
+  if (actor) {
+    title += ' by ' + actor;
+  }
+  if (visitType) {
+    title += ' - ' + visitType;
+  }
+
+  return {
+    eventId: eojId || groupKey,
+    timelineEventId: eojId || groupKey,
+    claimId: primary.claimId || '',
+    jobNumber: primary.jobNumber || '',
+    eventDate: getWorkspaceTimelineBestEojDate_(rows),
+    createdAt: getFullClaimFirstValue_([primary.createdAt, primary.eventDate, primary.date, primary.Date]),
+    source: 'EOJ',
+    sourceRecordId: eojId,
+    eojId: eojId,
+    eventType: 'EOJ Report Submitted',
+    actor: actor,
+    summary: title,
+    details: '',
+    visibility: primary.visibility || '',
+    category: 'EOJ / Field Visit',
+    groupLabel: 'Field / EOJ Activity',
+    isEojGrouped: true,
+    eojEventCount: rows.length,
+    groupedEventTypes: rows.map(function(row) {
+      return row.eventType || '';
+    }).filter(Boolean)
+  };
+}
+
+function getWorkspaceTimelinePrimaryEojRow_(rows) {
+  rows = rows || [];
+
+  var preferredTypes = {
+    'eoj submitted': true,
+    'inspection completed': true,
+    'monitoring visit completed': true,
+    'demo visit completed': true,
+    'equipment pickup visit completed': true,
+    'pickup / completion completed': true
+  };
+
+  for (var i = 0; i < rows.length; i++) {
+    var type = String(rows[i].eventType || '').toLowerCase().trim();
+    if (preferredTypes[type]) {
+      return rows[i];
+    }
+  }
+
+  return rows[0] || null;
+}
+
+function getWorkspaceTimelineBestEojDate_(rows) {
+  rows = rows || [];
+  for (var i = 0; i < rows.length; i++) {
+    var detailPayload = getWorkspaceTimelineEojDetailPayload_(rows[i]);
+    var visitDate = getFullClaimFirstValue_([
+      detailPayload.visit_date,
+      detailPayload.visitDate,
+      rows[i].eventDate,
+      rows[i].createdAt
+    ]);
+    if (visitDate) {
+      return visitDate;
+    }
+  }
+  return '';
+}
+
+function inferWorkspaceTimelineEojVisitType_(rows) {
+  rows = rows || [];
+
+  for (var i = 0; i < rows.length; i++) {
+    var type = String(rows[i].eventType || '').toLowerCase();
+    if (type.indexOf('inspection') !== -1) { return 'Inspection'; }
+    if (type.indexOf('monitoring') !== -1) { return 'Monitoring'; }
+    if (type.indexOf('demo') !== -1 || type.indexOf('demolition') !== -1) { return 'Demo'; }
+    if (type.indexOf('pickup') !== -1 || type.indexOf('completion') !== -1) { return 'Pickup / Completion'; }
+  }
+
+  return '';
+}
+
+function getWorkspaceTimelineEojDetailPayload_(event) {
+  event = event || {};
+  var rawDetail = event.details;
+  if (rawDetail === null || rawDetail === undefined || rawDetail === '') { rawDetail = event.detail; }
+  if (rawDetail === null || rawDetail === undefined || rawDetail === '') { rawDetail = event.Detail; }
+  if (rawDetail === null || rawDetail === undefined || rawDetail === '') { rawDetail = event.Details; }
+
+  if (!rawDetail || typeof rawDetail === 'object') {
+    return rawDetail && typeof rawDetail === 'object' ? rawDetail : {};
+  }
+
+  var text = String(rawDetail || '').trim();
+  if (!text || text.charAt(0) !== '{') {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {};
   }
 }
 
@@ -1230,6 +1611,22 @@ function normalizeWorkspaceTimelineEvent_(record) {
       'Source',
       'source'
     ]),
+    sourceRecordId: getWorkspaceTimelineValue_(record, [
+      'Source_Record_ID',
+      'Source Record ID',
+      'Source_ID',
+      'Source ID',
+      'sourceRecordId',
+      'source_id'
+    ]),
+    relatedEojId: getWorkspaceTimelineValue_(record, [
+      'Related_EOJ_ID',
+      'Related EOJ ID',
+      'EOJ_ID',
+      'EOJ ID',
+      'eoj_id',
+      'eojId'
+    ]),
     eventType: getWorkspaceTimelineValue_(record, [
       'Event_Type',
       'Event Type',
@@ -1279,6 +1676,1200 @@ function getWorkspaceTimelineValue_(record, keys) {
 
 function normalizeWorkspaceTimelineHeaderName_(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// ============================================================
+// Phase 10D - Claim Activity Center: EOJ Reports
+//
+// Read-only recovery view. The full structured EOJ payload is recovered from
+// EOJ_Processing_Output first. EOJ_Log is used to enrich submittedAt and as a
+// raw-payload fallback when output rows are unavailable. Timeline_Events is
+// used last, and cards from it are marked thin/limited because live EOJ rows
+// have blank Details.
+// ============================================================
+
+function getEojReportsForClaim_(claimId) {
+  try {
+    var outputRows = getEojProcessingOutputRowsForClaim_(claimId);
+    if (outputRows.length) {
+      var logRowsByEojId = getEojLogRowsForClaimByEojId_(claimId);
+      var reports = getLatestEojProcessingRowsByEojId_(outputRows)
+        .map(function(row) {
+          return buildEojReportFromProcessingOutputRow_(row, logRowsByEojId);
+        })
+        .filter(Boolean);
+
+      reports.sort(sortEojReportsNewestFirst_);
+      return reports;
+    }
+  } catch (error) {
+    Logger.log('getEojReportsForClaim_: EOJ_Processing_Output unavailable for ' + claimId + ': ' + formatEojError_(error));
+  }
+
+  try {
+    var logReports = getEojReportsForClaimFromLog_(claimId);
+    if (logReports.length) {
+      logReports.sort(sortEojReportsNewestFirst_);
+      return logReports;
+    }
+  } catch (logError) {
+    Logger.log('getEojReportsForClaim_: EOJ_Log unavailable for ' + claimId + ': ' + formatEojError_(logError));
+  }
+
+  var timelineReports = getEojReportsForClaimFromTimeline_(claimId);
+  return timelineReports;
+}
+
+function openEojProcessingOutputSpreadsheet_() {
+  var spreadsheetId = getEojProcessingOutputSpreadsheetId_();
+  if (!spreadsheetId) {
+    throw new Error('Missing EOJ processing output spreadsheet id.');
+  }
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+function openEojSourceSpreadsheet_() {
+  var spreadsheetId = getEojSourceSpreadsheetId_();
+  if (!spreadsheetId) {
+    throw new Error('Missing EOJ source spreadsheet id.');
+  }
+  return SpreadsheetApp.openById(spreadsheetId);
+}
+
+function getEojProcessingOutputSpreadsheetId_() {
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.EOJ_OUTPUT_SPREADSHEET_ID) {
+    return CONFIG.EOJ_OUTPUT_SPREADSHEET_ID;
+  }
+  if (typeof EOJ_OUTPUT_SPREADSHEET_ID !== 'undefined' && EOJ_OUTPUT_SPREADSHEET_ID) {
+    return EOJ_OUTPUT_SPREADSHEET_ID;
+  }
+  return '';
+}
+
+function getEojSourceSpreadsheetId_() {
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.EOJ_SOURCE_SPREADSHEET_ID) {
+    return CONFIG.EOJ_SOURCE_SPREADSHEET_ID;
+  }
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.EOJ_DATABASE_ID) {
+    return CONFIG.EOJ_DATABASE_ID;
+  }
+  if (typeof EOJ_SOURCE_SPREADSHEET_ID !== 'undefined' && EOJ_SOURCE_SPREADSHEET_ID) {
+    return EOJ_SOURCE_SPREADSHEET_ID;
+  }
+  return '';
+}
+
+function getEojProcessingOutputSheetName_() {
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.PROCESSING_OUTPUT_SHEET_NAME) {
+    return CONFIG.PROCESSING_OUTPUT_SHEET_NAME;
+  }
+  if (typeof EOJ_PROCESSING_OUTPUT_SHEET_NAME !== 'undefined' && EOJ_PROCESSING_OUTPUT_SHEET_NAME) {
+    return EOJ_PROCESSING_OUTPUT_SHEET_NAME;
+  }
+  return 'EOJ_Processing_Output';
+}
+
+function getEojLogSheetName_() {
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.EOJ_LOG_SHEET_NAME) {
+    return CONFIG.EOJ_LOG_SHEET_NAME;
+  }
+  if (typeof EOJ_LOG_SHEET_NAME !== 'undefined' && EOJ_LOG_SHEET_NAME) {
+    return EOJ_LOG_SHEET_NAME;
+  }
+  return 'EOJ_Log';
+}
+
+function getEojProcessingOutputRowsForClaim_(claimId) {
+  var ss = openEojProcessingOutputSpreadsheet_();
+  var sheetName = getEojProcessingOutputSheetName_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error('Missing sheet: ' + sheetName);
+  }
+  return getEojSheetRowsForClaim_(sheet, claimId);
+}
+
+function getEojLogRowsForClaim_(claimId) {
+  var ss = openEojSourceSpreadsheet_();
+  var sheetName = getEojLogSheetName_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error('Missing sheet: ' + sheetName);
+  }
+  return getEojSheetRowsForClaim_(sheet, claimId);
+}
+
+function getEojLogRowsForClaimByEojId_(claimId) {
+  try {
+    var rows = getEojLogRowsForClaim_(claimId);
+    var byId = {};
+    rows.forEach(function(row) {
+      var eojId = normalizeEojGroupField_(getEojRecordValue_(row, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']));
+      if (eojId) {
+        byId[eojId] = row;
+      }
+    });
+    return byId;
+  } catch (error) {
+    Logger.log('getEojLogRowsForClaimByEojId_ non-fatal error for ' + claimId + ': ' + formatEojError_(error));
+    return {};
+  }
+}
+
+function getCachedEojSheetValues_(sheet) {
+  if (!sheet) {
+    return [];
+  }
+
+  var cacheKey = buildEojSheetCacheKey_(sheet);
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(cacheKey);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (error) {
+      Logger.log('getCachedEojSheetValues_: cache parse failed for ' + cacheKey + ': ' + error);
+    }
+  }
+
+  var values = sheet.getDataRange().getValues();
+  var serializedValues = values.map(function(row) {
+    return row.map(function(value) {
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+      return value;
+    });
+  });
+
+  try {
+    cache.put(cacheKey, JSON.stringify(serializedValues), 300);
+  } catch (cacheError) {
+    Logger.log('getCachedEojSheetValues_: cache write skipped for ' + cacheKey + ': ' + cacheError);
+  }
+
+  return serializedValues;
+}
+
+function buildEojSheetCacheKey_(sheet) {
+  var spreadsheetId = '';
+  try {
+    spreadsheetId = sheet.getParent().getId();
+  } catch (error) {
+    spreadsheetId = 'unknown-spreadsheet';
+  }
+
+  return 'EOJ_SHEET_VALUES_' + spreadsheetId + '_' + sheet.getName();
+}
+
+function buildEojClaimRowsCacheKey_(sheet, claimId) {
+  var baseKey = buildEojSheetCacheKey_(sheet);
+  return baseKey + '_CLAIM_' + normalizeEojGroupField_(claimId);
+}
+
+function getEojSheetRowsForClaim_(sheet, claimId) {
+  var sheetNameForDiag = sheet && typeof sheet.getName === 'function' ? sheet.getName() : '(missing-sheet)';
+  if (!sheet || !claimId) {
+    return [];
+  }
+
+  var claimRowsCacheKey = buildEojClaimRowsCacheKey_(sheet, claimId);
+  var cache = CacheService.getScriptCache();
+  var cachedRows = cache.get(claimRowsCacheKey);
+
+  if (cachedRows) {
+    try {
+      return JSON.parse(cachedRows);
+    } catch (cacheReadError) {
+      Logger.log('getEojSheetRowsForClaim_: claim-row cache parse failed for ' + claimRowsCacheKey + ': ' + cacheReadError);
+    }
+  }
+
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    return [];
+  }
+
+  var headerRowIndex = findEojHeaderRowIndex_(values);
+  var headers = (values[headerRowIndex] || []).map(function(header) {
+    return String(header || '').trim();
+  });
+  var claimIdIndex = getEojHeaderIndex_(headers, ['Claim_ID', 'Claim ID', 'ClaimId', 'Claim Id']);
+
+  if (claimIdIndex < 0) {
+    return [];
+  }
+
+  var rows = [];
+  var targetClaimId = normalizeEojGroupField_(claimId);
+
+  for (var rowIndex = headerRowIndex + 1; rowIndex < values.length; rowIndex++) {
+    var row = values[rowIndex];
+    var rowClaimId = normalizeEojGroupField_(row[claimIdIndex]);
+    if (rowClaimId !== targetClaimId) {
+      continue;
+    }
+
+    rows.push(mapEojSheetRecord_(headers, row, rowIndex + 1));
+  }
+
+  try {
+    cache.put(claimRowsCacheKey, JSON.stringify(rows), 300);
+  } catch (cacheWriteError) {
+    Logger.log('getEojSheetRowsForClaim_: claim-row cache write skipped for ' + claimRowsCacheKey + ': ' + cacheWriteError);
+  }
+
+  return rows;
+}
+
+function findEojHeaderRowIndex_(values) {
+  for (var rowIndex = 0; rowIndex < Math.min(values.length, 10); rowIndex++) {
+    var headers = (values[rowIndex] || []).map(function(value) {
+      return normalizeEojHeaderName_(value);
+    });
+    if (headers.indexOf('Claim_ID') !== -1 || headers.indexOf('ClaimId') !== -1) {
+      return rowIndex;
+    }
+  }
+  return 0;
+}
+
+function getEojHeaderIndex_(headers, candidates) {
+  var direct = {};
+  var normalized = {};
+
+  (headers || []).forEach(function(header, index) {
+    if (!header) {
+      return;
+    }
+    direct[String(header).trim()] = index;
+    normalized[normalizeEojHeaderName_(header)] = index;
+  });
+
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    if (direct[candidate] !== undefined) {
+      return direct[candidate];
+    }
+    var normalizedCandidate = normalizeEojHeaderName_(candidate);
+    if (normalized[normalizedCandidate] !== undefined) {
+      return normalized[normalizedCandidate];
+    }
+  }
+
+  return -1;
+}
+
+function mapEojSheetRecord_(headers, row, rowNumber) {
+  var record = {
+    __rowNumber: rowNumber
+  };
+
+  (headers || []).forEach(function(header, index) {
+    var cleanHeader = String(header || '').trim();
+    if (!cleanHeader) {
+      return;
+    }
+    var value = row[index];
+    record[cleanHeader] = value;
+
+    var normalizedHeader = normalizeEojHeaderName_(cleanHeader);
+    if (normalizedHeader && record[normalizedHeader] === undefined) {
+      record[normalizedHeader] = value;
+    }
+  });
+
+  return record;
+}
+
+function getLatestEojProcessingRowsByEojId_(rows) {
+  var byEojId = {};
+
+  (rows || []).forEach(function(row) {
+    var eojId = normalizeEojGroupField_(getEojRecordValue_(row, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']));
+    var key = eojId || ('row:' + row.__rowNumber);
+
+    if (!byEojId[key] || getEojRecordSortTimestamp_(row) >= getEojRecordSortTimestamp_(byEojId[key])) {
+      byEojId[key] = row;
+    }
+  });
+
+  return Object.keys(byEojId).map(function(key) {
+    return byEojId[key];
+  });
+}
+
+function buildEojReportFromProcessingOutputRow_(record, logRowsByEojId) {
+  record = record || {};
+  logRowsByEojId = logRowsByEojId || {};
+
+  var eojId = normalizeEojGroupField_(getEojRecordValue_(record, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']));
+  var logRecord = eojId ? (logRowsByEojId[eojId] || null) : null;
+  var rawParsed = safeParseEojJsonValue_(getEojRecordValue_(record, ['Raw_Parsed_JSON', 'Raw Parsed JSON']), {});
+
+  if (!Object.keys(rawParsed).length && logRecord) {
+    rawParsed = safeParseEojJsonValue_(getEojRecordValue_(logRecord, ['Raw_JSON', 'Raw JSON']), {});
+  }
+
+  var equipmentOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Equipment_Output_JSON', 'Equipment Output JSON']), {});
+  var followUpOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Follow_Up_Output_JSON', 'Follow Up Output JSON']), {});
+  var conditionOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Condition_Output_JSON', 'Condition Output JSON']), {});
+  var alertOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Alert_Output_JSON', 'Alert Output JSON']), {});
+  var reviewOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Review_Output_JSON', 'Review Output JSON']), {});
+  var timelineOutput = safeParseEojJsonValue_(getEojRecordValue_(record, ['Timeline_Event_JSON', 'Timeline Event JSON']), {});
+
+  var report = buildEojReportFromRecoveredPayload_({
+    source: 'EOJ_Processing_Output',
+    limited: false,
+    eojId: eojId,
+    record: record,
+    logRecord: logRecord,
+    rawParsed: rawParsed,
+    equipmentOutput: equipmentOutput,
+    followUpOutput: followUpOutput,
+    conditionOutput: conditionOutput,
+    alertOutput: alertOutput,
+    reviewOutput: reviewOutput,
+    timelineOutput: timelineOutput,
+    processedAt: getEojRecordValue_(record, ['Processed_At', 'Processed At']),
+    submittedAt: logRecord ? getEojRecordValue_(logRecord, ['Submitted_At', 'Submitted At']) : ''
+  });
+  return report;
+}
+
+function getEojReportsForClaimFromLog_(claimId) {
+  return getEojLogRowsForClaim_(claimId)
+    .map(buildEojReportFromLogRecord_)
+    .filter(Boolean);
+}
+
+function buildEojReportFromLogRecord_(record) {
+  record = record || {};
+  var rawParsed = safeParseEojJsonValue_(getEojRecordValue_(record, ['Raw_JSON', 'Raw JSON']), {});
+  var eojId = normalizeEojGroupField_(getEojRecordValue_(record, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']));
+
+  return buildEojReportFromRecoveredPayload_({
+    source: 'EOJ_Log',
+    limited: false,
+    eojId: eojId,
+    record: record,
+    logRecord: record,
+    rawParsed: rawParsed,
+    equipmentOutput: {},
+    followUpOutput: {},
+    conditionOutput: {},
+    alertOutput: {},
+    reviewOutput: {},
+    timelineOutput: {},
+    processedAt: getEojRecordValue_(record, ['Processed_At', 'Processed At']),
+    submittedAt: getEojRecordValue_(record, ['Submitted_At', 'Submitted At'])
+  });
+}
+
+function buildEojReportFromRecoveredPayload_(input) {
+  input = input || {};
+
+  var record = input.record || {};
+  var logRecord = input.logRecord || {};
+  var rawParsed = input.rawParsed || {};
+  var equipmentOutput = input.equipmentOutput || {};
+  var followUpOutput = input.followUpOutput || {};
+  var conditionOutput = input.conditionOutput || {};
+  var alertOutput = input.alertOutput || {};
+  var reviewOutput = input.reviewOutput || {};
+  var timelineOutput = input.timelineOutput || {};
+
+  var submittedDetails = getEojTimelineDetailsByType_(timelineOutput, ['EOJ Submitted']);
+  var visitDetails = getEojTimelineDetailsWithAnyKey_(timelineOutput, ['work_performed', 'technician_notes', 'remaining_work']);
+  var monitoringDetails = getEojTimelineDetailsByType_(timelineOutput, ['Monitoring Updated']);
+  var micaDetails = getEojTimelineDetailsByType_(timelineOutput, ['Mitigate Status Updated', 'MICA Status Updated']);
+  var asbestosDetails = mergeEojObjects_(
+    getEojTimelineDetailsByType_(timelineOutput, ['Asbestos Testing Requested']),
+    getEojTimelineDetailsByType_(timelineOutput, ['Asbestos Samples Taken'])
+  );
+
+  var eojId = normalizeEojGroupField_(firstEojValue_(
+    input.eojId,
+    getEojRecordValue_(record, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']),
+    getEojRecordValue_(logRecord, ['EOJ_ID', 'EOJ ID', 'EOJID', 'ID']),
+    getNestedEojValue_(rawParsed, ['eojId'])
+  ));
+
+  var processedAt = normalizeEojDateScalar_(firstEojValue_(
+    input.processedAt,
+    getEojRecordValue_(record, ['Processed_At', 'Processed At']),
+    getEojRecordValue_(logRecord, ['Processed_At', 'Processed At'])
+  ));
+
+  var visitDate = normalizeEojDateScalar_(firstEojValue_(
+    getEojRecordValue_(record, ['Visit_Date', 'Visit Date']),
+    getEojRecordValue_(logRecord, ['Visit_Date', 'Visit Date']),
+    getNestedEojValue_(rawParsed, ['visitDate']),
+    getNestedEojValue_(rawParsed, ['Visit_Date']),
+    submittedDetails.visit_date,
+    visitDetails.visit_date
+  ));
+
+  var submittedAt = normalizeEojDateScalar_(firstEojValue_(
+    input.submittedAt,
+    getEojRecordValue_(record, ['Submitted_At', 'Submitted At']),
+    getEojRecordValue_(logRecord, ['Submitted_At', 'Submitted At']),
+    getNestedEojValue_(rawParsed, ['submittedAt']),
+    getNestedEojValue_(rawParsed, ['Submitted_At']),
+    processedAt,
+    visitDate
+  ));
+
+  var followUpRequired = coerceEojBoolean_(firstEojValue_(
+    followUpOutput.follow_up_required,
+    alertOutput.follow_up_required,
+    getNestedEojValue_(rawParsed, ['followUpNeeded']),
+    getEojRecordValue_(logRecord, ['Office_Follow_Up_Needed', 'Office Follow Up Needed'])
+  ), '');
+
+  var asbestosTestNeeded = coerceEojBoolean_(firstEojValue_(
+    asbestosDetails.testing_required,
+    alertOutput.asbestos_attention_needed,
+    conditionOutput.asbestos_testing_pending,
+    getNestedEojValue_(rawParsed, ['asbestosTestNeeded']),
+    getEojRecordValue_(logRecord, ['Asbestos_Test_Needed', 'Asbestos Test Needed'])
+  ), '');
+
+  var asbestosSamplesTaken = coerceEojBoolean_(firstEojValue_(
+    asbestosDetails.samples_taken,
+    conditionOutput.waiting_on_lab_results,
+    getNestedEojValue_(rawParsed, ['asbestosSamplesTaken']),
+    getEojRecordValue_(logRecord, ['Asbestos_Samples_Taken', 'Asbestos Samples Taken'])
+  ), '');
+
+  var x1SketchProvided = coerceEojBoolean_(firstEojValue_(
+    getNestedEojValue_(rawParsed, ['x1SketchProvided']),
+    getEojRecordValue_(logRecord, ['X1_Sketch_Provided', 'X1 Sketch Provided'])
+  ), '');
+
+  var explicitMicaUpdated = firstEojValue_(
+    getNestedEojValue_(rawParsed, ['micaUpdated']),
+    getEojRecordValue_(logRecord, ['MICA_Updated', 'MICA Updated'])
+  );
+  var inferredMicaUpdated = firstEojValue_(
+    micaDetails.has_mica_activity === true ? true : '',
+    micaDetails.mitigation_plan_updated === true ? true : '',
+    getNestedEojValue_(rawParsed, ['mitigationPlanUpdated']),
+    getEojRecordValue_(logRecord, ['Mitigation_Plan_Updated', 'Mitigation Plan Updated'])
+  );
+  if (inferredMicaUpdated !== true) {
+    inferredMicaUpdated = '';
+  }
+  var micaUpdated = firstEojValue_(explicitMicaUpdated, inferredMicaUpdated);
+
+  var reviewReasons = firstEojValue_(
+    reviewOutput.reasons,
+    alertOutput.review_reasons,
+    []
+  );
+  var reviewNeeded = coerceEojBoolean_(firstEojValue_(
+    reviewOutput.review_needed,
+    alertOutput.review_needed,
+    Array.isArray(reviewReasons) && reviewReasons.length > 0 ? true : ''
+  ), '');
+
+  var report = {
+    eojId: eojId,
+    source: input.source || '',
+    dataSource: input.source || '',
+    limited: input.limited === true,
+    isThinFallback: false,
+    submittedAt: submittedAt,
+    processedAt: processedAt,
+    visitDate: visitDate,
+    visitType: normalizeEojGroupField_(firstEojValue_(
+      getEojRecordValue_(record, ['Visit_Type', 'Visit Type']),
+      getEojRecordValue_(logRecord, ['Visit_Type', 'Visit Type']),
+      getNestedEojValue_(rawParsed, ['visitType']),
+      getNestedEojValue_(rawParsed, ['Visit_Type']),
+      submittedDetails.visit_type
+    )),
+    technician: normalizeEojGroupField_(firstEojValue_(
+      getEojRecordValue_(record, ['Technician']),
+      getEojRecordValue_(logRecord, ['Technician']),
+      getNestedEojValue_(rawParsed, ['technician']),
+      getNestedEojValue_(rawParsed, ['Technician']),
+      submittedDetails.technician
+    )),
+    jobStatus: normalizeEojGroupField_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['jobStatus']),
+      submittedDetails.job_status,
+      getEojRecordValue_(logRecord, ['Job_Status', 'Job Status'])
+    )),
+    workPerformed: normalizeEojGroupField_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['workPerformed']),
+      submittedDetails.work_performed,
+      visitDetails.work_performed,
+      getEojRecordValue_(logRecord, ['Work_Performed', 'Work Performed'])
+    )),
+    technicianNotes: normalizeEojGroupField_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['technicianNotes']),
+      visitDetails.technician_notes,
+      getEojRecordValue_(logRecord, ['Technician_Notes', 'Technician Notes'])
+    )),
+    equipmentSummary: buildEojEquipmentSummaryText_(equipmentOutput, rawParsed, logRecord),
+    waitingOn: normalizeEojGroupField_(firstEojValue_(
+      followUpOutput.waiting_on,
+      getNestedEojValue_(rawParsed, ['waitingOn']),
+      getEojRecordValue_(logRecord, ['Waiting_On', 'Waiting On'])
+    )),
+    followUpRequired: followUpRequired,
+    followUpAssignedTo: normalizeEojGroupField_(firstEojValue_(
+      followUpOutput.assigned_to,
+      getNestedEojValue_(rawParsed, ['followUpAssignedTo'])
+    )),
+    followUpDueDate: normalizeEojDateScalar_(firstEojValue_(
+      followUpOutput.due_date,
+      getNestedEojValue_(rawParsed, ['followUpDueDate'])
+    )),
+    followUpDescription: normalizeEojGroupField_(firstEojValue_(
+      followUpOutput.description,
+      getNestedEojValue_(rawParsed, ['followUpDescription']),
+      getNestedEojValue_(rawParsed, ['followUpNote']),
+      getNestedEojValue_(rawParsed, ['followUpAction']),
+      getEojRecordValue_(logRecord, ['Follow_Up_Note', 'Follow Up Note', 'Follow_Up_Action', 'Follow Up Action'])
+    )),
+    monitoringStatus: normalizeEojGroupField_(firstEojValue_(
+      monitoringDetails.monitoring_status,
+      getNestedEojValue_(rawParsed, ['monitoringStatus']),
+      getEojRecordValue_(logRecord, ['Monitoring_Status', 'Monitoring Status']),
+      conditionOutput.monitoring_active === true ? 'Active' : ''
+    )),
+    nextMonitoringDate: normalizeEojDateScalar_(firstEojValue_(
+      monitoringDetails.next_monitoring_date,
+      getNestedEojValue_(rawParsed, ['nextMonitoringDate']),
+      getEojRecordValue_(logRecord, ['Next_Monitoring_Date', 'Next Monitoring Date'])
+    )),
+    asbestosTestNeeded: asbestosTestNeeded,
+    asbestosSamplesTaken: asbestosSamplesTaken,
+    asbestosSampleCount: firstEojValue_(
+      asbestosDetails.sample_count,
+      getNestedEojValue_(rawParsed, ['asbestosSampleCount']),
+      getEojRecordValue_(logRecord, ['Asbestos_Sample_Count', 'Asbestos Sample Count'])
+    ),
+    asbestosHandler: normalizeEojGroupField_(firstEojValue_(
+      asbestosDetails.handler,
+      getNestedEojValue_(rawParsed, ['asbestosHandler'])
+    )),
+    x1SketchProvided: x1SketchProvided,
+    micaUpdated: micaUpdated,
+    micaDelayReason: normalizeEojGroupField_(firstEojValue_(
+      micaDetails.mica_delay_reason,
+      getNestedEojValue_(rawParsed, ['micaDelayReason']),
+      getEojRecordValue_(logRecord, ['MICA_Delay_Reason', 'MICA Delay Reason'])
+    )),
+    micaExpectedDate: normalizeEojDateScalar_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['micaExpectedDate']),
+      getNestedEojValue_(rawParsed, ['micaExpectedUpdateDate']),
+      micaDetails.mica_expected_update_date,
+      getEojRecordValue_(logRecord, ['MICA_Expected_Update_Date', 'MICA Expected Update Date'])
+    )),
+    micaExpectedTime: normalizeEojGroupField_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['micaExpectedTime']),
+      getEojRecordValue_(logRecord, ['MICA_Expected_Update_Time', 'MICA Expected Update Time'])
+    )),
+    reviewNeeded: reviewNeeded,
+    reviewReasons: reviewReasons,
+    insuranceSummary: normalizeEojGroupField_(firstEojValue_(
+      getNestedEojValue_(rawParsed, ['forInsuranceSummary']),
+      getNestedEojValue_(rawParsed, ['workSummaryForInsurance']),
+      getNestedEojValue_(rawParsed, ['insuranceSummary'])
+    )),
+    rawParsed: pickEojRawParsedUiFields_(rawParsed),
+    rawParsedKeys: rawParsed && typeof rawParsed === 'object' ? Object.keys(rawParsed) : [],
+    eventTypesPresent: getEojTimelineEvents_(timelineOutput).map(function(event) {
+      return normalizeEojGroupField_(event.event_type || event.Event_Type || event.type);
+    }).filter(Boolean)
+  };
+
+  report.workSummary = report.workPerformed;
+  report.collapsedSummary = report.workPerformed || report.technicianNotes || report.equipmentSummary || report.followUpDescription || '';
+  report.sortTimestamp = parseEojDateForSort_(report.processedAt) || parseEojDateForSort_(report.submittedAt) || parseEojDateForSort_(report.visitDate);
+  report.submittedAtSort = report.sortTimestamp;
+  report.fields = buildEojReportFields_(report);
+
+  return report;
+}
+
+function getEojReportsForClaimFromTimeline_(claimId) {
+  try {
+    var timelineResponse = (typeof getTimelineForClaim === 'function') ? getTimelineForClaim(claimId) : null;
+    var rows = (timelineResponse && timelineResponse.success && timelineResponse.data && Array.isArray(timelineResponse.data.timeline))
+      ? timelineResponse.data.timeline
+      : [];
+
+    var eojRows = rows.filter(function(row) {
+      var source = normalizeEojGroupField_(firstEojValue_(
+        getEojRecordValue_(row, ['Event_Source', 'Event Source']),
+        getEojRecordValue_(row, ['Source_System', 'Source System']),
+        getEojRecordValue_(row, ['Source'])
+      )).toLowerCase();
+      return source.indexOf('eoj') !== -1;
+    });
+
+    if (!eojRows.length) {
+      return [];
+    }
+
+    var groupOrder = [];
+    var groups = {};
+
+    eojRows.forEach(function(row) {
+      var key = normalizeEojGroupField_(firstEojValue_(
+        getEojRecordValue_(row, ['Source_Record_ID', 'Source Record ID']),
+        getEojRecordValue_(row, ['EOJ_ID', 'EOJ ID'])
+      ));
+      if (!key) {
+        key = [
+          'timeline',
+          normalizeEojDateScalar_(getEojRecordValue_(row, ['Event_Date', 'Event Date', 'Date'])),
+          normalizeEojGroupField_(getEojRecordValue_(row, ['Actor'])),
+          normalizeEojGroupField_(getEojRecordValue_(row, ['Job_Number', 'Job Number']))
+        ].join(':');
+      }
+      if (!groups[key]) {
+        groups[key] = [];
+        groupOrder.push(key);
+      }
+      groups[key].push(row);
+    });
+
+    var reports = groupOrder.map(function(key) {
+      return buildEojReportFromTimelineGroup_(key, groups[key]);
+    }).filter(Boolean);
+
+    reports.sort(sortEojReportsNewestFirst_);
+    return reports;
+  } catch (error) {
+    Logger.log('getEojReportsForClaimFromTimeline_ error for ' + claimId + ': ' + formatEojError_(error));
+    return [];
+  }
+}
+
+function buildEojReportFromTimelineGroup_(groupKey, rows) {
+  rows = rows || [];
+  if (!rows.length) {
+    return null;
+  }
+
+  var mergedDetails = {};
+  var technician = '';
+  var visitDate = '';
+  var processedAt = '';
+  var eojId = '';
+  var summary = '';
+  var eventTypes = [];
+
+  rows.forEach(function(row) {
+    var eventType = normalizeEojGroupField_(getEojRecordValue_(row, ['Event_Type', 'Event Type']));
+    if (eventType) {
+      eventTypes.push(eventType);
+    }
+    if (!technician) {
+      technician = normalizeEojGroupField_(getEojRecordValue_(row, ['Actor']));
+    }
+    if (!visitDate) {
+      visitDate = normalizeEojDateScalar_(getEojRecordValue_(row, ['Event_Date', 'Event Date', 'Date']));
+    }
+    if (!processedAt) {
+      processedAt = normalizeEojDateScalar_(getEojRecordValue_(row, ['Created_At', 'Created At']));
+    }
+    if (!eojId) {
+      eojId = normalizeEojGroupField_(getEojRecordValue_(row, ['Source_Record_ID', 'Source Record ID', 'EOJ_ID', 'EOJ ID']));
+    }
+    if (!summary) {
+      summary = normalizeEojGroupField_(getEojRecordValue_(row, ['Summary']));
+    }
+
+    var parsedDetail = safeParseEojJsonValue_(getEojRecordValue_(row, ['Detail', 'Details']), {});
+    Object.keys(parsedDetail).forEach(function(key) {
+      if (mergedDetails[key] === undefined && eojHasValue_(parsedDetail[key])) {
+        mergedDetails[key] = parsedDetail[key];
+      }
+    });
+  });
+
+  var report = {
+    eojId: eojId || groupKey,
+    source: 'Timeline_Events',
+    dataSource: 'Timeline_Events',
+    limited: true,
+    isThinFallback: true,
+    dataQuality: 'thin_timeline_fallback',
+    submittedAt: processedAt || visitDate,
+    processedAt: processedAt,
+    visitDate: visitDate,
+    visitType: normalizeEojGroupField_(mergedDetails.visit_type),
+    technician: technician,
+    jobStatus: normalizeEojGroupField_(mergedDetails.job_status),
+    workPerformed: normalizeEojGroupField_(mergedDetails.work_performed),
+    technicianNotes: normalizeEojGroupField_(mergedDetails.technician_notes),
+    equipmentSummary: buildEojEquipmentSummaryText_(mergedDetails, {}, {}),
+    waitingOn: normalizeEojGroupField_(mergedDetails.waiting_on),
+    followUpRequired: coerceEojBoolean_(mergedDetails.follow_up_required, ''),
+    followUpAssignedTo: normalizeEojGroupField_(mergedDetails.assigned_to),
+    followUpDueDate: normalizeEojDateScalar_(mergedDetails.due_date),
+    followUpDescription: normalizeEojGroupField_(mergedDetails.description || mergedDetails.follow_up_description),
+    monitoringStatus: normalizeEojGroupField_(mergedDetails.monitoring_status),
+    nextMonitoringDate: normalizeEojDateScalar_(mergedDetails.next_monitoring_date),
+    asbestosTestNeeded: coerceEojBoolean_(mergedDetails.testing_required, ''),
+    asbestosSamplesTaken: coerceEojBoolean_(mergedDetails.samples_taken, ''),
+    asbestosSampleCount: mergedDetails.sample_count || '',
+    asbestosHandler: normalizeEojGroupField_(mergedDetails.handler),
+    x1SketchProvided: '',
+    micaUpdated: firstEojValue_(mergedDetails.has_mica_activity, mergedDetails.mitigation_plan_updated, ''),
+    micaDelayReason: normalizeEojGroupField_(mergedDetails.mica_delay_reason),
+    micaExpectedDate: normalizeEojDateScalar_(mergedDetails.mica_expected_update_date),
+    micaExpectedTime: '',
+    reviewNeeded: '',
+    reviewReasons: [],
+    rawParsed: {},
+    rawParsedKeys: [],
+    eventTypesPresent: eventTypes
+  };
+
+  report.workSummary = report.workPerformed;
+  report.collapsedSummary = summary || report.workPerformed || 'Limited EOJ timeline record';
+  report.sortTimestamp = parseEojDateForSort_(report.processedAt) || parseEojDateForSort_(report.submittedAt) || parseEojDateForSort_(report.visitDate);
+  report.submittedAtSort = report.sortTimestamp;
+  report.fields = buildEojReportFields_(report);
+  report.fields.unshift({
+    label: 'Data Notice',
+    value: 'Limited Timeline_Events fallback. Structured EOJ Details were blank for this card.'
+  });
+  if (eventTypes.length) {
+    report.fields.push({
+      label: 'Timeline Event Types',
+      value: eventTypes.join(', ')
+    });
+  }
+
+  return report;
+}
+
+function buildEojReportFields_(report) {
+  var fields = [];
+
+  addEojReportField_(fields, 'Visit Date', report.visitDate);
+  addEojReportField_(fields, 'Technician', report.technician);
+  addEojReportField_(fields, 'Visit Type', report.visitType);
+  addEojReportField_(fields, 'Job Status', report.jobStatus);
+  addEojReportField_(fields, 'Work Performed', report.workPerformed);
+  addEojReportField_(fields, 'Technician Notes', report.technicianNotes);
+  addEojReportField_(fields, 'Insurance Summary', report.insuranceSummary);
+  addEojReportField_(fields, 'Equipment Summary', report.equipmentSummary);
+  addEojReportField_(fields, 'Waiting On', report.waitingOn);
+  addEojReportField_(fields, 'Follow-Up Required', report.followUpRequired);
+  addEojReportField_(fields, 'Follow-Up Assigned To', report.followUpAssignedTo);
+  addEojReportField_(fields, 'Follow-Up Due Date', report.followUpDueDate);
+  addEojReportField_(fields, 'Follow-Up Description', report.followUpDescription);
+  addEojReportField_(fields, 'Monitoring Status', report.monitoringStatus);
+  addEojReportField_(fields, 'Next Monitoring Date', report.nextMonitoringDate);
+  addEojReportField_(fields, 'Asbestos Test Needed', report.asbestosTestNeeded);
+  addEojReportField_(fields, 'Asbestos Samples Taken', report.asbestosSamplesTaken);
+  addEojReportField_(fields, 'Asbestos Sample Count', report.asbestosSampleCount);
+  addEojReportField_(fields, 'Asbestos Handler', report.asbestosHandler);
+  addEojReportField_(fields, 'X1 Sketch Provided', report.x1SketchProvided);
+  addEojReportField_(fields, 'MICA Updated', report.micaUpdated);
+  addEojReportField_(fields, 'MICA Delay Reason', report.micaDelayReason);
+  addEojReportField_(fields, 'MICA Expected Date', report.micaExpectedDate);
+  addEojReportField_(fields, 'MICA Expected Time', report.micaExpectedTime);
+  addEojReportField_(fields, 'Review Needed', report.reviewNeeded);
+  addEojReportField_(fields, 'Review Reasons', report.reviewReasons);
+  addEojReportField_(fields, 'Processed At', report.processedAt);
+
+  return fields;
+}
+
+function addEojReportField_(fields, label, value) {
+  if (!eojHasValue_(value)) {
+    return;
+  }
+  fields.push({
+    label: label,
+    value: formatEojValueForField_(value)
+  });
+}
+
+function buildEojEquipmentSummaryText_(equipmentOutput, rawParsed, logRecord) {
+  equipmentOutput = equipmentOutput || {};
+  rawParsed = rawParsed || {};
+  logRecord = logRecord || {};
+
+  var summary = normalizeEojGroupField_(firstEojValue_(
+    equipmentOutput.summary,
+    getNestedEojValue_(rawParsed, ['equipmentSummary']),
+    getNestedEojValue_(rawParsed, ['equipment', 'notes'])
+  ));
+  if (summary) {
+    return summary;
+  }
+
+  var added = numberFromEojValue_(firstEojValue_(
+    equipmentOutput.total_added,
+    sumEojEquipmentLogCounts_(logRecord, ['Air_Movers_Added', 'Dehumidifiers_Added', 'HEPA_Added'])
+  ));
+  var removed = numberFromEojValue_(firstEojValue_(
+    equipmentOutput.total_removed,
+    sumEojEquipmentLogCounts_(logRecord, ['Air_Movers_Removed', 'Dehumidifiers_Removed', 'HEPA_Removed'])
+  ));
+  var onSite = numberFromEojValue_(firstEojValue_(
+    equipmentOutput.total_on_site_after_visit,
+    sumEojEquipmentLogCounts_(logRecord, ['Air_Movers_After', 'Dehumidifiers_After', 'HEPA_After'])
+  ));
+
+  if (!added && !removed && !onSite) {
+    return '';
+  }
+
+  var parts = [];
+  if (added) {
+    parts.push(added + ' added');
+  }
+  if (removed) {
+    parts.push(removed + ' removed');
+  }
+  parts.push(onSite + ' on site after visit');
+
+  return parts.join(', ');
+}
+
+function sumEojEquipmentLogCounts_(record, headers) {
+  if (!record) {
+    return '';
+  }
+
+  var total = 0;
+  var sawValue = false;
+  (headers || []).forEach(function(header) {
+    var value = getEojRecordValue_(record, [header]);
+    if (eojHasValue_(value)) {
+      total += numberFromEojValue_(value);
+      sawValue = true;
+    }
+  });
+
+  return sawValue ? total : '';
+}
+
+function getEojTimelineEvents_(timelineOutput) {
+  if (Array.isArray(timelineOutput)) {
+    return timelineOutput;
+  }
+  if (timelineOutput && Array.isArray(timelineOutput.events)) {
+    return timelineOutput.events;
+  }
+  return [];
+}
+
+function getEojTimelineDetailsByType_(timelineOutput, eventTypes) {
+  var normalizedTypes = {};
+  (eventTypes || []).forEach(function(type) {
+    normalizedTypes[normalizeEojGroupField_(type).toLowerCase()] = true;
+  });
+
+  var events = getEojTimelineEvents_(timelineOutput);
+  for (var i = 0; i < events.length; i++) {
+    var event = events[i] || {};
+    var eventType = normalizeEojGroupField_(event.event_type || event.Event_Type || event.type).toLowerCase();
+    if (normalizedTypes[eventType]) {
+      return event.details || event.Details || {};
+    }
+  }
+
+  return {};
+}
+
+function getEojTimelineDetailsWithAnyKey_(timelineOutput, keys) {
+  var events = getEojTimelineEvents_(timelineOutput);
+
+  for (var i = 0; i < events.length; i++) {
+    var details = (events[i] && (events[i].details || events[i].Details)) || {};
+    for (var j = 0; j < keys.length; j++) {
+      if (eojHasValue_(details[keys[j]])) {
+        return details;
+      }
+    }
+  }
+
+  return {};
+}
+
+function mergeEojObjects_() {
+  var merged = {};
+
+  for (var i = 0; i < arguments.length; i++) {
+    var object = arguments[i] || {};
+    Object.keys(object).forEach(function(key) {
+      if (eojHasValue_(object[key])) {
+        merged[key] = object[key];
+      }
+    });
+  }
+
+  return merged;
+}
+
+function getEojRecordValue_(record, keys) {
+  record = record || {};
+  keys = keys || [];
+
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    if (eojHasValue_(record[key])) {
+      return record[key];
+    }
+    var normalizedKey = normalizeEojHeaderName_(key);
+    if (eojHasValue_(record[normalizedKey])) {
+      return record[normalizedKey];
+    }
+  }
+
+  return '';
+}
+
+function getNestedEojValue_(object, path) {
+  if (!object || !path || !path.length) {
+    return '';
+  }
+
+  var current = object;
+  for (var i = 0; i < path.length; i++) {
+    if (current === null || current === undefined || current[path[i]] === undefined) {
+      return '';
+    }
+    current = current[path[i]];
+  }
+  return current;
+}
+
+function firstEojValue_() {
+  for (var i = 0; i < arguments.length; i++) {
+    if (eojHasValue_(arguments[i])) {
+      return arguments[i];
+    }
+  }
+  return '';
+}
+
+function eojHasValue_(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value.trim() !== '';
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (value instanceof Date) {
+    return !isNaN(value.getTime());
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function normalizeEojGroupField_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  return String(value === null || value === undefined ? '' : value).trim();
+}
+
+function normalizeEojHeaderName_(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .replace(/_+/g, '_');
+}
+
+function safeParseEojJsonValue_(value, fallback) {
+  if (!eojHasValue_(value)) {
+    return fallback || {};
+  }
+  if (typeof value === 'object' && !(value instanceof Date)) {
+    return value;
+  }
+
+  var text = String(value || '').trim();
+  if (!text || (text.charAt(0) !== '{' && text.charAt(0) !== '[')) {
+    return fallback || {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return fallback || {};
+  }
+}
+
+function coerceEojBoolean_(value, fallback) {
+  if (!eojHasValue_(value)) {
+    return fallback;
+  }
+  if (value === true || value === false) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value > 0;
+  }
+
+  var normalized = String(value).toLowerCase().trim();
+  if (['yes', 'true', 'needed', 'required', 'active', 'complete', 'completed', '1'].indexOf(normalized) !== -1) {
+    return true;
+  }
+  if (['no', 'false', 'not needed', 'not required', 'inactive', 'none', '0'].indexOf(normalized) !== -1) {
+    return false;
+  }
+
+  return value;
+}
+
+function numberFromEojValue_(value) {
+  var numberValue = Number(value);
+  return isNaN(numberValue) ? 0 : numberValue;
+}
+
+function normalizeEojDateScalar_(value) {
+  if (!eojHasValue_(value)) {
+    return '';
+  }
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  return String(value);
+}
+
+function parseEojDateForSort_(value) {
+  if (!value) {
+    return 0;
+  }
+  var date = value instanceof Date ? value : new Date(value);
+  return isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function getEojRecordSortTimestamp_(record) {
+  return parseEojDateForSort_(firstEojValue_(
+    getEojRecordValue_(record, ['Processed_At', 'Processed At']),
+    getEojRecordValue_(record, ['Submitted_At', 'Submitted At']),
+    getEojRecordValue_(record, ['Visit_Date', 'Visit Date'])
+  ));
+}
+
+function sortEojReportsNewestFirst_(a, b) {
+  var aTime = (a && a.sortTimestamp) || 0;
+  var bTime = (b && b.sortTimestamp) || 0;
+  return bTime - aTime;
+}
+
+function formatEojValueForField_(value) {
+  if (value === true) {
+    return 'Yes';
+  }
+  if (value === false) {
+    return 'No';
+  }
+  if (Array.isArray(value)) {
+    return value.join('; ');
+  }
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.stringify(value);
+    } catch (error) {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function pickEojRawParsedUiFields_(rawParsed) {
+  rawParsed = rawParsed || {};
+  var keys = [
+    'technician', 'jobName', 'claimNumber', 'claimId', 'customerName',
+    'propertyAddress', 'visitDate', 'visitType', 'workPerformed',
+    'technicianNotes', 'otherVisitNotes', 'remainingWork', 'jobStatus',
+    'forInsuranceSummary', 'workSummaryForInsurance', 'insuranceSummary',
+    'equipmentSummary', 'equipment', 'waitingOn', 'followUpNeeded',
+    'followUpAction', 'followUpAssignedTo', 'followUpNote',
+    'followUpDescription', 'followUpDueDate', 'monitoringStatus',
+    'monitoringNotes', 'nextMonitoringNeeded', 'nextMonitoringDate',
+    'nextMonitoringWindow', 'asbestosTestNeeded', 'asbestosHandler',
+    'asbestosSamplesTaken', 'asbestosSampleCount',
+    'asbestosFollowUpDescription', 'x1SketchProvided', 'micaUpdated',
+    'micaDelayReason', 'micaExpectedDate', 'micaExpectedTime',
+    'micaExpectedUpdateDate', 'mitigationPlanUpdated',
+    'mitigationPlanSummary', 'demoPerformed', 'flooringRemoved',
+    'itelSampleStatus', 'itelNotes', 'equipmentPickedUp',
+    'fieldWorkComplete'
+  ];
+  var picked = {};
+
+  keys.forEach(function(key) {
+    if (eojHasValue_(rawParsed[key])) {
+      picked[key] = rawParsed[key];
+    }
+  });
+
+  return picked;
+}
+
+function formatEojError_(error) {
+  return error && error.message ? error.message : String(error || 'Unknown error');
+}
+
+function testGetEojReportsForKnownClaim() {
+  var claimId = 'CLM-20260626-495576';
+  var reports = getEojReportsForClaim_(claimId);
+  Logger.log('testGetEojReportsForKnownClaim count: ' + reports.length);
+  Logger.log(JSON.stringify(reports.slice(0, 2), null, 2));
+  return {
+    claimId: claimId,
+    count: reports.length,
+    reports: reports.slice(0, 2)
+  };
+}
+
+function testGroupedEojTimelineForKnownClaim() {
+  var claimId = 'CLM-20260626-495576';
+  var timeline = getWorkspaceTimelineForClaim_(claimId);
+  var rawEvents = Array.isArray(timeline.rawEvents) ? timeline.rawEvents : [];
+  var displayEvents = Array.isArray(timeline.events) ? timeline.events : [];
+  var rawEojEvents = rawEvents.filter(isWorkspaceTimelineEojEvent_);
+  var groupedEojEvents = displayEvents.filter(function(event) {
+    return event && event.isEojGrouped === true;
+  });
+
+  var result = {
+    claimId: claimId,
+    rawTimelineCount: rawEvents.length,
+    displayTimelineCount: displayEvents.length,
+    rawEojSubEventCount: rawEojEvents.length,
+    groupedEojDisplayCount: groupedEojEvents.length,
+    groupedEojEvents: groupedEojEvents.map(function(event) {
+      return {
+        eojId: event.eojId || '',
+        title: event.summary || event.title || '',
+        date: event.eventDate || event.date || '',
+        eojEventCount: event.eojEventCount || 0,
+        groupedEventTypes: event.groupedEventTypes || []
+      };
+    })
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function testClaimDetailTimeline() {
@@ -1602,5 +3193,7 @@ function buildWorkspaceContext_(claimFoundation, operationalIntelligence, detail
 var ClaimDetailService = {
   getClaimDetail: getClaimDetail,
   testClaimDetail: testClaimDetail,
-  testClaimDetailTimeline: testClaimDetailTimeline
+  testClaimDetailTimeline: testClaimDetailTimeline,
+  testGroupedEojTimelineForKnownClaim: testGroupedEojTimelineForKnownClaim,
+  testGetEojReportsForKnownClaim: testGetEojReportsForKnownClaim
 };

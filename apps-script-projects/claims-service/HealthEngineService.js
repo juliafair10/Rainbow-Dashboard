@@ -523,7 +523,8 @@ function batchApplyClaimHealth() {
 
 function runMorningHealthEvaluation_() {
   // Phase 1 (health pipeline repair): called from
-  // MorningAutomationService.runRainbowMorningAutomation() so health gets
+  // MorningAutomationService.runMorningIntelligence() (itself invoked by
+  // runRainbowMorningAutomation()) so health gets
   // recalculated automatically instead of only from manual test functions
   // (testApplyClaimHealth/testBatchApplyClaimHealth). batchApplyClaimHealth()
   // is idempotent by construction - recordHealthHistoryIfChanged_() only

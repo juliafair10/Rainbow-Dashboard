@@ -1,0 +1,341 @@
+<script>
+  // ============================================================
+  // ClaimActivityCenter.html — Phase 10D
+  // Full Claim page: EOJ Reports + Claim Actions.
+  // Positioned above the existing Timeline (left untouched).
+  // ============================================================
+
+  var fcvEojReportsExpanded_ = {};
+
+  function renderFcvActivityCenter(detail) {
+    var el = document.getElementById('fcvActivityCenter');
+    if (!el) { return; }
+
+    var html = '<div class="fcv-activity-center">';
+    html += renderFcvEojReportsCard_(detail);
+    html += renderFcvClaimActionsCard_(detail);
+    html += '</div>';
+
+    el.innerHTML = html;
+  }
+
+  // ── EOJ Reports ──────────────────────────────────────────────
+
+  function renderFcvEojReportsCard_(detail) {
+    detail = detail || {};
+    var reports = Array.isArray(detail.eojReports) ? detail.eojReports : [];
+
+    var html = '<div class="fcv-card fcv-eoj-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>EOJ Reports</h2>';
+    html += '<p class="fcv-card-description">Every end-of-job report submitted for this claim. Newest first.</p>';
+    html += '</div>';
+
+    if (!reports.length) {
+      html += '<div class="fcv-card-empty">No EOJ reports recorded for this claim yet.</div>';
+    } else {
+      html += '<div class="fcv-eoj-report-list">';
+      reports.forEach(function(report, index) {
+        html += renderFcvEojReportCard_(report, index);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderFcvEojReportCard_(report, index) {
+    report = report || {};
+
+    var visitType = fcvPickVal([report.visitType]) || 'EOJ Report';
+    var technician = fcvPickVal([report.technician]);
+    var jobStatus = fcvPickVal([report.jobStatus]);
+    var dateLabel = fcvFormatDate(report.submittedAt) || '';
+    var summaryLine = fcvTruncate(fcvPickVal([report.collapsedSummary]), 140);
+
+    var metaParts = [];
+    if (dateLabel) { metaParts.push(dateLabel); }
+    if (jobStatus) { metaParts.push(jobStatus); }
+
+    var domId = 'fcvEojReport_' + index;
+    var isExpanded = !!fcvEojReportsExpanded_[domId];
+
+    var html = '<div class="fcv-eoj-report' + (isExpanded ? ' is-expanded' : '') + '" id="' + domId + '">';
+    html += '<button type="button" class="fcv-eoj-report-toggle" onclick="fcvToggleEojReport_(\'' + domId + '\')">';
+    html += '<div class="fcv-eoj-report-collapsed">';
+    html += '<div class="fcv-eoj-report-visittype">' + fcvEscape(visitType) + '</div>';
+    if (technician) { html += '<div class="fcv-eoj-report-technician">' + fcvEscape(technician) + '</div>'; }
+    if (metaParts.length) { html += '<div class="fcv-eoj-report-meta">' + fcvEscape(metaParts.join(' • ')) + '</div>'; }
+    if (summaryLine) { html += '<div class="fcv-eoj-report-summary">' + fcvEscape(summaryLine) + '</div>'; }
+    html += '</div>';
+    html += '<span class="fcv-eoj-report-chevron">▾</span>';
+    html += '</button>';
+
+    html += '<div class="fcv-eoj-report-expanded"' + (isExpanded ? '' : ' hidden') + '>';
+    html += renderFcvEojReportExpanded_(report);
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderFcvEojReportExpanded_(report) {
+    report = report || {};
+
+    var rows = [
+      ['Visit Date', fcvFormatDate(report.visitDate) || report.visitDate],
+      ['Technician', report.technician],
+      ['Visit Type', report.visitType],
+      ['Job Status', report.jobStatus],
+      ['Work Performed', fcvPickVal([report.workPerformed, report.workSummary, report.collapsedSummary])],
+      ['Equipment', report.equipmentSummary],
+      ['Follow-Up', fcvBuildEojFollowUpSummary_(report)],
+      ['Monitoring', fcvBuildEojMonitoringSummary_(report)],
+      ['Asbestos', fcvBuildEojAsbestosSummary_(report)],
+      ['MICA', fcvBuildEojMicaSummary_(report)],
+      ['Review', fcvBuildEojReviewSummary_(report)],
+      ['Notes', fcvPickVal([report.technicianNotes, report.otherVisitNotes, report.monitoringNotes])],
+      ['EOJ ID', report.eojId]
+    ];
+
+    var visibleRows = rows.filter(function(row) {
+      return fcvHasDisplayValue_(row && row[1]);
+    });
+
+    if (!visibleRows.length) {
+      return renderFcvEojLegacyFields_(report) || '<div class="fcv-card-empty">No additional fields recorded for this report.</div>';
+    }
+
+    var html = '<div class="fcv-eoj-field-grid fcv-eoj-field-grid--compact">';
+    visibleRows.forEach(function(row) {
+      html += '<div class="fcv-eoj-field">';
+      html += '<span>' + fcvEscape(row[0]) + '</span>';
+      html += '<strong>' + fcvEscape(row[1]) + '</strong>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function fcvBuildEojFollowUpSummary_(report) {
+    if (!report) { return ''; }
+    var required = fcvFormatBooleanLabel_(report.followUpRequired);
+    var assignedTo = fcvPickVal([report.followUpAssignedTo]);
+    var dueDate = fcvFormatDate(report.followUpDueDate) || report.followUpDueDate;
+    var description = fcvPickVal([report.followUpDescription, report.followUpAction, report.followUpNote]);
+    var parts = [];
+
+    if (required === 'No' && !assignedTo && !dueDate && !description) { return ''; }
+    if (required === 'Yes') { parts.push('Required'); }
+    if (description) { parts.push(description); }
+    if (assignedTo) { parts.push(assignedTo); }
+    if (dueDate) { parts.push('Due ' + dueDate); }
+    return parts.join(' • ');
+  }
+
+  function fcvBuildEojMonitoringSummary_(report) {
+    if (!report) { return ''; }
+    var parts = [];
+    var status = fcvPickVal([report.monitoringStatus]);
+    var nextDate = fcvFormatDate(report.nextMonitoringDate) || report.nextMonitoringDate;
+    if (status) { parts.push(status); }
+    if (nextDate) { parts.push('Next ' + nextDate); }
+    return parts.join(' • ');
+  }
+
+  function fcvBuildEojAsbestosSummary_(report) {
+    if (!report) { return ''; }
+    var testNeeded = fcvFormatBooleanLabel_(report.asbestosTestNeeded);
+    var samplesTaken = fcvFormatBooleanLabel_(report.asbestosSamplesTaken);
+    var sampleCount = fcvPickVal([report.asbestosSampleCount]);
+    var handler = fcvPickVal([report.asbestosHandler]);
+    var x1 = fcvFormatBooleanLabel_(report.x1SketchProvided);
+    var parts = [];
+
+    if (testNeeded === 'Yes') { parts.push('Test needed'); }
+    if (samplesTaken === 'Yes') { parts.push('Samples taken'); }
+    if (sampleCount && sampleCount !== '0') { parts.push(sampleCount + ' samples'); }
+    if (handler) { parts.push(handler); }
+    if (x1 === 'Yes') { parts.push('X1 sketch provided'); }
+    return parts.join(' • ');
+  }
+
+  function fcvBuildEojMicaSummary_(report) {
+    if (!report) { return ''; }
+    var updated = fcvFormatBooleanLabel_(report.micaUpdated);
+    var reason = fcvPickVal([report.micaDelayReason]);
+    var expectedDate = fcvFormatDate(report.micaExpectedDate) || report.micaExpectedDate;
+    var expectedTime = fcvPickVal([report.micaExpectedTime]);
+    var parts = [];
+
+    if (updated === 'Yes') { parts.push('Updated'); }
+    if (reason) { parts.push(reason); }
+    if (expectedDate) { parts.push('Expected ' + expectedDate + (expectedTime ? ' ' + expectedTime : '')); }
+    return parts.join(' • ');
+  }
+
+  function fcvBuildEojReviewSummary_(report) {
+    if (!report) { return ''; }
+    var needed = fcvFormatBooleanLabel_(report.reviewNeeded);
+    var reasons = Array.isArray(report.reviewReasons) ? report.reviewReasons.filter(Boolean) : [];
+    if (needed !== 'Yes' && !reasons.length) { return ''; }
+    if (reasons.length) { return reasons.join('; '); }
+    return 'Review needed';
+  }
+
+  function renderFcvEojLegacyFields_(report) {
+    if (!Array.isArray(report.fields) || !report.fields.length) { return ''; }
+
+    var html = '<div class="fcv-eoj-field-grid">';
+    report.fields.forEach(function(field) {
+      if (!field || !fcvHasDisplayValue_(field.value)) { return; }
+      html += '<div class="fcv-eoj-field">';
+      html += '<span>' + fcvEscape(field.label) + '</span>';
+      html += '<strong>' + fcvEscape(field.value) + '</strong>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function fcvHasDisplayValue_(value) {
+    if (value === null || typeof value === 'undefined') { return false; }
+    if (Array.isArray(value)) { return value.length > 0; }
+    var text = String(value).trim();
+    return text !== '' && text !== 'undefined' && text !== 'null';
+  }
+
+  function fcvFormatBooleanLabel_(value) {
+    if (value === true) { return 'Yes'; }
+    if (value === false) { return 'No'; }
+    if (typeof value === 'string') {
+      var normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === 'yes') { return 'Yes'; }
+      if (normalized === 'false' || normalized === 'no') { return 'No'; }
+    }
+    return value;
+  }
+
+  function fcvToggleEojReport_(domId) {
+    var card = document.getElementById(domId);
+    if (!card) { return; }
+
+    var expandedPanel = card.querySelector('.fcv-eoj-report-expanded');
+    var nowExpanded = card.classList.toggle('is-expanded');
+
+    if (expandedPanel) {
+      if (nowExpanded) {
+        expandedPanel.removeAttribute('hidden');
+      } else {
+        expandedPanel.setAttribute('hidden', '');
+      }
+    }
+
+    fcvEojReportsExpanded_[domId] = nowExpanded;
+  }
+
+  // ── Claim Actions ────────────────────────────────────────────
+
+  var FCV_CLAIM_ACTIONS_ = [
+    { key: 'billInspectionClose', label: 'Bill Inspection & Close', icon: '🧾' },
+    { key: 'followUpCoverage',    label: 'Follow Up on Coverage',   icon: '🏢' },
+    { key: 'requestRevision',     label: 'Request Revision',        icon: '📝' },
+    { key: 'scheduleMonitoring',  label: 'Schedule Monitoring',     icon: '🔍' }
+  ];
+
+  function renderFcvClaimActionsCard_(detail) {
+    detail = detail || {};
+
+    var html = '<div class="fcv-card fcv-claim-actions-card">';
+    html += '<div class="fcv-card-header">';
+    html += '<h2>Claim Actions</h2>';
+    html += '<p class="fcv-card-description">Operational shortcuts — creates a Todoist task and logs a timeline event.</p>';
+    html += '</div>';
+
+    html += '<div class="fcv-claim-actions-grid">';
+    FCV_CLAIM_ACTIONS_.forEach(function(action) {
+      html += '<button type="button" class="fcv-claim-action-btn" id="fcvClaimActionBtn_' + fcvEscape(action.key) + '" ' +
+              'onclick="fcvRunClaimActionClick_(\'' + fcvEscape(action.key) + '\')">';
+      html += '<span class="fcv-claim-action-icon">' + action.icon + '</span>';
+      html += '<span class="fcv-claim-action-label">' + fcvEscape(action.label) + '</span>';
+      html += '</button>';
+    });
+    html += '</div>';
+
+    html += '<div id="fcvClaimActionStatus" class="fcv-claim-action-status" style="display:none;"></div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  function fcvRunClaimActionClick_(actionKey) {
+    var detail = fcvDetail || {};
+    var header = detail.claimHeader || {};
+    var ctx = detail.workspaceContext || {};
+
+    var customerName = fcvPickVal([ctx.claim && ctx.claim.displayName, header.customerName, header.displayName]);
+    var claimNumber = fcvPickVal([ctx.claim && ctx.claim.claimNumber, header.claimNumber]);
+    var jobNumber = fcvPickVal([ctx.claim && ctx.claim.jobNumber, header.jobNumber]);
+    var claimLink = fcvBuildClaimLink_(fcvClaimId);
+
+    var actionDef = FCV_CLAIM_ACTIONS_.filter(function(a) { return a.key === actionKey; })[0];
+    var btn = document.getElementById('fcvClaimActionBtn_' + actionKey);
+
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('is-loading');
+    }
+
+    fcvSetClaimActionStatus_('Working on "' + (actionDef ? actionDef.label : actionKey) + '"…', 'pending');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('is-loading');
+        }
+        fcvHandleClaimActionResult_(result, actionDef);
+      })
+      .withFailureHandler(function(error) {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('is-loading');
+        }
+        var msg = error && error.message ? error.message : String(error || 'Unknown error');
+        fcvSetClaimActionStatus_('Could not complete this action: ' + msg, 'error');
+      })
+      .fcvRunClaimAction({
+        claimId: fcvClaimId,
+        actionKey: actionKey,
+        customerName: customerName,
+        claimNumber: claimNumber,
+        jobNumber: jobNumber,
+        claimLink: claimLink
+      });
+  }
+
+  function fcvHandleClaimActionResult_(result, actionDef) {
+    result = result || {};
+    var label = actionDef ? actionDef.label : (result.actionLabel || 'Claim action');
+    var status = result.ok ? 'success' : 'error';
+    var message = (result.message || 'No confirmation returned.');
+
+    fcvSetClaimActionStatus_('✓ ' + label + ' — ' + message, status);
+  }
+
+  function fcvSetClaimActionStatus_(text, level) {
+    var el = document.getElementById('fcvClaimActionStatus');
+    if (!el) { return; }
+
+    el.style.display = 'block';
+    el.className = 'fcv-claim-action-status fcv-claim-action-status--' + (level || 'pending');
+    el.textContent = text;
+  }
+
+  function fcvBuildClaimLink_(claimId) {
+    var baseUrl = window.RAINBOW_DASHBOARD_BASE_URL || '';
+    if (!baseUrl) { return ''; }
+    return baseUrl + '?view=fullClaim&claimId=' + encodeURIComponent(claimId || '');
+  }
+</script>

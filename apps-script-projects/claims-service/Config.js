@@ -13,6 +13,13 @@ const CLAIM_SERVICE = {
   spreadsheetId: CLAIMS_DATABASE_SPREADSHEET_ID
 };
 
+// EOJ recovery sources. These mirror eoj-processing-engine/Config.js and
+// eoj-app/Config.js, but are read-only in claims-service.
+const EOJ_SOURCE_SPREADSHEET_ID = '10ja0fNFsY_KqDWIyW27D_9pEILjWoXOyIfXMsTufSPs';
+const EOJ_OUTPUT_SPREADSHEET_ID = '1GmsWkh8x_ICVEWNFP_WgT-hN6hQDSI_WF16J9T_R-NE';
+const EOJ_LOG_SHEET_NAME = 'EOJ_Log';
+const EOJ_PROCESSING_OUTPUT_SHEET_NAME = 'EOJ_Processing_Output';
+
 const REPORT_EMAIL_IMPORT_CONFIG = {
   dailyOpenJobs: {
     reportKey: 'dailyOpenJobs',

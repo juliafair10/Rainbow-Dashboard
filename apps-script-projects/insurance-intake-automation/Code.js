@@ -601,6 +601,7 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
   const jobNumber = String(claimData.rainbowJobNumber || '').trim();
   const claimId = String(claimData.claimId || '').trim();
   const claimNumber = String(claimData.claimNumber || '').trim();
+  const carrier = String(claimData.carrier || '').trim();
 
   // Auto-ensure Claim Number column header exists. Idempotent: skips if already present.
   if (columnMap.claimNumber === -1) {
@@ -608,6 +609,14 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
     sheet.getRange(1, newColIndex + 1).setValue('Claim Number');
     headers.push('Claim Number');
     columnMap.claimNumber = newColIndex;
+  }
+
+  // Auto-ensure Carrier column header exists. Idempotent: skips if already present.
+  if (columnMap.carrier === -1) {
+    const newColIndex = headers.length;
+    sheet.getRange(1, newColIndex + 1).setValue('Carrier');
+    headers.push('Carrier');
+    columnMap.carrier = newColIndex;
   }
 
   // Guard: only write claim number if it is a real insurance claim number (not a fallback).
@@ -625,6 +634,7 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
       if (index === columnMap.claimId) return claimId;
       if (index === columnMap.jobNumber) return jobNumber || claimNumber;
       if (index === columnMap.claimNumber && isRealClaimNumber) return claimNumber;
+      if (index === columnMap.carrier && carrier) return carrier;
       return '';
     });
 
@@ -670,12 +680,27 @@ function upsertInsuranceIntakeWideExternalLinks_(sheet, claimData, linksToSave) 
     claimNumberSkippedReason = claimNumber ? 'fallback_equals_job_number' : 'blank_claim_number';
   }
 
+  // For existing rows: write carrier to Carrier column if blank and carrier is non-empty.
+  // For new rows: already written via appendRow above; skip to avoid redundant write.
+  let carrierWritten = rowCreated && !!carrier;
+
+  if (!rowCreated && carrier && columnMap.carrier !== -1) {
+    const carrierRange = sheet.getRange(rowNumber, columnMap.carrier + 1);
+    const existingCarrier = String(carrierRange.getValue() || '').trim();
+
+    if (!existingCarrier) {
+      carrierRange.setValue(carrier);
+      carrierWritten = true;
+    }
+  }
+
   return {
     rowNumber: rowNumber,
     savedCount: saved.length,
     linksSaved: saved,
     claimNumberWritten: claimNumberWritten,
-    claimNumberSkippedReason: claimNumberSkippedReason
+    claimNumberSkippedReason: claimNumberSkippedReason,
+    carrierWritten: carrierWritten
   };
 }
 
@@ -688,6 +713,7 @@ function buildInsuranceIntakeExternalLinkColumnMap_(headers) {
     claimId: normalized.indexOf('claim id'),
     jobNumber: normalized.indexOf('job number'),
     claimNumber: normalized.indexOf('claim number'),
+    carrier: normalized.indexOf('carrier'),
     fusionUrl: normalized.indexOf('fusion url'),
     driveFolder: normalized.indexOf('drive folder'),
     xactAnalysis: normalized.indexOf('xactanalysis'),

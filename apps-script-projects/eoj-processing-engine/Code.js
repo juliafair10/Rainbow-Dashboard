@@ -53,10 +53,48 @@ function processUnprocessedEOJs() {
 
   rows.forEach(row => {
     try {
-      const parsed = parseRawJson_(row.rawJson);
+      const parsed      = parseRawJson_(row.rawJson);
       const interpreted = interpretBasicEOJ_(parsed, row, runId);
-      const outputId = writeProcessingOutput_(interpreted);
+      const outputId    = writeProcessingOutput_(interpreted);
+
+      // Write to Rainbow Claims Database:
+      // Timeline_Events, Claim_Conditions, Claim_Alerts, Claims timestamps,
+      // Claim_Service_Log. Non-fatal: bridge errors are logged but do not
+      // fail the processing row or prevent it from being marked Processed.
+      try {
+        writeEojToClaimsDatabase_(interpreted);
+      } catch (bridgeErr) {
+        const bridgeMsg = bridgeErr && bridgeErr.message ? bridgeErr.message : String(bridgeErr);
+        Logger.log('ClaimsBridge error (non-fatal) for row ' + row.rowNumber + ': ' + bridgeMsg);
+      }
+
+      // Create Todoist task if office follow-up was requested. Non-fatal.
+      // Phase D: capture result so task ID can be written back to EOJ_Log.
+      var todoistResult = { ok: false, taskId: '', taskUrl: '' };
+      try {
+        todoistResult = createEojTodoistTask(interpreted) || todoistResult;
+      } catch (todoistErr) {
+        Logger.log('Todoist error (non-fatal) for row ' + row.rowNumber + ': ' + (todoistErr.message || todoistErr));
+      }
+
+      // Post Google Chat notification. Non-fatal.
+      try {
+        postEojToGoogleChat(interpreted);
+      } catch (chatErr) {
+        Logger.log('Google Chat error (non-fatal) for row ' + row.rowNumber + ': ' + (chatErr.message || chatErr));
+      }
+
       markEOJProcessed_(row.rowNumber, runId, outputId);
+
+      // Phase D: write Todoist task ID back to EOJ_Log after the row is marked Processed.
+      // Non-fatal — failure here does not affect the processing result.
+      if (todoistResult.ok && todoistResult.taskId) {
+        try {
+          writeTodoistWriteback_(row.rowNumber, todoistResult.taskId, todoistResult.taskUrl);
+        } catch (writebackErr) {
+          Logger.log('Todoist writeback error (non-fatal) for row ' + row.rowNumber + ': ' + (writebackErr.message || writebackErr));
+        }
+      }
       result.processedCount++;
     } catch (err) {
       const message = err && err.message ? err.message : String(err);

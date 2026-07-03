@@ -10,7 +10,10 @@ const CONFIG = {
     'Processed_At',
     'Processing_Run_ID',
     'Processing_Error',
-    'Processing_Output_ID'
+    'Processing_Output_ID',
+    // Phase D: Todoist writeback — added automatically by ensureEOJLogProcessingColumns_()
+    'Todoist_Task_ID',
+    'Todoist_Task_URL'
   ],
 
   OUTPUT_COLUMNS: [
@@ -42,5 +45,19 @@ const CONFIG = {
     PROCESSED: 'Processed',
     ERROR: 'Error',
     NEW: 'New'
+  },
+
+  // ── Todoist follow-up task creation ────────────────────────────────────────
+  // Script Properties referenced here must be set in the Apps Script editor
+  // (Project Settings → Script Properties) for the eoj-processing-engine project.
+  // TODOIST_API_TOKEN is shared with insurance-intake-automation — same token.
+  todoist: {
+    apiTokenProperty:            'TODOIST_API_TOKEN',   // preferred; falls back to TODOIST_TOKEN
+    projectIdProperty:           'TODOIST_PROJECT_ID',
+    assigneeIdJuliaProperty:     'TODOIST_ASSIGNEE_ID_JULIA',
+    assigneeIdClarenceProperty:  'TODOIST_ASSIGNEE_ID_CLARENCE',
+    sectionIdProperty:           'TODOIST_SECTION_ID',  // optional
+    priority:                    3,
+    enabled:                     true
   }
 };

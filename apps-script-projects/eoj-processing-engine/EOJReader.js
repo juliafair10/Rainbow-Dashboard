@@ -215,3 +215,139 @@ function resolveValue_(rowValues, idx, possibleHeaders) {
   }
   return '';
 }
+
+// ============================================================
+// DIAGNOSTIC ONLY — Phase 10D EOJ Reports investigation, continued.
+// Read-only. Does not touch processUnprocessedEOJs(), ClaimsBridge.js,
+// or any production write path in this project.
+//
+// Background: claims-service/Timeline_Events was found to have 52/52
+// EOJ-sourced rows with an empty Details column — ClaimsBridge.js writes
+// the structured payload to a column named "Detail" (singular) but the
+// live sheet's actual column is "Details" (plural), so every EOJ payload
+// has been silently dropped on write, for every claim, historically.
+//
+// This function checks whether the ORIGINAL data is still recoverable
+// from two sources upstream of that broken write, independent of it:
+//   1. EOJ_Log (CONFIG.EOJ_SOURCE_SPREADSHEET_ID) — raw submission intake,
+//      one row per EOJ, with a Raw_JSON column (read by getUnprocessedEOJRows()
+//      above — but that function skips already-Processed rows, so it can't
+//      answer this on its own).
+//   2. EOJ_Processing_Output (CONFIG.EOJ_OUTPUT_SPREADSHEET_ID /
+//      CONFIG.PROCESSING_OUTPUT_SHEET_NAME) — one row per EOJ with the
+//      fully-interpreted output already split into JSON columns
+//      (Timeline_Event_JSON, Equipment_Output_JSON, Follow_Up_Output_JSON,
+//      Review_Output_JSON, Operational_Object_JSON, Raw_Parsed_JSON, etc.)
+//      — this is written by whatever calls interpretBasicEOJ_() and is a
+//      completely separate write path from ClaimsBridge.js's Timeline_Events
+//      write, so it should be unaffected by that bug.
+// ============================================================
+
+function testDiagnoseEojRecoverySourcesForKnownClaim() {
+  return diagnoseEojRecoverySourcesForClaim('CLM-20260626-495576');
+}
+
+function diagnoseEojRecoverySourcesForClaim(claimId) {
+  claimId = claimId || 'CLM-20260626-495576';
+  Logger.log('========================================================');
+  Logger.log('diagnoseEojRecoverySourcesForClaim: ' + claimId);
+  Logger.log('========================================================');
+
+  var logMatchCount = 0;
+  var outMatchCount = 0;
+
+  // ── 1. EOJ_Log — raw submission intake, Raw_JSON per row ──────────────
+  var logSs = SpreadsheetApp.openById(CONFIG.EOJ_SOURCE_SPREADSHEET_ID);
+  var logSheet = logSs.getSheetByName(CONFIG.EOJ_LOG_SHEET_NAME);
+
+  if (!logSheet) {
+    Logger.log('EOJ_Log sheet "' + CONFIG.EOJ_LOG_SHEET_NAME + '" not found in spreadsheet ' + CONFIG.EOJ_SOURCE_SPREADSHEET_ID + '.');
+  } else {
+    var logValues = logSheet.getDataRange().getValues();
+    var logHeaders = logValues.length ? logValues[0] : [];
+
+    Logger.log('--- EOJ_Log ---');
+    Logger.log('Total rows (incl. header): ' + logValues.length);
+    Logger.log('Headers: ' + JSON.stringify(logHeaders));
+
+    for (var i = 1; i < logValues.length; i++) {
+      var logRow = logValues[i];
+      var logRowText = logRow.map(function(v) { return String(v === null || v === undefined ? '' : v); }).join(' | ');
+      if (logRowText.indexOf(claimId) === -1) { continue; }
+
+      logMatchCount++;
+      Logger.log('--- EOJ_Log row ' + (i + 1) + ' (matched "' + claimId + '") ---');
+      logHeaders.forEach(function(header, colIndex) {
+        var label = header || ('(column ' + (colIndex + 1) + ')');
+        var val = logRow[colIndex];
+        if (String(label).toLowerCase().indexOf('json') !== -1) {
+          var preview = String(val || '');
+          Logger.log('  [' + label + '] (length ' + preview.length + '): ' + preview.slice(0, 400));
+          try {
+            var parsed = JSON.parse(preview);
+            Logger.log('  [' + label + '] parsed top-level keys: ' + JSON.stringify(Object.keys(parsed)));
+          } catch (e) {
+            Logger.log('  [' + label + '] did not parse as JSON: ' + (e && e.message ? e.message : e));
+          }
+        } else {
+          Logger.log('  [' + label + ']: ' + JSON.stringify(val));
+        }
+      });
+    }
+
+    Logger.log('EOJ_Log rows mentioning "' + claimId + '": ' + logMatchCount);
+  }
+
+  // ── 2. EOJ_Processing_Output — already-interpreted output per EOJ ─────
+  var outSs = SpreadsheetApp.openById(CONFIG.EOJ_OUTPUT_SPREADSHEET_ID);
+  var outSheet = outSs.getSheetByName(CONFIG.PROCESSING_OUTPUT_SHEET_NAME);
+
+  if (!outSheet) {
+    Logger.log('EOJ_Processing_Output sheet "' + CONFIG.PROCESSING_OUTPUT_SHEET_NAME + '" not found in spreadsheet ' + CONFIG.EOJ_OUTPUT_SPREADSHEET_ID + '.');
+  } else {
+    var outValues = outSheet.getDataRange().getValues();
+    var outHeaders = outValues.length ? outValues[0] : [];
+
+    Logger.log('--- EOJ_Processing_Output ---');
+    Logger.log('Total rows (incl. header): ' + outValues.length);
+    Logger.log('Headers: ' + JSON.stringify(outHeaders));
+
+    for (var j = 1; j < outValues.length; j++) {
+      var outRow = outValues[j];
+      var outRowText = outRow.map(function(v) { return String(v === null || v === undefined ? '' : v); }).join(' | ');
+      if (outRowText.indexOf(claimId) === -1) { continue; }
+
+      outMatchCount++;
+      Logger.log('--- EOJ_Processing_Output row ' + (j + 1) + ' (matched "' + claimId + '") ---');
+      outHeaders.forEach(function(header, colIndex) {
+        var label = header || ('(column ' + (colIndex + 1) + ')');
+        var val = outRow[colIndex];
+        if (String(label).toLowerCase().indexOf('json') !== -1) {
+          var preview2 = String(val || '');
+          Logger.log('  [' + label + '] (length ' + preview2.length + '): ' + preview2.slice(0, 400));
+          try {
+            var parsed2 = JSON.parse(preview2);
+            Logger.log('  [' + label + '] parsed top-level keys: ' + JSON.stringify(Object.keys(parsed2)));
+          } catch (e2) {
+            Logger.log('  [' + label + '] did not parse as JSON: ' + (e2 && e2.message ? e2.message : e2));
+          }
+        } else {
+          Logger.log('  [' + label + ']: ' + JSON.stringify(val));
+        }
+      });
+    }
+
+    Logger.log('EOJ_Processing_Output rows mentioning "' + claimId + '": ' + outMatchCount);
+  }
+
+  var summary = {
+    claimId: claimId,
+    eojLogMatchCount: logMatchCount,
+    processingOutputMatchCount: outMatchCount
+  };
+
+  Logger.log('--- SUMMARY ---');
+  Logger.log(JSON.stringify(summary, null, 2));
+
+  return summary;
+}

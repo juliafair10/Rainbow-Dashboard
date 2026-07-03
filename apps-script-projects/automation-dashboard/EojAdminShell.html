@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rainbow EOJ Admin</title>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --panel: #fff;
+      --brand: #227c70;
+      --brand-dark: #1a5e55;
+      --ink: #1f2933;
+      --muted: #6b7a6e;
+      --line: #e4e8e3;
+      --radius: 10px;
+      --shadow: 0 2px 8px rgba(31,41,51,.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--ink); font-size: 14px; }
+    .shell { max-width: 1100px; margin: 0 auto; padding: 20px 16px; display: grid; gap: 16px; }
+    .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .header h1 { font-size: 1.1rem; font-weight: 760; }
+    .header .sub { color: var(--muted); font-size: .85rem; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+    .card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .card-header h2 { font-size: .95rem; font-weight: 760; }
+    .helper { color: var(--muted); font-size: .83rem; }
+    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .filter-row select, .filter-row input { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: .85rem; background: #fff; }
+    .btn { border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 740; cursor: pointer; font-size: .84rem; }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+    .btn-warn { background: #b92828; color: #fff; }
+    .btn:disabled { opacity: .5; cursor: default; }
+    .status-badge { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: .77rem; font-weight: 760; }
+    .status-new { background: #e8f5f3; color: var(--brand-dark); }
+    .status-processed { background: #e8f5f0; color: #1a6640; }
+    .status-error { background: #fde8e8; color: #b92828; }
+    .status-skipped { background: #f3f4f0; color: var(--muted); }
+    .eoj-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+    .eoj-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 740; white-space: nowrap; }
+    .eoj-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .eoj-table tr:last-child td { border-bottom: 0; }
+    .eoj-table tr:hover td { background: #f8faf7; }
+    .claim-link { color: var(--brand); text-decoration: none; font-weight: 720; }
+    .claim-link:hover { text-decoration: underline; }
+    .detail-panel { background: #f8faf7; border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: none; }
+    .detail-panel.open { display: block; }
+    .detail-panel pre { font-size: .77rem; white-space: pre-wrap; word-break: break-all; color: var(--ink); max-height: 320px; overflow-y: auto; }
+    .detail-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .detail-header h3 { font-size: .88rem; font-weight: 760; }
+    .error-text { color: #b92828; font-size: .83rem; }
+    .stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: #fff; min-width: 100px; }
+    .stat .num { font-size: 1.4rem; font-weight: 800; }
+    .stat .label { font-size: .77rem; color: var(--muted); }
+    .loading { color: var(--muted); padding: 20px 0; text-align: center; }
+    .empty { color: var(--muted); padding: 16px 0; font-size: .88rem; }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: #fff; border-radius: 8px; padding: 10px 16px; font-size: .85rem; font-weight: 720; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; }
+    .toast.show { opacity: 1; }
+    @media (max-width: 700px) { .eoj-table { display: block; overflow-x: auto; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="header">
+    <div>
+      <h1>EOJ Admin</h1>
+      <div class="sub">Submission status, error review, and retry — last 50 submissions</div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-ghost" onclick="loadData()">↻ Refresh</button>
+      <a id="sheetLink" href="#" target="_blank" class="btn btn-ghost" style="text-decoration:none;">Open EOJ Sheet</a>
+    </div>
+  </div>
+
+  <div class="card" id="statsCard" style="display:none;">
+    <div class="stats-row" id="statsRow"></div>
+    <div class="helper" id="statsNote"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Submissions</h2>
+      <div class="filter-row">
+        <select id="statusFilter" onchange="renderTable()">
+          <option value="">All statuses</option>
+          <option value="New">New</option>
+          <option value="Processed">Processed</option>
+          <option value="Error">Error</option>
+          <option value="Skipped">Skipped</option>
+        </select>
+        <input id="searchFilter" type="text" placeholder="Search technician, job, claim…" oninput="renderTable()" style="min-width:200px;">
+      </div>
+    </div>
+
+    <div id="tableContainer"><div class="loading">Loading EOJ submissions…</div></div>
+  </div>
+
+  <div class="card detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <h3 id="detailTitle">EOJ Detail</h3>
+      <button class="btn btn-ghost" onclick="closeDetail()">✕ Close</button>
+    </div>
+    <div id="detailContent"></div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── Data ────────────────────────────────────────────────────────────────────
+  var allRows = [];
+  var dashboardBaseUrl = <?= JSON.stringify(dashboardBaseUrl) ?>;
+
+  document.addEventListener('DOMContentLoaded', loadData);
+
+  function loadData() {
+    document.getElementById('tableContainer').innerHTML = '<div class="loading">Loading…</div>';
+    document.getElementById('statsCard').style.display = 'none';
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (!response || !response.ok) {
+          document.getElementById('tableContainer').innerHTML =
+            '<div class="empty error-text">Error loading data: ' + esc((response && response.error && response.error.message) || 'Unknown error') + '</div>';
+          return;
+        }
+        allRows = response.data.rows || [];
+        document.getElementById('sheetLink').href = response.data.spreadsheetUrl || '#';
+        renderStats(response.data.totalDataRows);
+        renderTable();
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('tableContainer').innerHTML =
+          '<div class="empty error-text">Script error: ' + esc(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getEojAdminData();
+  }
+
+  function renderStats(totalRows) {
+    const counts = { New: 0, Processed: 0, Error: 0, Skipped: 0 };
+    allRows.forEach(function(r) { if (counts[r.processingStatus] !== undefined) counts[r.processingStatus]++; });
+
+    document.getElementById('statsRow').innerHTML =
+      Object.keys(counts).map(function(k) {
+        return '<div class="stat"><div class="num">' + counts[k] + '</div><div class="label">' + k + '</div></div>';
+      }).join('') +
+      '<div class="stat"><div class="num">' + totalRows + '</div><div class="label">Total rows</div></div>';
+
+    document.getElementById('statsNote').textContent =
+      'Showing last ' + allRows.length + ' of ' + totalRows + ' total submissions.';
+    document.getElementById('statsCard').style.display = 'block';
+  }
+
+  function renderTable() {
+    const statusFilter = document.getElementById('statusFilter').value;
+    const query        = document.getElementById('searchFilter').value.toLowerCase();
+
+    const filtered = allRows.filter(function(r) {
+      if (statusFilter && r.processingStatus !== statusFilter) return false;
+      if (query) {
+        const searchable = [r.technician, r.jobName, r.claimId, r.claimNumber, r.eojId, r.visitType].join(' ').toLowerCase();
+        if (!searchable.includes(query)) return false;
+      }
+      return true;
+    });
+
+    if (!filtered.length) {
+      document.getElementById('tableContainer').innerHTML = '<div class="empty">No submissions match the current filters.</div>';
+      return;
+    }
+
+    const html = '<div style="overflow-x:auto"><table class="eoj-table"><thead><tr>' +
+      '<th>EOJ ID</th><th>Submitted</th><th>Technician</th><th>Job</th><th>Visit</th><th>Status</th><th>Processed</th><th>Actions</th>' +
+      '</tr></thead><tbody>' +
+      filtered.map(function(r) {
+        const badge = statusBadge(r.processingStatus);
+        const claimLink = r.claimId && dashboardBaseUrl
+          ? '<a class="claim-link" href="' + esc(dashboardBaseUrl + '?view=fullClaim&claimId=' + encodeURIComponent(r.claimId)) + '" target="_blank">' + esc(r.claimId) + '</a>'
+          : esc(r.claimId || '—');
+
+        const retryBtn = r.processingStatus === 'Error'
+          ? '<button class="btn btn-warn" onclick="retryRow(' + r.rowNumber + ', this)" style="font-size:.75rem;padding:4px 8px;">Retry</button> '
+          : '';
+
+        const detailBtn = '<button class="btn btn-ghost" onclick="showDetail(' + r.rowNumber + ', \'' + esc(r.eojId) + '\')" style="font-size:.75rem;padding:4px 8px;">Detail</button>';
+
+        return '<tr>' +
+          '<td><code style="font-size:.78rem">' + esc(r.eojId || '—') + '</code></td>' +
+          '<td>' + esc(r.submittedAt) + '</td>' +
+          '<td>' + esc(r.technician) + '</td>' +
+          '<td>' + esc(r.jobName) + '<br><span class="helper">' + claimLink + '</span></td>' +
+          '<td>' + esc(r.visitType) + (r.jobStatus ? '<br><span class="helper">' + esc(r.jobStatus) + '</span>' : '') + '</td>' +
+          '<td>' + badge + (r.processingError ? '<br><span class="error-text" style="font-size:.75rem;" title="' + esc(r.processingError) + '">' + esc(r.processingError.slice(0, 60)) + (r.processingError.length > 60 ? '…' : '') + '</span>' : '') + '</td>' +
+          '<td>' + esc(r.processedAt || '—') + '</td>' +
+          '<td style="white-space:nowrap">' + retryBtn + detailBtn + '</td>' +
+          '</tr>';
+      }).join('') +
+      '</tbody></table></div>';
+
+    document.getElementById('tableContainer').innerHTML = html;
+  }
+
+  function statusBadge(status) {
+    var cls = 'status-' + (status || 'new').toLowerCase().replace(' ', '-') || 'status-new';
+    return '<span class="status-badge ' + cls + '">' + esc(status || 'New') + '</span>';
+  }
+
+  // ── Retry ───────────────────────────────────────────────────────────────────
+
+  function retryRow(rowNumber, btn) {
+    if (!confirm('Reset row ' + rowNumber + ' to New so the processing engine will retry it?')) return;
+    btn.disabled = true;
+    btn.textContent = '…';
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (response && response.ok) {
+          showToast('Row ' + rowNumber + ' reset to New.');
+          loadData();
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Retry';
+          showToast('Error: ' + ((response && response.error && response.error.message) || 'Unknown'), true);
+        }
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        showToast('Script error: ' + (err && err.message ? err.message : String(err)), true);
+      })
+      .retryEojRow(rowNumber);
+  }
+
+  // ── Detail panel ────────────────────────────────────────────────────────────
+
+  function showDetail(rowNumber, eojId) {
+    document.getElementById('detailTitle').textContent = 'Detail — ' + eojId;
+    document.getElementById('detailContent').innerHTML = '<div class="loading">Loading…</div>';
+    document.getElementById('detailPanel').classList.add('open');
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        if (!response || !response.ok) {
+          document.getElementById('detailContent').innerHTML =
+            '<div class="error-text">Error: ' + esc((response && response.error && response.error.message) || 'Unknown') + '</div>';
+          return;
+        }
+        const d = response.data;
+        var html = '';
+
+        if (d.processingError) {
+          html += '<div class="error-text" style="margin-bottom:10px;font-weight:720;">Error: ' + esc(d.processingError) + '</div>';
+        }
+
+        var meta = [
+          ['Status', d.processingStatus],
+          ['Processed At', d.processedAt],
+          ['Run ID', d.processingRunId]
+        ].filter(function(r) { return r[1]; }).map(function(r) {
+          return '<tr><td style="color:var(--muted);padding:4px 8px 4px 0;white-space:nowrap">' + esc(r[0]) + '</td><td style="padding:4px 0">' + esc(r[1]) + '</td></tr>';
+        }).join('');
+
+        if (meta) html += '<table style="margin-bottom:12px;font-size:.82rem">' + meta + '</table>';
+
+        if (d.parsedPayload) {
+          html += '<div style="font-weight:720;margin-bottom:6px;font-size:.82rem">Submitted Payload</div><pre>' + esc(JSON.stringify(d.parsedPayload, null, 2)) + '</pre>';
+        } else if (d.rawJson) {
+          html += '<div style="font-weight:720;margin-bottom:6px;font-size:.82rem">Raw JSON</div><pre>' + esc(d.rawJson) + '</pre>';
+        } else {
+          html += '<div class="helper">No Raw_JSON found for this row.</div>';
+        }
+
+        document.getElementById('detailContent').innerHTML = html;
+      })
+      .withFailureHandler(function(err) {
+        document.getElementById('detailContent').innerHTML =
+          '<div class="error-text">Script error: ' + esc(err && err.message ? err.message : String(err)) + '</div>';
+      })
+      .getEojRowDetail(rowNumber);
+  }
+
+  function closeDetail() {
+    document.getElementById('detailPanel').classList.remove('open');
+  }
+
+  // ── Utilities ───────────────────────────────────────────────────────────────
+
+  function esc(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  var toastTimer;
+  function showToast(msg, isError) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.background = isError ? '#b92828' : '#1f2933';
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { el.classList.remove('show'); }, 3500);
+  }
+</script>
+</body>
+</html>

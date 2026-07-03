@@ -1,4 +1,22 @@
 
+/**
+ * Phase D: write Todoist task ID and URL back to the EOJ_Log row.
+ * Columns 'Todoist_Task_ID' and 'Todoist_Task_URL' are added automatically by
+ * ensureEOJLogProcessingColumns_() (via CONFIG.EOJ_LOG_REQUIRED_COLUMNS) on the
+ * first run after Config.js is deployed.
+ * Non-fatal: silently skips missing columns via batchWriteStatusColumns_.
+ */
+function writeTodoistWriteback_(rowNumber, taskId, taskUrl) {
+  if (!rowNumber || (!taskId && !taskUrl)) return;
+  const sheet = getEOJLogSheet_();
+  ensureEOJLogProcessingColumns_(sheet);
+  const idx = indexHeaders_(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  batchWriteStatusColumns_(sheet, rowNumber, idx, {
+    Todoist_Task_ID:  taskId  || '',
+    Todoist_Task_URL: taskUrl || ''
+  });
+}
+
 function markEOJProcessed_(rowNumber, runId, outputId) {
   const sheet = getEOJLogSheet_();
   ensureEOJLogProcessingColumns_(sheet);

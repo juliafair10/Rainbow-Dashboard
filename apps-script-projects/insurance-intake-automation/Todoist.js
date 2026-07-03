@@ -87,6 +87,30 @@ function listTodoistProjects() {
   }
 }
 
+
+function testListTodoistProjects() {
+  const result = listTodoistProjects();
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function logTodoistCollaborators() {
+  const result = listTodoistProjects();
+  const payload = result && result.result ? result.result : {};
+
+  Logger.log('Todoist project list status: ' + (result.status || 'Unknown'));
+  Logger.log('Message: ' + (result.message || ''));
+  Logger.log('Projects: ' + JSON.stringify(payload.projects || [], null, 2));
+  Logger.log('Sections: ' + JSON.stringify(payload.sections || [], null, 2));
+  Logger.log('Collaborators / assignee IDs: ' + JSON.stringify(payload.collaborators || [], null, 2));
+
+  if (!payload.collaborators || payload.collaborators.length === 0) {
+    Logger.log('No collaborators were returned. This usually means the configured Todoist project is not shared, or the Todoist account/token does not expose collaborators for this project.');
+  }
+
+  return payload.collaborators || [];
+}
+
 function testTodoistConnection() {
   const startedAt = new Date();
   const result = {
@@ -171,6 +195,31 @@ function testTodoistConnection() {
       result: result
     };
   }
+}
+
+function logTodoistConnection() {
+  const result = testTodoistConnection();
+  Logger.log(JSON.stringify(result, null, 2));
+
+  const payload = result && result.result ? result.result : {};
+  const config = payload.config || {};
+  const todoist = payload.todoist || {};
+
+  Logger.log('Todoist connection status: ' + (result.status || 'Unknown'));
+  Logger.log('Message: ' + (result.message || ''));
+  Logger.log('Has API token: ' + !!config.hasApiToken);
+  Logger.log('Has project ID: ' + !!config.hasProjectId);
+  Logger.log('Has Clarence assignee ID: ' + !!config.hasAssigneeIdClarence);
+  Logger.log('Has section ID: ' + !!config.hasSectionId);
+  Logger.log('Todoist reachable: ' + !!todoist.reachable);
+  Logger.log('Project task count: ' + (todoist.projectTaskCount || 0));
+  Logger.log('Sample tasks: ' + JSON.stringify(todoist.sampleTasks || [], null, 2));
+
+  if (result.status !== 'Success') {
+    Logger.log('Todoist connection error: ' + (payload.error || result.message || 'Unknown error'));
+  }
+
+  return result;
 }
 
 function createOrSkipTodoistIntakeTask_(claimData, folderResult, thread) {
@@ -361,4 +410,3 @@ function buildTodoistDeadlineDate_(daysFromToday) {
   return Utilities.formatDate(deadline, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 
 }
-
