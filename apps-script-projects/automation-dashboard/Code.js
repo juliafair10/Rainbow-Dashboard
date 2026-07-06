@@ -1100,12 +1100,174 @@ function testClaimsWorkspaceDataBridge() {
   return result;
 }
 
-function getIntakeWorkspaceSummary() {
+/**
+ * Fetches the four expensive, Gmail-heavy intake "source" responses that feed
+ * the Intake Workspace summary. These dominate load time (~50 Gmail searches),
+ * so they are cached for a short window and reused across loads.
+ *
+ * - Pass { forceRefresh: true } to bypass the cache and recompute (used by the
+ *   "Run Queue Health refresh" button and after running an intake process).
+ * - The separate insurance queue-health call is only made when the combined
+ *   getQueueHealth did NOT already include insurance (it normally does), which
+ *   removes a full duplicate set of Gmail searches per load.
+ *
+ * Cache/parse failures fall back to a live recompute, so behavior is preserved
+ * even if CacheService is unavailable or the payload is too large to cache.
+ */
+function getIntakeWorkspaceSourceResponses_(options) {
+  options = options || {};
+  const forceRefresh = options.forceRefresh === true;
+  const CACHE_KEY = 'intakeWorkspaceSourceResponses_v1';
+  // Default interactive TTL stays 120s. The scheduled cache-warm passes a
+  // longer cacheTtlSeconds so a warmed entry outlives the warm interval and the
+  // first cold load after expiry is avoided. Capped at CacheService's 6h max.
+  const requestedTtl = Number(options.cacheTtlSeconds);
+  const CACHE_TTL_SECONDS = (isFinite(requestedTtl) && requestedTtl > 0)
+    ? Math.min(requestedTtl, 21600)
+    : 120;
+
+  let cache = null;
+  try {
+    cache = CacheService.getScriptCache();
+  } catch (cacheInitError) {
+    cache = null;
+  }
+
+  if (!forceRefresh && cache) {
+    try {
+      const cached = cache.get(CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed) {
+          parsed.fromCache = true;
+          return parsed;
+        }
+      }
+    } catch (cacheReadError) {
+      // Ignore cache read/parse errors and recompute below.
+    }
+  }
+
+  const queueHealthResponse = callIntakeModuleAction_('queueHealth');
+  const queueWorkflows = queueHealthResponse && queueHealthResponse.result && queueHealthResponse.result.workflows
+    ? queueHealthResponse.result.workflows
+    : {};
+
+  // Only make the separate (expensive) insurance queue-health call if the
+  // combined getQueueHealth did not already include insurance. Normally it
+  // does, so this avoids a full duplicate set of Gmail searches per load.
+  const insuranceQueueHealthResponse = queueWorkflows.insuranceIntake
+    ? null
+    : callIntakeModuleAction_('queueHealthInsuranceIntake');
+
+  const diagnosticsResponse = callIntakeModuleAction_('diagnostics');
+  const pendingInspectionResponse = callIntakeModuleAction_('inspectPendingClaimFolders');
+
+  const sources = {
+    queueHealthResponse: queueHealthResponse,
+    insuranceQueueHealthResponse: insuranceQueueHealthResponse,
+    diagnosticsResponse: diagnosticsResponse,
+    pendingInspectionResponse: pendingInspectionResponse,
+    fromCache: false
+  };
+
+  if (cache) {
+    try {
+      cache.put(CACHE_KEY, JSON.stringify(sources), CACHE_TTL_SECONDS);
+    } catch (cacheWriteError) {
+      // Ignore cache write errors (e.g. payload over the 100KB limit).
+    }
+  }
+
+  return sources;
+}
+
+/**
+ * Scheduled cache-warm for the Intake Workspace (fixes cold-load latency).
+ *
+ * getIntakeWorkspaceSummary runs ~40+ synchronous Gmail searches on a cold
+ * cache (~13-30s). This function force-refreshes the source cache with a longer
+ * TTL so interactive loads are always warm. Intended to run on a time-driven
+ * trigger every 5 minutes; it self-gates to business hours so off-hours runs
+ * are near-instant no-ops. Install once via installIntakeWorkspaceCacheWarmTrigger().
+ */
+var INTAKE_CACHE_WARM = {
+  ttlSeconds: 900,        // 15 min: comfortably outlives the 5-min interval
+  windowDays: [1, 2, 3, 4, 5], // Mon-Fri (Date.getDay(): 0=Sun)
+  windowStartHour: 6,
+  windowEndHour: 19,
+  triggerHandler: 'warmIntakeWorkspaceCache',
+  triggerEveryMinutes: 5
+};
+
+function warmIntakeWorkspaceCache() {
+  if (!isWithinIntakeCacheWarmWindow_(new Date())) {
+    return { status: 'Skipped', reason: 'Outside business-hours warm window.' };
+  }
+
+  try {
+    getIntakeWorkspaceSummary({
+      forceRefresh: true,
+      cacheTtlSeconds: INTAKE_CACHE_WARM.ttlSeconds
+    });
+    return { status: 'Warmed', warmedAt: new Date().toISOString() };
+  } catch (err) {
+    // Never throw from a trigger; a failed warm just means the next interactive
+    // load recomputes as it did before this optimization.
+    Logger.log('[warmIntakeWorkspaceCache] failed: ' + err.message);
+    return { status: 'Error', message: err.message };
+  }
+}
+
+function isWithinIntakeCacheWarmWindow_(now) {
+  now = now || new Date();
+  if (INTAKE_CACHE_WARM.windowDays.indexOf(now.getDay()) === -1) {
+    return false;
+  }
+  const hour = now.getHours();
+  return hour >= INTAKE_CACHE_WARM.windowStartHour && hour < INTAKE_CACHE_WARM.windowEndHour;
+}
+
+/**
+ * Installs the time-driven cache-warm trigger. Idempotent: removes any existing
+ * warm triggers first so repeated runs don't stack duplicates. Run once from the
+ * Apps Script editor after deploying.
+ */
+function installIntakeWorkspaceCacheWarmTrigger() {
+  removeIntakeWorkspaceCacheWarmTrigger();
+  ScriptApp.newTrigger(INTAKE_CACHE_WARM.triggerHandler)
+    .timeBased()
+    .everyMinutes(INTAKE_CACHE_WARM.triggerEveryMinutes)
+    .create();
+  Logger.log('[installIntakeWorkspaceCacheWarmTrigger] installed every ' +
+    INTAKE_CACHE_WARM.triggerEveryMinutes + ' min.');
+  return { status: 'Installed', everyMinutes: INTAKE_CACHE_WARM.triggerEveryMinutes };
+}
+
+function removeIntakeWorkspaceCacheWarmTrigger() {
+  let removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === INTAKE_CACHE_WARM.triggerHandler) {
+      ScriptApp.deleteTrigger(trigger);
+      removed++;
+    }
+  });
+  Logger.log('[removeIntakeWorkspaceCacheWarmTrigger] removed ' + removed + ' trigger(s).');
+  return { status: 'Removed', count: removed };
+}
+
+function getIntakeWorkspaceSummary(options) {
   const generatedAt = new Date().toISOString();
-  const queueHealthResponse = fetchIntakeServiceJson_('queueHealth');
-  const insuranceQueueHealthResponse = fetchIntakeServiceJson_('queueHealthInsuranceIntake');
-  const diagnosticsResponse = fetchIntakeServiceJson_('diagnostics');
-  const pendingInspectionResponse = fetchIntakeServiceJson_('inspectPendingClaimFolders');
+  // Phase 11B: call the relocated IntakeModule_* functions in-process instead
+  // of the standalone intake web app. Same response shape, no HTTP. The
+  // Gmail-heavy source calls are fetched via a short-lived cache so repeat
+  // loads are fast; pass { forceRefresh: true } to recompute (refresh button
+  // and after running an intake process).
+  const intakeSources = getIntakeWorkspaceSourceResponses_(options);
+  const queueHealthResponse = intakeSources.queueHealthResponse;
+  const insuranceQueueHealthResponse = intakeSources.insuranceQueueHealthResponse;
+  const diagnosticsResponse = intakeSources.diagnosticsResponse;
+  const pendingInspectionResponse = intakeSources.pendingInspectionResponse;
   const auditState = getIntakeAuditState_();
 
   const queueResult = queueHealthResponse && queueHealthResponse.result
@@ -1184,7 +1346,12 @@ function getIntakeWorkspaceSummary() {
 
 function runIntakeWorkspaceProcess() {
   try {
-    const runResult = runAutomation(INTAKE_SOURCE_SERVICE_ID);
+    // Phase 11B: run the relocated intake pipeline in-process instead of
+    // calling the standalone intake web app via runAutomation(). The
+    // Automation Run Log entry is still written (runIntakeModuleProcess_)
+    // so operational history is unchanged, and the returned shape matches
+    // what this function returned before (lastStatus / message / result).
+    const runResult = runIntakeModuleProcess_();
     const status = runResult && runResult.lastStatus ? runResult.lastStatus : STATUS.SUCCESS;
 
     return {
@@ -1206,6 +1373,196 @@ function runIntakeWorkspaceProcess() {
       message: err && err.message ? err.message : String(err)
     };
   }
+}
+
+/**
+ * Phase 11B — In-process replacement for the intake "process" run.
+ *
+ * Calls the relocated processInsuranceIntake() directly and writes the same
+ * Automation Run Log record that runAutomation() would have written for the
+ * insurance-intake automation, so the run history the office user sees is
+ * unchanged. Returns the same shape runAutomation() returns (the fields
+ * runIntakeWorkspaceProcess reads: lastStatus, message).
+ *
+ * runAutomation() itself is shared dashboard infrastructure and is NOT
+ * modified in Phase 11B.
+ */
+function runIntakeModuleProcess_() {
+  const automation = getIntakeSourceAutomation_() || {
+    id: INTAKE_SOURCE_SERVICE_ID,
+    name: 'Insurance Intake Automation',
+    category: 'Insurance / Gmail / Todoist',
+    mainFunction: 'processInsuranceIntake'
+  };
+
+  const startedAt = new Date();
+  let endedAt = null;
+  let status = STATUS.ERROR;
+  let message = '';
+  let rawResponse = '';
+
+  try {
+    const parsed = processInsuranceIntake();
+    endedAt = new Date();
+    rawResponse = JSON.stringify(parsed);
+
+    if (parsed && parsed.status) {
+      status = normalizeStatus_(parsed.status);
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else if (parsed) {
+      status = STATUS.SUCCESS;
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else {
+      status = STATUS.SUCCESS;
+      message = 'Automation completed.';
+    }
+  } catch (err) {
+    endedAt = new Date();
+    status = STATUS.ERROR;
+    message = err && err.message ? err.message : String(err);
+  }
+
+  const durationMs = endedAt.getTime() - startedAt.getTime();
+
+  const runRecord = {
+    timestamp: endedAt,
+    automationId: automation.id,
+    automationName: automation.name,
+    category: automation.category,
+    mainFunction: automation.mainFunction,
+    status: status,
+    message: message,
+    startedAt: startedAt,
+    endedAt: endedAt,
+    durationMs: durationMs,
+    responseCode: '',
+    rawResponse: rawResponse
+  };
+
+  appendRunLog_(runRecord);
+  saveLatestStatus_(runRecord);
+
+  return {
+    id: automation.id,
+    name: automation.name,
+    category: automation.category,
+    lastRunTime: formatDateTime_(endedAt),
+    lastStatus: status,
+    lastMessage: message,
+    message: message,
+    durationMs: durationMs,
+    rawResponse: rawResponse
+  };
+}
+
+/**
+ * Phase 11B — In-process run for the Asbestos attachment intake workflow.
+ * Called by the Intake Workspace "Run Asbestos Intake" action via
+ * google.script.run. Runs the relocated processAsbestosAttachments() and
+ * returns the same workspace-response shape as runIntakeWorkspaceProcess.
+ */
+function runAsbestosWorkspaceProcess() {
+  return runIntakeVendorWorkspaceProcess_('asbestos-attachment-intake', processAsbestosAttachments);
+}
+
+/**
+ * Phase 11B — In-process run for the Itel attachment intake workflow.
+ * Called by the Intake Workspace "Run Itel Intake" action via
+ * google.script.run. Runs the relocated processItelAttachments().
+ */
+function runItelWorkspaceProcess() {
+  return runIntakeVendorWorkspaceProcess_('itel-attachment-intake', processItelAttachments);
+}
+
+/**
+ * Shared in-process runner for the vendor (Asbestos / Itel) intake workflows.
+ *
+ * Mirrors runIntakeModuleProcess_ + runIntakeWorkspaceProcess for insurance:
+ * runs the given process function in-process, writes the same Automation Run
+ * Log record runAutomation() would have written (so run history is unchanged),
+ * and returns the workspace-response shape the Intake Workspace expects
+ * (status / success / message / result). The shared runAutomation() itself is
+ * not used or modified.
+ *
+ * @param {string} automationId  Registry id for the run-log automation record.
+ * @param {Function} processFn   The relocated module process function to run.
+ */
+function runIntakeVendorWorkspaceProcess_(automationId, processFn) {
+  const automation = DASHBOARD_CONFIG.automations.find(function(item) {
+    return item.id === automationId;
+  }) || {
+    id: automationId,
+    name: automationId,
+    category: 'Vendor Attachments / Gmail / Drive',
+    mainFunction: 'process'
+  };
+
+  const startedAt = new Date();
+  let endedAt = null;
+  let status = STATUS.ERROR;
+  let message = '';
+  let rawResponse = '';
+
+  try {
+    const parsed = processFn();
+    endedAt = new Date();
+    rawResponse = JSON.stringify(parsed);
+
+    if (parsed && parsed.status) {
+      status = normalizeStatus_(parsed.status);
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else if (parsed) {
+      status = STATUS.SUCCESS;
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else {
+      status = STATUS.SUCCESS;
+      message = 'Automation completed.';
+    }
+  } catch (err) {
+    endedAt = new Date();
+    status = STATUS.ERROR;
+    message = err && err.message ? err.message : String(err);
+  }
+
+  const durationMs = endedAt.getTime() - startedAt.getTime();
+
+  const runRecord = {
+    timestamp: endedAt,
+    automationId: automation.id,
+    automationName: automation.name,
+    category: automation.category,
+    mainFunction: automation.mainFunction,
+    status: status,
+    message: message,
+    startedAt: startedAt,
+    endedAt: endedAt,
+    durationMs: durationMs,
+    responseCode: '',
+    rawResponse: rawResponse
+  };
+
+  appendRunLog_(runRecord);
+  saveLatestStatus_(runRecord);
+
+  return {
+    status: status,
+    success: status !== STATUS.ERROR,
+    generatedAt: new Date().toISOString(),
+    sourceService: automationId,
+    action: 'process',
+    message: message || 'Intake process completed.',
+    result: {
+      id: automation.id,
+      name: automation.name,
+      category: automation.category,
+      lastRunTime: formatDateTime_(endedAt),
+      lastStatus: status,
+      lastMessage: message,
+      message: message,
+      durationMs: durationMs,
+      rawResponse: rawResponse
+    }
+  };
 }
 
 function saveIntakeOperationalLink(payload) {
@@ -1275,7 +1632,7 @@ function saveIntakeOperationalLink(payload) {
     };
   }
 
-  const appendResult = appendIntakeExternalLink_(context, {
+  const linkRecord = {
     claimId: claimId,
     claimNumber: String(linkPayload.claimNumber || '').trim(),
     jobNumber: String(linkPayload.jobNumber || '').trim(),
@@ -1289,7 +1646,14 @@ function saveIntakeOperationalLink(payload) {
     status: 'Active',
     isActive: true,
     notes: 'Operational link added from Intake Workspace.'
-  });
+  };
+
+  // Phase 11C: the External_Links WRITE is owned by Claims Service. Route it
+  // through the same flag-gated primary/shadow/fallback path as the intake
+  // pipeline. The duplicate-detection read above is unchanged; only the write
+  // moves. The direct writer (appendIntakeExternalLink_) is retained as the
+  // automatic rollback fallback.
+  const appendResult = saveIntakeOperationalLinkWrite_(context, linkRecord);
 
   recordIntakeOperationalLinkAudit_({
     claimId: claimId,
@@ -1310,8 +1674,119 @@ function saveIntakeOperationalLink(payload) {
     linkType: linkTypeConfig.storageValue,
     generatedAt: timestamp,
     rowNumber: appendResult.rowNumber,
+    primaryWriter: appendResult.primaryWriter,
+    claimsServiceResult: appendResult.claimsServiceResult,
+    claimsServiceShadowResult: appendResult.claimsServiceShadowResult,
+    warning: appendResult.warning,
     alertReconciliation: alertReconciliation
   };
+}
+
+/**
+ * Phase 11C write router for the Intake Workspace "add operational link"
+ * feature. Mirrors saveInsuranceIntakeExternalLinks_ (the intake pipeline):
+ *   - Primary mode: write via Claims Service; direct append only on failure.
+ *   - Shadow mode:  direct append, plus a non-creating Claims Service call for
+ *                   parity comparison.
+ *   - Neither:      direct append only.
+ * The direct writer appendIntakeExternalLink_ is retained as the automatic
+ * rollback fallback. Reuses the intake pipeline's flag readers and transport,
+ * which are global within the automation-dashboard Apps Script project.
+ */
+function saveIntakeOperationalLinkWrite_(context, linkRecord) {
+  const payload = buildClaimsServiceOperationalLinkPayload_(linkRecord);
+  const usePrimary = isClaimsServiceExternalLinksPrimaryEnabled_();
+  const useShadow = isClaimsServiceExternalLinksShadowEnabled_();
+
+  if (usePrimary) {
+    const claimsServiceResult = callClaimsServiceSaveIntakeExternalLinks_(payload);
+
+    if (claimsServiceResult && claimsServiceResult.ok) {
+      return {
+        rowNumber: getClaimsServiceOperationalLinkRowNumber_(claimsServiceResult),
+        primaryWriter: 'claims-service',
+        claimsServiceResult: claimsServiceResult
+      };
+    }
+
+    const fallback = appendIntakeExternalLink_(context, linkRecord);
+    fallback.primaryWriter = 'direct-fallback';
+    fallback.claimsServiceResult = claimsServiceResult;
+    fallback.warning = 'Claims Service operational-link write failed; direct fallback was used.';
+    return fallback;
+  }
+
+  const directResult = appendIntakeExternalLink_(context, linkRecord);
+  directResult.primaryWriter = 'direct';
+
+  if (useShadow) {
+    const shadowPayload = Object.assign({}, payload, {
+      shadowMode: true,
+      allowCreate: false
+    });
+    directResult.claimsServiceShadowResult = buildClaimsServiceShadowSummary_(
+      callClaimsServiceSaveIntakeExternalLinks_(shadowPayload)
+    );
+  }
+
+  return directResult;
+}
+
+/**
+ * Builds the Claims Service saveIntakeExternalLinks payload for a single
+ * operational link. Uses the same field names as the intake pipeline's
+ * buildClaimsServiceExternalLinksPayload_ so the request contract is identical,
+ * and applies the same job-number fallback guard (isRealIntakeClaimNumber_).
+ */
+function buildClaimsServiceOperationalLinkPayload_(linkRecord) {
+  const claimId = String(linkRecord && linkRecord.claimId || '').trim();
+  const jobNumber = String(linkRecord && linkRecord.jobNumber || '').trim();
+  const rawClaimNumber = String(linkRecord && linkRecord.claimNumber || '').trim();
+  const claimNumber = isRealIntakeClaimNumber_(rawClaimNumber, jobNumber) ? rawClaimNumber : '';
+  const url = String(linkRecord && linkRecord.url || '').trim();
+  const linkTypeId = String(linkRecord && linkRecord.linkTypeId || '').trim().toLowerCase();
+
+  const payload = {
+    claimId: claimId,
+    Claim_ID: claimId,
+    'Claim ID': claimId,
+    jobNumber: jobNumber,
+    Job_Number: jobNumber,
+    'Job Number': jobNumber,
+    claimNumber: claimNumber,
+    Claim_Number: claimNumber,
+    'Claim Number': claimNumber,
+    source: 'Intake Workspace',
+    Source: 'Intake Workspace'
+  };
+
+  if (linkTypeId === 'fusion') {
+    payload.fusionUrl = url;
+  } else if (linkTypeId === 'xact') {
+    payload.xactAnalysis = url;
+  } else if (linkTypeId === 'claimx') {
+    payload.claimX = url;
+  } else {
+    payload.otherLinks = url;
+  }
+
+  return payload;
+}
+
+/**
+ * Best-effort extraction of the written sheet row number from a Claims Service
+ * saveIntakeExternalLinks response, for parity with the direct append return
+ * shape. Null is acceptable — the UI only requires success.
+ */
+function getClaimsServiceOperationalLinkRowNumber_(claimsServiceResult) {
+  const response = claimsServiceResult && claimsServiceResult.response;
+  const data = response && (response.data || response.result || response);
+
+  if (data && typeof data.sheetRowNumber !== 'undefined' && data.sheetRowNumber !== null) {
+    return data.sheetRowNumber;
+  }
+
+  return null;
 }
 
 function reconcileClaimAlertsAfterIntakeLinkSave_(claimId) {
@@ -1362,6 +1837,56 @@ function buildIntakeRecentlyProcessedClaims_(visibilityItems) {
         resolvedLinkTypes: item.resolvedLinkTypes || []
       };
     });
+}
+
+/**
+ * Phase 11B — In-process Insurance Intake adapter.
+ *
+ * Calls the relocated IntakeModule_* functions directly inside this project
+ * instead of making an HTTP request to the standalone insurance-intake web app.
+ *
+ * This returns the SAME object the module functions return, which is exactly
+ * what fetchIntakeServiceJson_ used to return after JSON.parse of the web-app
+ * response body. Downstream parsing in getIntakeWorkspaceSummary is therefore
+ * unchanged. On any error it mirrors fetchIntakeServiceJson_'s failure envelope
+ * so callers behave identically to the old HTTP-failure path.
+ *
+ * Scope note: only the actions the Intake Workspace itself uses are wired here.
+ * Retry actions that still route through the generic automation grid /
+ * runAutomation() are intentionally NOT internalized in Phase 11B (see the
+ * Deferred Cross-Workspace Automation Actions report section).
+ */
+function callIntakeModuleAction_(action, params) {
+  try {
+    switch (action) {
+      case 'queueHealth':
+        return getQueueHealth();
+      case 'queueHealthInsuranceIntake':
+        return getInsuranceIntakeQueueHealth();
+      case 'diagnostics':
+        return getInsuranceIntakeDiagnostics();
+      case 'inspectPendingClaimFolders':
+        return inspectPendingClaimFolders();
+      case 'process':
+        return processInsuranceIntake();
+      default:
+        return {
+          status: 'Error',
+          success: false,
+          message: 'Unknown intake module action: ' + action,
+          action: action,
+          generatedAt: new Date().toISOString()
+        };
+    }
+  } catch (err) {
+    return {
+      status: 'Error',
+      success: false,
+      message: err && err.message ? err.message : String(err),
+      action: action,
+      generatedAt: new Date().toISOString()
+    };
+  }
 }
 
 function fetchIntakeServiceJson_(action, params) {
@@ -3001,6 +3526,22 @@ function buildIntakeWorkspaceActions_() {
       endpointAction: 'process',
       enabled: true,
       confirmation: 'This runs the existing insurance-intake-automation process endpoint. It may create Todoist tasks, Calendar drafts, and source-service label updates.'
+    },
+    {
+      id: 'run-asbestos-intake',
+      label: 'Run Asbestos Intake',
+      kind: 'process',
+      endpointAction: 'processAsbestos',
+      enabled: true,
+      confirmation: 'This runs the Asbestos attachment intake process. It may copy attachments to the claim folder in Drive and update Gmail labels.'
+    },
+    {
+      id: 'run-itel-intake',
+      label: 'Run Itel Intake',
+      kind: 'process',
+      endpointAction: 'processItel',
+      enabled: true,
+      confirmation: 'This runs the Itel attachment intake process. It may copy attachments to the claim folder in Drive and update Gmail labels.'
     },
     {
       id: 'resolve-issue',

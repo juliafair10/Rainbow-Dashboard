@@ -18,7 +18,7 @@
 
     if (refreshButton) {
       refreshButton.addEventListener('click', function() {
-        loadIntakeWorkspaceSummary_();
+        loadIntakeWorkspaceSummary_(true);
       });
     }
 
@@ -120,8 +120,10 @@
     }
   }
 
-  function loadIntakeWorkspaceSummary_() {
-    setIntakeLoadingState_(true, 'Refreshing intake queue health...');
+  function loadIntakeWorkspaceSummary_(forceRefresh) {
+    setIntakeLoadingState_(true, forceRefresh
+      ? 'Refreshing intake queue health...'
+      : 'Loading intake workspace...');
 
     google.script.run
       .withSuccessHandler(function(payload) {
@@ -133,7 +135,7 @@
         setIntakeLoadingState_(false, '');
         renderIntakeWorkspaceError_(error && error.message ? error.message : String(error || 'Intake workspace failed to load.'));
       })
-      .getIntakeWorkspaceSummary();
+      .getIntakeWorkspaceSummary(forceRefresh ? { forceRefresh: true } : {});
   }
 
   function runIntakeProcess_() {
@@ -159,7 +161,7 @@
             : 'Intake process completed.';
         }
 
-        loadIntakeWorkspaceSummary_();
+        loadIntakeWorkspaceSummary_(true);
       })
       .withFailureHandler(function(error) {
         setIntakeLoadingState_(false, '');
@@ -175,13 +177,58 @@
     }
 
     if (actionId === 'refresh-queue-health') {
-      loadIntakeWorkspaceSummary_();
+      loadIntakeWorkspaceSummary_(true);
       return;
     }
 
     if (actionId === 'run-intake') {
       runIntakeProcess_();
+      return;
     }
+
+    if (actionId === 'run-asbestos-intake') {
+      runIntakeVendorProcess_('run-asbestos-intake', 'runAsbestosWorkspaceProcess');
+      return;
+    }
+
+    if (actionId === 'run-itel-intake') {
+      runIntakeVendorProcess_('run-itel-intake', 'runItelWorkspaceProcess');
+    }
+  }
+
+  // Phase 11B: run an Asbestos/Itel intake workflow in-process. Mirrors
+  // runIntakeProcess_ (confirm → run → reload) but calls the named server
+  // function for the vendor workflow.
+  function runIntakeVendorProcess_(actionId, serverFunctionName) {
+    const action = intakeWorkspacePayload
+      && intakeWorkspacePayload.availableActions
+      && intakeWorkspacePayload.availableActions.find(function(item) { return item.id === actionId; });
+    const message = action && action.confirmation
+      ? action.confirmation
+      : 'This runs the intake process. It may copy attachments to Drive and update Gmail labels.';
+
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    setIntakeLoadingState_(true, 'Running intake process...');
+
+    google.script.run
+      .withSuccessHandler(function(response) {
+        const statusLine = document.getElementById('intakeStatusLine');
+        if (statusLine) {
+          statusLine.textContent = response && response.message
+            ? response.message
+            : 'Intake process completed.';
+        }
+
+        loadIntakeWorkspaceSummary_(true);
+      })
+      .withFailureHandler(function(error) {
+        setIntakeLoadingState_(false, '');
+        renderIntakeWorkspaceError_(error && error.message ? error.message : String(error || 'Run failed.'));
+      })
+      [serverFunctionName]();
   }
 
   function handleIntakeAuditAction_(button) {
