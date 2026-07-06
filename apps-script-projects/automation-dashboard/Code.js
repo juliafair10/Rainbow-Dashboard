@@ -4063,6 +4063,132 @@ function normalizeQueueHealthToDashboardStatus_(health) {
   return STATUS.SUCCESS;
 }
 
+/**
+ * Phase 11D — intake automations that can run in-process on the dashboard,
+ * removing the operational dependency on the standalone insurance-intake web
+ * app. Each value is a thin wrapper around a relocated module function.
+ * setup-retry-triggers / delete-retry-triggers are intentionally NOT listed:
+ * the scheduled retry triggers remain on the standalone project for now to
+ * avoid creating duplicate triggers (scheduler retirement is deferred to 11E).
+ */
+var INTERNAL_INTAKE_AUTOMATION_RUNNERS = {
+  'insurance-intake-automation': function () { return processInsuranceIntake(); },
+  'asbestos-attachment-intake':  function () { return processAsbestosAttachments(); },
+  'itel-attachment-intake':      function () { return processItelAttachments(); },
+  'retry-insurance-intake':      function () { return scheduledRetryInsuranceIntake(); },
+  'retry-asbestos-intake':       function () { return scheduledRetryAsbestos(); },
+  'retry-itel-intake':           function () { return scheduledRetryItel(); }
+};
+
+/**
+ * Rollback flag for the Phase 11D internal intake runners. Defaults to true
+ * because Phase 11B (in-process intake) is verified live. Set the Script
+ * Property USE_INTERNAL_INTAKE_MODULE='false' to route intake automations back
+ * through the standalone web app via runAutomation().
+ */
+function isInternalIntakeModuleEnabled_() {
+  var override = String(PropertiesService.getScriptProperties().getProperty('USE_INTERNAL_INTAKE_MODULE') || '').trim().toLowerCase();
+  if (override === 'false') return false;
+  if (override === 'true') return true;
+  return true;
+}
+
+/**
+ * Phase 11D — dashboard-facing automation dispatch. Intake automations with an
+ * internal runner (and the flag on) run in-process; everything else, and any
+ * intake automation when the flag is off, passes straight through to the shared
+ * runAutomation() unchanged. The shared runAutomation() is NOT modified.
+ * On an unexpected throw from the internal path, it falls back to the standalone
+ * web app automatically so a card never dead-ends.
+ *
+ * This is the single entry point the dashboard grid calls (Index.html).
+ */
+function runDashboardAutomation(automationId) {
+  var runner = INTERNAL_INTAKE_AUTOMATION_RUNNERS[automationId];
+
+  if (runner && isInternalIntakeModuleEnabled_()) {
+    try {
+      return runInternalIntakeAutomation_(automationId, runner);
+    } catch (internalErr) {
+      Logger.log('runDashboardAutomation: internal intake runner failed for ' + automationId +
+        ' — falling back to standalone. ' + (internalErr && internalErr.message ? internalErr.message : internalErr));
+      return runAutomation(automationId);
+    }
+  }
+
+  return runAutomation(automationId);
+}
+
+/**
+ * Phase 11D — in-process runner for an intake automation grid card. Mirrors the
+ * shape and Automation Run Log behavior of runAutomation() (and of the Phase 11B
+ * runIntakeModuleProcess_) so the grid renders and logs identically.
+ */
+function runInternalIntakeAutomation_(automationId, processFn) {
+  var automation = DASHBOARD_CONFIG.automations.find(function (item) {
+    return item.id === automationId;
+  }) || { id: automationId, name: automationId, category: '', mainFunction: '' };
+
+  var startedAt = new Date();
+  var endedAt = null;
+  var status = STATUS.ERROR;
+  var message = '';
+  var rawResponse = '';
+
+  try {
+    var parsed = processFn();
+    endedAt = new Date();
+    rawResponse = JSON.stringify(parsed);
+
+    if (parsed && parsed.status) {
+      status = normalizeStatus_(parsed.status);
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else if (parsed) {
+      status = STATUS.SUCCESS;
+      message = buildAutomationResultMessage_(automation, parsed);
+    } else {
+      status = STATUS.SUCCESS;
+      message = 'Automation completed.';
+    }
+  } catch (err) {
+    endedAt = new Date();
+    status = STATUS.ERROR;
+    message = err && err.message ? err.message : String(err);
+  }
+
+  var durationMs = endedAt.getTime() - startedAt.getTime();
+
+  var runRecord = {
+    timestamp: endedAt,
+    automationId: automation.id,
+    automationName: automation.name,
+    category: automation.category,
+    mainFunction: automation.mainFunction,
+    status: status,
+    message: message,
+    startedAt: startedAt,
+    endedAt: endedAt,
+    durationMs: durationMs,
+    responseCode: '',
+    rawResponse: rawResponse
+  };
+
+  appendRunLog_(runRecord);
+  saveLatestStatus_(runRecord);
+
+  return {
+    id: automation.id,
+    name: automation.name,
+    category: automation.category,
+    lastRunTime: formatDateTime_(endedAt),
+    lastStatus: status,
+    lastMessage: message,
+    message: message,
+    durationMs: durationMs,
+    rawResponse: rawResponse
+  };
+}
+
 function runAutomation(automationId) {
   const automation = DASHBOARD_CONFIG.automations.find(function (item) {
     return item.id === automationId;

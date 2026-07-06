@@ -16,6 +16,7 @@ function parseInsuranceIntakeThread(thread) {
   messages.forEach(function(message) {
     bodyParts.push(message.getSubject() || '');
     bodyParts.push(message.getPlainBody() || '');
+    bodyParts.push(extractInsuranceLinksFromHtml_(message.getBody() || '').join('\n'));
   });
 
   const fullText = normalizeInsuranceIntakeText_(bodyParts.join('\n'));
@@ -72,6 +73,7 @@ function parseInsuranceIntakeThread(thread) {
     carrierAbbrev: getInsuranceCarrierAbbrev_(carrierName),
     client: extractInsuranceField_(fullText, /Client:\s*([^\n]+)/i),
     platformLinks: platformLinks,
+    fusionUrl: getInsurancePlatformLinkUrl_(platformLinks, 'Fusion'),
     xactAnalysisUrl: getInsurancePlatformLinkUrl_(platformLinks, 'XactAnalysis'),
     symbilityUrl: getInsurancePlatformLinkUrl_(platformLinks, 'Symbility'),
     source: 'parseInsuranceIntakeThread'
@@ -394,11 +396,20 @@ function cleanExtractedInsuranceValue_(value) {
 function extractInsurancePlatformLinks_(text) {
   const sourceText = String(text || '');
   const links = [];
-  const urlMatches = sourceText.match(/https?:\/\/\S+/gi) || [];
+  const urlMatches = sourceText.match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  const htmlHrefMatches = extractInsuranceLinksFromHtml_(sourceText);
+  htmlHrefMatches.forEach(function(url) {
+    urlMatches.push(url);
+  });
 
   urlMatches.forEach(function(rawUrl) {
     const cleanedUrl = cleanInsurancePlatformUrl_(rawUrl);
     const lowerUrl = cleanedUrl.toLowerCase();
+
+    if (lowerUrl.indexOf('fusion-ngs.net') !== -1 || lowerUrl.indexOf('fusionngs.net') !== -1) {
+      addInsurancePlatformLinksFromMatches_(links, 'Fusion', [cleanedUrl]);
+      return;
+    }
 
     if (lowerUrl.indexOf('symbility.net') !== -1) {
       addInsurancePlatformLinksFromMatches_(links, 'Symbility', [cleanedUrl]);
@@ -407,6 +418,7 @@ function extractInsurancePlatformLinks_(text) {
 
     if (lowerUrl.indexOf('xactanalysis') !== -1 || lowerUrl.indexOf('xactware') !== -1) {
       addInsurancePlatformLinksFromMatches_(links, 'XactAnalysis', [cleanedUrl]);
+      return;
     }
   });
 
@@ -429,9 +441,38 @@ function addInsurancePlatformLinksFromMatches_(links, linkType, matches) {
   });
 }
 
+function extractInsuranceLinksFromHtml_(html) {
+  const sourceHtml = String(html || '');
+  const links = [];
+  let match;
+  const hrefPattern = /href\s*=\s*["']([^"']+)["']/gi;
+
+  while ((match = hrefPattern.exec(sourceHtml)) !== null) {
+    if (match && match[1]) {
+      links.push(decodeInsuranceHtmlUrl_(match[1]));
+    }
+  }
+
+  return links.filter(function(url) {
+    return /^https?:\/\//i.test(url);
+  });
+}
+
+function decodeInsuranceHtmlUrl_(url) {
+  return String(url || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&#38;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 function cleanInsurancePlatformUrl_(url) {
   return String(url || '')
     .replace(/&amp;/g, '&')
+    .replace(/&#38;/g, '&')
+    .replace(/["'<>].*$/g, '')
     .replace(/[\]\[),.;]+$/g, '')
     .trim();
 }
@@ -441,6 +482,17 @@ function dedupeInsurancePlatformLinks_(links) {
 
   return (links || []).filter(function(link) {
     const key = String(link.linkType || '').toLowerCase() + '|' + String(link.url || '').toLowerCase();
+
+    const sameTypeCleanerUrlExists = (links || []).some(function(otherLink) {
+      return otherLink !== link &&
+        String(otherLink.linkType || '').toLowerCase() === String(link.linkType || '').toLowerCase() &&
+        String(link.url || '').toLowerCase().indexOf(String(otherLink.url || '').toLowerCase()) === 0 &&
+        String(otherLink.url || '').length < String(link.url || '').length;
+    });
+
+    if (sameTypeCleanerUrlExists) {
+      return false;
+    }
 
     if (!link.url || seen[key]) {
       return false;
@@ -458,4 +510,62 @@ function getInsurancePlatformLinkUrl_(links, linkType) {
   });
 
   return match ? match.url : '';
+}
+
+function testExtractInsurancePlatformLinks_fusion() {
+  const text = 'Fusion link: https://fusion-ngs.net/Enterprise/Module/Job/JobSlideBoard.aspx?JobNumber=26A-0043-WTR&JobId=2003069\n' +
+    'Xact link: https://www.xactanalysis.com/apps/cxa/detail.jsp?mfn=TEST#_assignment\n' +
+    'Symbility link: https://www.symbility.net/ux/site/#/claims/TEST';
+
+  const links = extractInsurancePlatformLinks_(text);
+  const result = {
+    links: links,
+    fusionUrl: getInsurancePlatformLinkUrl_(links, 'Fusion'),
+    xactAnalysisUrl: getInsurancePlatformLinkUrl_(links, 'XactAnalysis'),
+    symbilityUrl: getInsurancePlatformLinkUrl_(links, 'Symbility'),
+    passed: !!(
+      getInsurancePlatformLinkUrl_(links, 'Fusion') &&
+      getInsurancePlatformLinkUrl_(links, 'XactAnalysis') &&
+      getInsurancePlatformLinkUrl_(links, 'Symbility')
+    )
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testParseLatestInsuranceIntakeThread() {
+  const threads = GmailApp.search(CONFIG.gmailQuery, 0, 1);
+
+  if (!threads.length) {
+    Logger.log('No intake threads found for query: ' + CONFIG.gmailQuery);
+    return {
+      success: false,
+      message: 'No intake threads found.',
+      query: CONFIG.gmailQuery
+    };
+  }
+
+  const parsed = parseInsuranceIntakeThread(threads[0]);
+  Logger.log(JSON.stringify(parsed, null, 2));
+  return parsed;
+}
+
+function testExtractInsurancePlatformLinks_fromHtml() {
+  const html = '<a href="https://www.xactanalysis.com/apps/cxa/detail.jsp?mfn=HTMLTEST&amp;assignment=1">Open Xact</a>' +
+    '<a href="https://fusion-ngs.net/Enterprise/Module/Job/JobSlideBoard.aspx?JobNumber=26A-0043-WTR&amp;JobId=2003069">Open Fusion</a>';
+
+  const links = extractInsurancePlatformLinks_(html);
+  const result = {
+    links: links,
+    fusionUrl: getInsurancePlatformLinkUrl_(links, 'Fusion'),
+    xactAnalysisUrl: getInsurancePlatformLinkUrl_(links, 'XactAnalysis'),
+    passed: !!(
+      getInsurancePlatformLinkUrl_(links, 'Fusion') &&
+      getInsurancePlatformLinkUrl_(links, 'XactAnalysis')
+    )
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }

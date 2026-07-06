@@ -1,18 +1,78 @@
 
 
+
+var CLAIMS_WORKSPACE_SLOW_MS = 750;
+
+function createClaimsWorkspaceTimer_() {
+  return {
+    startedAt: Date.now(),
+    marks: {}
+  };
+}
+
+function markClaimsWorkspaceTiming_(timer, name, startedAt) {
+  if (!timer || !name || !startedAt) {
+    return;
+  }
+
+  timer.marks[name] = Date.now() - startedAt;
+}
+
+function logClaimsWorkspaceTimingIfSlow_(label, timer, context) {
+  if (!timer) {
+    return;
+  }
+
+  var totalMs = Date.now() - timer.startedAt;
+
+  if (totalMs < CLAIMS_WORKSPACE_SLOW_MS) {
+    return;
+  }
+
+  var parts = [
+    'CLAIMS_WORKSPACE_SLOW',
+    'label=' + label,
+    'total=' + totalMs + 'ms'
+  ];
+
+  context = context || {};
+
+  Object.keys(context).forEach(function(key) {
+    if (context[key] !== null && context[key] !== undefined && context[key] !== '') {
+      parts.push(key + '=' + context[key]);
+    }
+  });
+
+  Object.keys(timer.marks || {}).forEach(function(key) {
+    parts.push(key + '=' + timer.marks[key] + 'ms');
+  });
+
+  Logger.log(parts.join(' '));
+}
+
+
 function getClaimsList(lensId, options) {
+  var timer = createClaimsWorkspaceTimer_();
+  var phaseStart;
+
   options = normalizeClaimsWorkspaceOptions_(lensId, options);
   lensId = options.lensId || 'all';
 
+  phaseStart = Date.now();
   var claims = ClaimsLensService.getClaimsForLens(lensId, options);
+  markClaimsWorkspaceTiming_(timer, 'lensRead', phaseStart);
 
+  phaseStart = Date.now();
   claims = claims.map(function(claim) {
     return enrichClaimWorkspaceSummary_(claim);
   });
+  markClaimsWorkspaceTiming_(timer, 'enrichment', phaseStart);
 
+  phaseStart = Date.now();
   var stream = ClaimsStreamService.buildClaimsStream(claims, lensId, options);
+  markClaimsWorkspaceTiming_(timer, 'stream', phaseStart);
 
-  return {
+  var payload = {
     lensId: lensId,
     lensName: getClaimsLensName_(lensId),
     generatedAt: new Date().toISOString(),
@@ -23,14 +83,33 @@ function getClaimsList(lensId, options) {
     sortApplied: stream.sortApplied,
     warnings: stream.warnings
   };
+
+  logClaimsWorkspaceTimingIfSlow_('getClaimsList', timer, {
+    lensId: lensId,
+    claimCount: claims.length,
+    groupCount: stream.groups ? stream.groups.length : 0
+  });
+
+  return payload;
 }
 
 function getClaimsWorkspace(options) {
+  var timer = createClaimsWorkspaceTimer_();
+  var phaseStart;
   options = normalizeClaimsWorkspaceOptions_(options && (options.lensId || options.lens), options);
+  phaseStart = Date.now();
   var claimsList = getClaimsList(options.lensId || 'all', options);
+  markClaimsWorkspaceTiming_(timer, 'claimsList', phaseStart);
+
+  phaseStart = Date.now();
   var lensCounts = ClaimsLensService.getClaimsLensCounts
     ? ClaimsLensService.getClaimsLensCounts(options)
     : {};
+  markClaimsWorkspaceTiming_(timer, 'lensCounts', phaseStart);
+
+  phaseStart = Date.now();
+  var queueIntelligence = buildClaimsWorkspaceQueueIntelligence_(claimsList, lensCounts, options);
+  markClaimsWorkspaceTiming_(timer, 'queueIntelligence', phaseStart);
 
   var workspacePayload = {
     generatedAt: new Date().toISOString(),
@@ -39,13 +118,21 @@ function getClaimsWorkspace(options) {
     routeContext: buildClaimsWorkspaceRouteContext_(options),
     availableLenses: buildClaimsWorkspaceAvailableLenses_(lensCounts),
     lensCounts: lensCounts,
-    queueIntelligence: buildClaimsWorkspaceQueueIntelligence_(claimsList, lensCounts, options),
+    queueIntelligence: queueIntelligence,
     claimsList: claimsList
   };
 
+  phaseStart = Date.now();
   workspacePayload.claimsOperationalAwareness = (typeof buildClaimsOperationalAwareness_ === 'function')
     ? buildClaimsOperationalAwareness_(workspacePayload)
     : null;
+  markClaimsWorkspaceTiming_(timer, 'operationalAwareness', phaseStart);
+
+  logClaimsWorkspaceTimingIfSlow_('getClaimsWorkspace', timer, {
+    lensId: workspacePayload.activeLensId,
+    totalCount: claimsList.totalCount,
+    groupCount: claimsList.groups ? claimsList.groups.length : 0
+  });
 
   return workspacePayload;
 }

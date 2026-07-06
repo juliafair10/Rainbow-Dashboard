@@ -1,5 +1,3 @@
-
-
 function getClaimsForLens(lensId, options) {
   lensId = lensId || 'all';
   options = options || {};
@@ -52,18 +50,46 @@ function getClaimsLensCounts(options) {
 
   var allClaims = ClaimsQueryService.getAllClaimSummaries(options);
   var routeFilteredClaims = filterClaimsByWorkspaceRoute_(allClaims, options);
-  var activeClaims = routeFilteredClaims.filter(function(claim) {
-    return !isClosedClaim_(claim);
+
+  return getClaimsLensCountsFromClaims_(routeFilteredClaims);
+}
+
+function getClaimsLensCountsFromClaims_(claims) {
+  var counts = {
+    all: 0,
+    needsAttention: 0,
+    waitingOnInsurance: 0,
+    missingEoj: 0,
+    paidMonitoring: 0,
+    closed: 0
+  };
+
+  (claims || []).forEach(function(claim) {
+    if (isClosedClaim_(claim)) {
+      counts.closed++;
+      return;
+    }
+
+    counts.all++;
+
+    if (claimNeedsAttention_(claim)) {
+      counts.needsAttention++;
+    }
+
+    if (claimWaitingOnInsurance_(claim)) {
+      counts.waitingOnInsurance++;
+    }
+
+    if (claimMissingEoj_(claim)) {
+      counts.missingEoj++;
+    }
+
+    if (claimPaidMonitoring_(claim)) {
+      counts.paidMonitoring++;
+    }
   });
 
-  return {
-    all: activeClaims.length,
-    needsAttention: filterNeedsAttention_(activeClaims).length,
-    waitingOnInsurance: filterWaitingOnInsurance_(activeClaims).length,
-    missingEoj: filterMissingEoj_(activeClaims).length,
-    paidMonitoring: filterPaidMonitoring_(activeClaims).length,
-    closed: filterClosedClaims_(routeFilteredClaims).length
-  };
+  return counts;
 }
 
 function filterClaimsByWorkspaceRoute_(claims, options) {
@@ -203,32 +229,44 @@ function claimNeedsAttention_(claim) {
 
 function filterWaitingOnInsurance_(claims) {
   return claims.filter(function(claim) {
-    return (claim.activeConditions || []).some(function(condition) {
-      var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
+    return claimWaitingOnInsurance_(claim);
+  });
+}
 
-      return value.indexOf('coverage pending') !== -1 ||
-             value.indexOf('estimate under review') !== -1 ||
-             value.indexOf('supplement under review') !== -1 ||
-             value.indexOf('waiting on payment') !== -1;
-    });
+function claimWaitingOnInsurance_(claim) {
+  return (claim.activeConditions || []).some(function(condition) {
+    var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
+
+    return value.indexOf('coverage pending') !== -1 ||
+           value.indexOf('estimate under review') !== -1 ||
+           value.indexOf('supplement under review') !== -1 ||
+           value.indexOf('waiting on payment') !== -1;
   });
 }
 
 function filterMissingEoj_(claims) {
   return claims.filter(function(claim) {
-    return containsAnyInList_(claim.activeAlerts || [], ['missing eoj']) ||
-      containsAnyInList_(claim.missingLinks || [], ['eoj']);
+    return claimMissingEoj_(claim);
   });
+}
+
+function claimMissingEoj_(claim) {
+  return containsAnyInList_(claim.activeAlerts || [], ['missing eoj']) ||
+    containsAnyInList_(claim.missingLinks || [], ['eoj']);
 }
 
 function filterPaidMonitoring_(claims) {
   return claims.filter(function(claim) {
-    return (claim.activeConditions || []).some(function(condition) {
-      var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
+    return claimPaidMonitoring_(claim);
+  });
+}
 
-      return value.indexOf('monitoring active') !== -1 ||
-             value.indexOf('monitoring') !== -1;
-    });
+function claimPaidMonitoring_(claim) {
+  return (claim.activeConditions || []).some(function(condition) {
+    var value = String(getClaimsRouteConditionValue_(condition)).toLowerCase();
+
+    return value.indexOf('monitoring active') !== -1 ||
+           value.indexOf('monitoring') !== -1;
   });
 }
 
@@ -370,6 +408,7 @@ function testClaimsLensCounts() {
 var ClaimsLensService = {
   getClaimsForLens: getClaimsForLens,
   getClaimsLensCounts: getClaimsLensCounts,
+  getClaimsLensCountsFromClaims_: getClaimsLensCountsFromClaims_,
   testClaimsLensSourceSignals: testClaimsLensSourceSignals,
   testClaimsLensCounts: testClaimsLensCounts
 };

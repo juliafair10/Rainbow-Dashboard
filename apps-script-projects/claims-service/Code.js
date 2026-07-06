@@ -168,6 +168,9 @@ function routeClaimServiceRequest_(e, method) {
       case 'attachExternalLink':
         return jsonResponse_(attachExternalLink(payload.claimId, payload.link || {}));
 
+      case 'saveIntakeExternalLinks':
+        return jsonResponse_(saveIntakeExternalLinks(payload));
+
       case 'processEojOutputs':
         return jsonResponse_(processEojOutputs(payload));
 

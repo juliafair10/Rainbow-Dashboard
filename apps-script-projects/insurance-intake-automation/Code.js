@@ -171,7 +171,10 @@ function getInsuranceIntakeDiagnostics() {
         needsReviewLabel: CONFIG.needsReviewLabel,
         duplicateLabel: CONFIG.duplicateLabel,
         claimFoundationSpreadsheetId: getInsuranceIntakeClaimFoundationSpreadsheetId_(),
-        hasClaimFoundationSpreadsheetId: !!getInsuranceIntakeClaimFoundationSpreadsheetId_()
+        hasClaimFoundationSpreadsheetId: !!getInsuranceIntakeClaimFoundationSpreadsheetId_(),
+        claimsServiceExternalLinksShadowMode: isClaimsServiceExternalLinksShadowEnabled_(),
+        claimsServiceExternalLinksPrimaryMode: isClaimsServiceExternalLinksPrimaryEnabled_(),
+        hasClaimsServiceWebAppUrl: !!getClaimsServiceWebAppUrl_()
       }
     }
   };
@@ -371,6 +374,11 @@ function processInsuranceIntake() {
           summary.warnings++;
         }
 
+        if (externalLinkResult.claimsServiceShadowResult && externalLinkResult.claimsServiceShadowResult.warning) {
+          itemResult.warnings.push(externalLinkResult.claimsServiceShadowResult.warning);
+          summary.warnings++;
+        }
+
         if (!sheetResult.success) {
           itemResult.status = 'sheet_update_failed';
           itemResult.errors.push(sheetResult.error);
@@ -486,6 +494,49 @@ function saveInsuranceIntakeExternalLinks_(claimData, folderResult) {
     };
   }
 
+  const claimsServicePayload = buildClaimsServiceExternalLinksPayload_(claimData, folderResult, linksToSave);
+  const useClaimsServicePrimary = isClaimsServiceExternalLinksPrimaryEnabled_();
+  const useClaimsServiceShadow = isClaimsServiceExternalLinksShadowEnabled_();
+
+  if (useClaimsServicePrimary) {
+    const claimsServiceResult = callClaimsServiceSaveIntakeExternalLinks_(claimsServicePayload);
+
+    if (claimsServiceResult && claimsServiceResult.ok) {
+      return {
+        status: 'Success',
+        success: true,
+        savedCount: getClaimsServiceSavedCount_(claimsServiceResult),
+        primaryWriter: 'claims-service',
+        claimsServiceResult: claimsServiceResult,
+        linksFound: linksToSave
+      };
+    }
+
+    const fallbackResult = saveInsuranceIntakeExternalLinksDirect_(claimData, linksToSave);
+    fallbackResult.primaryWriter = 'direct-fallback';
+    fallbackResult.claimsServiceFallbackReason = claimsServiceResult ? claimsServiceResult.error : 'Claims Service returned no result.';
+    fallbackResult.warning = (fallbackResult.warning ? fallbackResult.warning + ' ' : '') + 'Claims Service external-link write failed; direct fallback was used.';
+    fallbackResult.claimsServiceResult = claimsServiceResult;
+    return fallbackResult;
+  }
+
+  const directWriteResult = saveInsuranceIntakeExternalLinksDirect_(claimData, linksToSave);
+
+  if (useClaimsServiceShadow) {
+    const shadowPayload = Object.assign({}, claimsServicePayload, {
+      shadowMode: true,
+      allowCreate: false
+    });
+    const claimsServiceResult = callClaimsServiceSaveIntakeExternalLinks_(shadowPayload);
+    directWriteResult.primaryWriter = 'direct';
+    directWriteResult.claimsServiceShadowResult = buildClaimsServiceShadowSummary_(claimsServiceResult);
+    directWriteResult.claimsServiceShadowPayload = buildClaimsServiceShadowPayloadSummary_(shadowPayload);
+  }
+
+  return directWriteResult;
+}
+
+function saveInsuranceIntakeExternalLinksDirect_(claimData, linksToSave) {
   const spreadsheetId = getInsuranceIntakeClaimFoundationSpreadsheetId_();
 
   if (!spreadsheetId) {
@@ -530,6 +581,203 @@ function saveInsuranceIntakeExternalLinks_(claimData, folderResult) {
       linksFound: linksToSave
     };
   }
+}
+
+function buildClaimsServiceExternalLinksPayload_(claimData, folderResult, linksToSave) {
+  const claimId = String(claimData && claimData.claimId || '').trim();
+  const jobNumber = String(claimData && claimData.rainbowJobNumber || '').trim();
+  const claimNumber = String(claimData && claimData.claimNumber || '').trim();
+  const carrier = String(claimData && claimData.carrier || '').trim();
+
+  const payload = {
+    claimId: claimId,
+    Claim_ID: claimId,
+    'Claim ID': claimId,
+    jobNumber: jobNumber,
+    Job_Number: jobNumber,
+    'Job Number': jobNumber,
+    claimNumber: claimNumber,
+    Claim_Number: claimNumber,
+    'Claim Number': claimNumber,
+    carrier: carrier,
+    Carrier: carrier,
+    source: 'Insurance Intake',
+    Source: 'Insurance Intake',
+    driveFolderUrl: getInsuranceIntakeFolderUrl_(folderResult)
+  };
+
+  linksToSave.forEach(function(link) {
+    const normalizedType = String(link && link.linkType || '').trim().toLowerCase();
+    const url = String(link && link.url || '').trim();
+
+    if (!url) {
+      return;
+    }
+
+    if (normalizedType.indexOf('fusion') !== -1) {
+      payload.fusionUrl = url;
+    } else if (normalizedType.indexOf('xact') !== -1 || normalizedType === 'xa') {
+      payload.xactAnalysis = url;
+    } else if (normalizedType.indexOf('symbility') !== -1) {
+      payload.symbility = url;
+    } else if (normalizedType.indexOf('claimx') !== -1 || normalizedType.indexOf('claim x') !== -1) {
+      payload.claimX = url;
+    } else if (normalizedType.indexOf('drive') !== -1 || normalizedType.indexOf('folder') !== -1) {
+      payload.driveFolderUrl = url;
+    } else if (!payload.otherLinks) {
+      payload.otherLinks = url;
+    }
+  });
+
+  return payload;
+}
+
+function callClaimsServiceSaveIntakeExternalLinks_(payload) {
+  const serviceUrl = getClaimsServiceWebAppUrl_();
+
+  if (!serviceUrl) {
+    return {
+      ok: false,
+      statusCode: 0,
+      response: null,
+      error: 'Claims Service web app URL is not configured.'
+    };
+  }
+
+  try {
+    const response = UrlFetchApp.fetch(serviceUrl + '?action=saveIntakeExternalLinks', {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload || {}),
+      muteHttpExceptions: true
+    });
+
+    const statusCode = response.getResponseCode();
+    const text = response.getContentText() || '';
+    let parsed = null;
+
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch (parseError) {
+      return {
+        ok: false,
+        statusCode: statusCode,
+        responseText: text,
+        response: null,
+        error: 'Claims Service returned malformed JSON: ' + parseError.message
+      };
+    }
+
+    const ok = statusCode >= 200 && statusCode < 300 && !!parsed && parsed.success !== false;
+
+    return {
+      ok: ok,
+      statusCode: statusCode,
+      response: parsed,
+      error: ok ? '' : (parsed && parsed.message ? parsed.message : 'Claims Service returned HTTP ' + statusCode)
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      statusCode: 0,
+      response: null,
+      error: err.message
+    };
+  }
+}
+
+function getClaimsServiceWebAppUrl_() {
+  const props = PropertiesService.getScriptProperties();
+  const configuredPropertyName = CONFIG.claimsService && CONFIG.claimsService.webAppUrlProperty
+    ? CONFIG.claimsService.webAppUrlProperty
+    : 'CLAIMS_SERVICE_WEB_APP_URL';
+
+  return String(props.getProperty(configuredPropertyName) ||
+    props.getProperty('RAINBOW_CLAIMS_SERVICE_WEB_APP_URL') ||
+    (CONFIG.claimsService && CONFIG.claimsService.fallbackWebAppUrl ? CONFIG.claimsService.fallbackWebAppUrl : '') ||
+    '').trim();
+}
+
+function isClaimsServiceExternalLinksShadowEnabled_() {
+  if (!CONFIG.claimsService || CONFIG.claimsService.enabled === false) {
+    return false;
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const override = String(props.getProperty('CLAIMS_SERVICE_EXTERNAL_LINKS_SHADOW_MODE') || '').trim().toLowerCase();
+
+  if (override === 'true') return true;
+  if (override === 'false') return false;
+
+  return CONFIG.claimsService.externalLinksShadowMode === true;
+}
+
+function isClaimsServiceExternalLinksPrimaryEnabled_() {
+  if (!CONFIG.claimsService || CONFIG.claimsService.enabled === false) {
+    return false;
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const override = String(props.getProperty('USE_CLAIMS_SERVICE_EXTERNAL_LINKS') || '').trim().toLowerCase();
+
+  if (override === 'true') return true;
+  if (override === 'false') return false;
+
+  return CONFIG.claimsService.externalLinksPrimaryMode === true;
+}
+
+function buildClaimsServiceShadowSummary_(claimsServiceResult) {
+  if (!claimsServiceResult) {
+    return {
+      ok: false,
+      warning: 'Claims Service shadow write returned no result.'
+    };
+  }
+
+  const summary = {
+    ok: claimsServiceResult.ok,
+    statusCode: claimsServiceResult.statusCode,
+    error: claimsServiceResult.error || '',
+    responseStatus: claimsServiceResult.response && claimsServiceResult.response.status,
+    responseSuccess: claimsServiceResult.response && claimsServiceResult.response.success,
+    message: claimsServiceResult.response && claimsServiceResult.response.message,
+    errors: claimsServiceResult.response && claimsServiceResult.response.errors,
+    data: claimsServiceResult.response && claimsServiceResult.response.data,
+    fullResponse: claimsServiceResult.response
+  };
+
+  if (!claimsServiceResult.ok) {
+    summary.warning = 'Claims Service shadow external-link write failed: ' + (claimsServiceResult.error || 'Unknown error');
+  }
+
+  return summary;
+}
+
+function buildClaimsServiceShadowPayloadSummary_(payload) {
+  return {
+    claimId: payload && payload.claimId,
+    jobNumber: payload && payload.jobNumber,
+    claimNumber: payload && payload.claimNumber,
+    carrier: payload && payload.carrier,
+    driveFolderUrl: payload && payload.driveFolderUrl,
+    fusionUrl: payload && payload.fusionUrl,
+    xactAnalysis: payload && payload.xactAnalysis,
+    symbility: payload && payload.symbility,
+    claimX: payload && payload.claimX,
+    otherLinks: payload && payload.otherLinks,
+    shadowMode: payload && payload.shadowMode,
+    allowCreate: payload && payload.allowCreate
+  };
+}
+
+function getClaimsServiceSavedCount_(claimsServiceResult) {
+  const data = claimsServiceResult && claimsServiceResult.response && claimsServiceResult.response.data;
+
+  if (!data) {
+    return 0;
+  }
+
+  return Number(data.createdCount || 0) + Number(data.updatedCount || 0);
 }
 
 function buildInsuranceIntakeExternalLinks_(claimData, folderResult) {
@@ -731,10 +979,23 @@ function findInsuranceIntakeExternalLinkRow_(values, columnMap, identity) {
     const row = values[rowIndex];
     const rowClaimId = columnMap.claimId !== -1 ? normalizeInsuranceIntakeLinkKey_(row[columnMap.claimId]) : '';
     const rowJobNumber = columnMap.jobNumber !== -1 ? normalizeInsuranceIntakeLinkKey_(row[columnMap.jobNumber]) : '';
+    const rowClaimNumber = columnMap.claimNumber !== -1 ? normalizeInsuranceIntakeLinkKey_(row[columnMap.claimNumber]) : '';
 
-    if ((claimIdKey && rowClaimId === claimIdKey) ||
-        (jobNumberKey && rowJobNumber === jobNumberKey) ||
-        (claimNumberKey && rowJobNumber === claimNumberKey)) {
+    if (claimIdKey && rowClaimId && rowClaimId === claimIdKey) {
+      return rowIndex + 1;
+    }
+
+    if (jobNumberKey && rowJobNumber && rowJobNumber === jobNumberKey) {
+      return rowIndex + 1;
+    }
+
+    if (claimNumberKey && rowClaimNumber && rowClaimNumber === claimNumberKey) {
+      return rowIndex + 1;
+    }
+
+    // Legacy fallback: before Claim Number was added, some rows stored claim
+    // numbers in Job Number. Keep this compatibility during migration.
+    if (claimNumberKey && rowJobNumber && rowJobNumber === claimNumberKey) {
       return rowIndex + 1;
     }
   }
@@ -794,6 +1055,75 @@ function testSaveInsuranceIntakeExternalLinks() {
   const result = saveInsuranceIntakeExternalLinks_(claimData, folderResult);
   Logger.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+function testClaimsServiceSaveIntakeExternalLinksBridge() {
+  const claimData = {
+    claimId: 'CLM-TEST-INTAKE-BRIDGE',
+    rainbowJobNumber: 'TEST-JOB-INTAKE-BRIDGE',
+    claimNumber: 'TEST-CLAIM-INTAKE-BRIDGE',
+    carrier: 'Test Carrier',
+    platformLinks: [
+      {
+        linkType: 'Fusion',
+        url: 'https://example.com/fusion/intake-bridge'
+      },
+      {
+        linkType: 'XactAnalysis',
+        url: 'https://example.com/xact/intake-bridge'
+      }
+    ]
+  };
+
+  const folderResult = {
+    success: true,
+    folderUrl: 'https://drive.google.com/drive/folders/intake-bridge'
+  };
+
+  const linksToSave = buildInsuranceIntakeExternalLinks_(claimData, folderResult);
+  const payload = buildClaimsServiceExternalLinksPayload_(claimData, folderResult, linksToSave);
+  const result = callClaimsServiceSaveIntakeExternalLinks_(payload);
+
+  Logger.log(JSON.stringify({
+    payload: payload,
+    result: result
+  }, null, 2));
+
+  return {
+    status: result.ok ? 'Success' : 'Error',
+    success: result.ok,
+    payload: payload,
+    result: result
+  };
+}
+
+function testInsuranceIntakeExternalLinksShadowOrder() {
+  const claimData = {
+    claimId: '',
+    rainbowJobNumber: '',
+    claimNumber: 'TEST-CLAIM-SHADOW-ORDER-' + new Date().getTime(),
+    carrier: 'Test Carrier',
+    platformLinks: []
+  };
+
+  const folderResult = {
+    success: true,
+    folderUrl: 'https://drive.google.com/drive/folders/shadow-order'
+  };
+
+  const linksToSave = buildInsuranceIntakeExternalLinks_(claimData, folderResult);
+  const payload = buildClaimsServiceExternalLinksPayload_(claimData, folderResult, linksToSave);
+  const result = saveInsuranceIntakeExternalLinks_(claimData, folderResult);
+
+  Logger.log(JSON.stringify({
+    payload: payload,
+    result: result
+  }, null, 2));
+
+  return {
+    payload: payload,
+    result: result
+  };
 }
 
 /**

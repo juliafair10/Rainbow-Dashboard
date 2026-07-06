@@ -105,6 +105,291 @@ function updateExternalLink(externalLinkId, updates) {
   );
 }
 
+/**
+ * Claims Service intake adapter for Insurance Intake external links.
+ *
+ * Accepts the wide-format payload produced by insurance-intake-automation
+ * and upserts it into the existing External_Links wide schema. This keeps
+ * Claims Service as the canonical writer without changing the current sheet
+ * structure during the migration.
+ *
+ * @param {Object} payload Intake link payload from insurance-intake-automation.
+ * @returns {Object} Structured service response.
+ */
+function saveIntakeExternalLinks(payload) {
+  payload = payload || {};
+
+  const cleanPayload = normalizeIntakeExternalLinksPayload_(payload);
+  const warnings = [];
+
+  if (!cleanPayload.claimId && !cleanPayload.jobNumber && !cleanPayload.claimNumber) {
+    return validationErrorResponse(['At least one identifier is required: claimId, jobNumber, or claimNumber.']);
+  }
+
+  if (cleanPayload.nonBlankLinkTypes.length === 0) {
+    warnings.push('No external link URLs were provided. No External_Links row was created or updated.');
+    writeServiceLog('saveIntakeExternalLinks', 'Skipped', 'No intake external links provided.', {
+      claimId: cleanPayload.claimId,
+      jobNumber: cleanPayload.jobNumber,
+      claimNumber: cleanPayload.claimNumber,
+      source: cleanPayload.source
+    });
+
+    return successResponse({
+      mode: 'wide-upsert',
+      wroteToDatabase: false,
+      claimId: cleanPayload.claimId,
+      jobNumber: cleanPayload.jobNumber,
+      claimNumber: cleanPayload.claimNumber,
+      carrier: cleanPayload.carrier,
+      submittedLinks: cleanPayload.submittedLinks,
+      linkTypesReceived: cleanPayload.nonBlankLinkTypes,
+      createdCount: 0,
+      updatedCount: 0,
+      skippedCount: 1,
+      matchedRow: null,
+      warnings: warnings
+    }, 'No external link URLs were provided.');
+  }
+
+  const ss = SpreadsheetApp.openById(CLAIMS_DATABASE_SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CLAIM_SHEET_NAMES.externalLinks);
+
+  if (!sheet) {
+    return errorResponse('External_Links sheet not found.', {
+      sheetName: CLAIM_SHEET_NAMES.externalLinks
+    });
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headerRowIndex = values.length ? findElhHeaderRowIndex_(values) : 0;
+  const headers = values.length ? values[headerRowIndex] : [];
+  const columnMap = buildIntakeExternalLinksWideColumnMap_(headers);
+
+  const requiredColumnKeys = ['claimId', 'jobNumber', 'claimNumber'];
+  const missingIdentityColumns = requiredColumnKeys.filter(function(key) {
+    return columnMap[key] === -1;
+  });
+
+  if (missingIdentityColumns.length === requiredColumnKeys.length) {
+    return errorResponse('External_Links sheet is missing identity columns.', {
+      missingIdentityColumns: missingIdentityColumns,
+      headers: headers
+    });
+  }
+
+  const rowPayload = buildIntakeExternalLinksWideRowPayload_(cleanPayload, columnMap);
+  const matchedRow = findMatchingIntakeExternalLinksWideRow_(values, headerRowIndex, columnMap, cleanPayload);
+  const allowCreate = payload.allowCreate !== false && payload.preventCreate !== true;
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+  let changedColumns = [];
+  let sheetRowNumber = null;
+
+  if (matchedRow) {
+    sheetRowNumber = matchedRow.sheetRowNumber;
+    changedColumns = updateIntakeExternalLinksWideRow_(sheet, sheetRowNumber, values[matchedRow.rowIndex], rowPayload, columnMap);
+
+    if (changedColumns.length > 0) {
+      updatedCount = 1;
+    } else {
+      skippedCount = 1;
+    }
+  } else if (allowCreate) {
+    const newRow = headers.map(function() { return ''; });
+
+    Object.keys(rowPayload).forEach(function(key) {
+      const columnIndex = columnMap[key];
+      if (columnIndex !== -1 && rowPayload[key]) {
+        newRow[columnIndex] = rowPayload[key];
+      }
+    });
+
+    sheet.appendRow(newRow);
+    sheetRowNumber = sheet.getLastRow();
+    createdCount = 1;
+    changedColumns = Object.keys(rowPayload).filter(function(key) {
+      return columnMap[key] !== -1 && !!rowPayload[key];
+    });
+  } else {
+    skippedCount = 1;
+    warnings.push('Shadow mode: no matching row found, so no row was created.');
+  }
+
+  if (createdCount || updatedCount) {
+    SpreadsheetApp.flush();
+  }
+
+  writeServiceLog('saveIntakeExternalLinks', createdCount ? 'Created' : (updatedCount ? 'Updated' : 'Skipped'), 'Intake external links wide upsert completed.', {
+    claimId: cleanPayload.claimId,
+    jobNumber: cleanPayload.jobNumber,
+    claimNumber: cleanPayload.claimNumber,
+    carrier: cleanPayload.carrier,
+    source: cleanPayload.source,
+    linkTypesReceived: cleanPayload.nonBlankLinkTypes.join(', '),
+    createdCount: createdCount,
+    updatedCount: updatedCount,
+    skippedCount: skippedCount,
+    sheetRowNumber: sheetRowNumber,
+    changedColumns: changedColumns.join(', ')
+  });
+
+  return successResponse({
+    mode: 'wide-upsert',
+    wroteToDatabase: !!(createdCount || updatedCount),
+    claimId: cleanPayload.claimId,
+    jobNumber: cleanPayload.jobNumber,
+    claimNumber: cleanPayload.claimNumber,
+    carrier: cleanPayload.carrier,
+    submittedLinks: cleanPayload.submittedLinks,
+    linkTypesReceived: cleanPayload.nonBlankLinkTypes,
+    createdCount: createdCount,
+    updatedCount: updatedCount,
+    skippedCount: skippedCount,
+    matchedRow: matchedRow ? {
+      sheetRowNumber: matchedRow.sheetRowNumber,
+      matchedBy: matchedRow.matchedBy
+    } : null,
+    sheetRowNumber: sheetRowNumber,
+    changedColumns: changedColumns,
+    allowCreate: allowCreate,
+    warnings: warnings
+  }, createdCount ? 'Intake external links row created.' : (updatedCount ? 'Intake external links row updated.' : 'Intake external links row already current.'));
+}
+
+function normalizeIntakeExternalLinksPayload_(payload) {
+  const submittedLinks = {
+    fusionUrl: normalizeString(payload.fusionUrl || payload.Fusion_URL || payload['Fusion URL'] || ''),
+    fusionJobId: normalizeString(payload.fusionJobId || payload.Fusion_Job_ID || payload['Fusion Job ID'] || ''),
+    driveFolder: normalizeString(payload.driveFolder || payload.driveFolderUrl || payload.Drive_Folder || payload['Drive Folder'] || ''),
+    xactAnalysis: normalizeString(payload.xactAnalysis || payload.XactAnalysis || payload.Xactimate || payload['XactAnalysis'] || ''),
+    symbility: normalizeString(payload.symbility || payload.Symbility || ''),
+    claimX: normalizeString(payload.claimX || payload.ClaimX || ''),
+    otherLinks: normalizeString(payload.otherLinks || payload.Other_Links || payload['Other Links'] || '')
+  };
+
+  return {
+    claimId: normalizeString(payload.claimId || payload.Claim_ID || payload['Claim ID'] || ''),
+    jobNumber: normalizeString(payload.jobNumber || payload.Job_Number || payload['Job Number'] || ''),
+    claimNumber: normalizeString(payload.claimNumber || payload.Claim_Number || payload['Claim Number'] || ''),
+    carrier: normalizeString(payload.carrier || payload.Carrier || ''),
+    source: normalizeString(payload.source || payload.Source_System || payload.Source || 'Insurance Intake'),
+    submittedLinks: submittedLinks,
+    nonBlankLinkTypes: Object.keys(submittedLinks).filter(function(key) {
+      return !!submittedLinks[key];
+    })
+  };
+}
+
+function buildIntakeExternalLinksWideColumnMap_(headers) {
+  const normalized = headers.map(function(header) {
+    return normalizeElhName_(header);
+  });
+
+  return {
+    claimId: normalized.indexOf('claimid'),
+    jobNumber: normalized.indexOf('jobnumber'),
+    fusionUrl: normalized.indexOf('fusionurl'),
+    fusionJobId: normalized.indexOf('fusionjobid'),
+    driveFolder: normalized.indexOf('drivefolder'),
+    xactAnalysis: normalized.indexOf('xactanalysis'),
+    symbility: normalized.indexOf('symbility'),
+    claimX: normalized.indexOf('claimx'),
+    otherLinks: normalized.indexOf('otherlinks'),
+    claimNumber: normalized.indexOf('claimnumber'),
+    carrier: normalized.indexOf('carrier')
+  };
+}
+
+function buildIntakeExternalLinksWideRowPayload_(cleanPayload, columnMap) {
+  const rowPayload = {
+    claimId: cleanPayload.claimId,
+    jobNumber: cleanPayload.jobNumber,
+    fusionUrl: cleanPayload.submittedLinks.fusionUrl,
+    fusionJobId: cleanPayload.submittedLinks.fusionJobId,
+    driveFolder: cleanPayload.submittedLinks.driveFolder,
+    xactAnalysis: cleanPayload.submittedLinks.xactAnalysis,
+    symbility: cleanPayload.submittedLinks.symbility,
+    claimX: cleanPayload.submittedLinks.claimX,
+    otherLinks: cleanPayload.submittedLinks.otherLinks,
+    claimNumber: cleanPayload.claimNumber,
+    carrier: cleanPayload.carrier
+  };
+
+  Object.keys(rowPayload).forEach(function(key) {
+    if (columnMap[key] === -1) {
+      delete rowPayload[key];
+    }
+  });
+
+  return rowPayload;
+}
+
+function findMatchingIntakeExternalLinksWideRow_(values, headerRowIndex, columnMap, cleanPayload) {
+  const cleanClaimId = normalizeElhKey_(cleanPayload.claimId);
+  const cleanJobNumber = normalizeElhKey_(cleanPayload.jobNumber);
+  const cleanClaimNumber = normalizeElhKey_(cleanPayload.claimNumber);
+
+  for (let rowIndex = headerRowIndex + 1; rowIndex < values.length; rowIndex++) {
+    const row = values[rowIndex];
+    const rowClaimId = columnMap.claimId !== -1 ? normalizeElhKey_(row[columnMap.claimId]) : '';
+    const rowJobNumber = columnMap.jobNumber !== -1 ? normalizeElhKey_(row[columnMap.jobNumber]) : '';
+    const rowClaimNumber = columnMap.claimNumber !== -1 ? normalizeElhKey_(row[columnMap.claimNumber]) : '';
+
+    if (cleanClaimId && rowClaimId && cleanClaimId === rowClaimId) {
+      return {
+        rowIndex: rowIndex,
+        sheetRowNumber: rowIndex + 1,
+        matchedBy: 'claimId'
+      };
+    }
+
+    if (cleanJobNumber && rowJobNumber && cleanJobNumber === rowJobNumber) {
+      return {
+        rowIndex: rowIndex,
+        sheetRowNumber: rowIndex + 1,
+        matchedBy: 'jobNumber'
+      };
+    }
+
+    if (cleanClaimNumber && rowClaimNumber && cleanClaimNumber === rowClaimNumber) {
+      return {
+        rowIndex: rowIndex,
+        sheetRowNumber: rowIndex + 1,
+        matchedBy: 'claimNumber'
+      };
+    }
+  }
+
+  return null;
+}
+
+function updateIntakeExternalLinksWideRow_(sheet, sheetRowNumber, existingRow, rowPayload, columnMap) {
+  const changedColumns = [];
+
+  Object.keys(rowPayload).forEach(function(key) {
+    const columnIndex = columnMap[key];
+    const nextValue = rowPayload[key];
+
+    if (columnIndex === -1 || !nextValue) {
+      return;
+    }
+
+    const currentValue = normalizeString(existingRow[columnIndex] || '');
+
+    if (currentValue === nextValue) {
+      return;
+    }
+
+    sheet.getRange(sheetRowNumber, columnIndex + 1).setValue(nextValue);
+    changedColumns.push(key);
+  });
+
+  return changedColumns;
+}
+
 function normalizeExternalLinkUpdates_(updates) {
   const normalized = {};
   const raw = updates || {};
@@ -1010,4 +1295,149 @@ function testHardWriteExternalLinkRow() {
 
 function testGetExternalLinks() {
   return getExternalLinksForClaim('CLM-20260605-821496');
+}
+
+function testSaveIntakeExternalLinks_createOrSkip() {
+  const result = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-STUB',
+    jobNumber: 'TEST-JOB-001',
+    claimNumber: 'TEST-CLAIM-001',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/test',
+    fusionUrl: 'https://example.com/fusion/test',
+    xactAnalysis: 'https://example.com/xact/test'
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveIntakeExternalLinks_duplicateLink() {
+  const first = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-DUPE',
+    jobNumber: 'TEST-JOB-DUPE',
+    claimNumber: 'TEST-CLAIM-DUPE',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Duplicate Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/dupe',
+    fusionUrl: 'https://example.com/fusion/dupe'
+  });
+
+  const second = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-DUPE',
+    jobNumber: 'TEST-JOB-DUPE',
+    claimNumber: 'TEST-CLAIM-DUPE',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Duplicate Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/dupe',
+    fusionUrl: 'https://example.com/fusion/dupe'
+  });
+
+  const result = {
+    first: first,
+    second: second,
+    passed: !!(
+      second &&
+      second.success === true &&
+      second.data &&
+      second.data.createdCount === 0 &&
+      second.data.updatedCount === 0 &&
+      second.data.skippedCount === 1
+    )
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveIntakeExternalLinks_missingClaimIdButClaimNumberPresent() {
+  const result = saveIntakeExternalLinks({
+    jobNumber: 'TEST-JOB-NO-CLAIM-ID',
+    claimNumber: 'TEST-CLAIM-NO-CLAIM-ID',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Missing Claim ID Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/no-claim-id',
+    fusionUrl: 'https://example.com/fusion/no-claim-id'
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveIntakeExternalLinks_missingUrl() {
+  const result = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-MISSING-URL',
+    jobNumber: 'TEST-JOB-MISSING-URL',
+    claimNumber: 'TEST-CLAIM-MISSING-URL',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Missing URL Test'
+  });
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveIntakeExternalLinks_updateExistingLink() {
+  const seed = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-UPDATE',
+    jobNumber: 'TEST-JOB-UPDATE',
+    claimNumber: 'TEST-CLAIM-UPDATE',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Update Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/update',
+    fusionUrl: 'https://example.com/fusion/update-v1'
+  });
+
+  const update = saveIntakeExternalLinks({
+    claimId: 'CLM-TEST-UPDATE',
+    jobNumber: 'TEST-JOB-UPDATE',
+    claimNumber: 'TEST-CLAIM-UPDATE',
+    carrier: 'Test Carrier',
+    source: 'Insurance Intake Update Test',
+    driveFolderUrl: 'https://drive.google.com/drive/folders/update',
+    fusionUrl: 'https://example.com/fusion/update-v2',
+    xactAnalysis: 'https://example.com/xact/update-v1'
+  });
+
+  const result = {
+    seed: seed,
+    update: update,
+    passed: !!(
+      update &&
+      update.success === true &&
+      update.data &&
+      update.data.createdCount === 0 &&
+      update.data.updatedCount === 1 &&
+      update.data.changedColumns &&
+      update.data.changedColumns.indexOf('fusionUrl') !== -1 &&
+      update.data.changedColumns.indexOf('xactAnalysis') !== -1
+    )
+  };
+
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+function testSaveIntakeExternalLinks_route() {
+  const response = routeClaimServiceRequest_({
+    parameter: {
+      action: 'saveIntakeExternalLinks'
+    },
+    postData: {
+      contents: JSON.stringify({
+        claimId: 'CLM-TEST-ROUTE',
+        jobNumber: 'TEST-JOB-ROUTE',
+        claimNumber: 'TEST-CLAIM-ROUTE',
+        carrier: 'Test Carrier',
+        source: 'Claims Service Route Test',
+        driveFolderUrl: 'https://drive.google.com/drive/folders/route',
+        fusionUrl: 'https://example.com/fusion/route'
+      })
+    }
+  }, 'POST');
+
+  const result = parseClaimsRouteTestResponse_(response);
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }

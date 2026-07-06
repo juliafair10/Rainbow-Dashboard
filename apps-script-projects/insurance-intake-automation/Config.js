@@ -62,6 +62,13 @@ const CONFIG = {
     dueString: 'in 3 days',
     priority: 3
   },
+  claimsService: {
+    enabled: true,
+    externalLinksShadowMode: true,
+    externalLinksPrimaryMode: false,
+    webAppUrlProperty: 'CLAIMS_SERVICE_WEB_APP_URL',
+    fallbackWebAppUrl: ''
+  },
   attachments: {
     detectionEnabled: true,
     loggingEnabled: true,

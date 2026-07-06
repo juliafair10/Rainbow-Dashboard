@@ -74,22 +74,44 @@ function getClaimDrawer(claimId) {
       hasActiveTracks: financialTrackPayload.hasActiveTracks
     },
 
-    recommendedDrawerActions: buildRecommendedDrawerActions_(claim)
+    recommendedDrawerActions: buildRecommendedDrawerActions_(claim, externalLinkPayload)
   };
 }
+var CLAIM_DRAWER_SUMMARY_CACHE_SECONDS = 60;
+
 function getClaimWorkspaceSummary_(claimId) {
+  var cache, cacheKey, cached, summary;
+  try {
+    cache = CacheService.getScriptCache();
+    cacheKey = 'drawerSummary:' + claimId;
+    cached = cache.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        // Ignore parse errors, proceed to fetch fresh
+      }
+    }
+  } catch (e) {
+    // Ignore cache errors
+  }
+
   try {
     var sheet = SpreadsheetApp
       .openById(CLAIMS_DATABASE_SPREADSHEET_ID)
       .getSheetByName('Claim_Summaries');
 
     if (!sheet) {
-      return {};
+      summary = {};
+      try { cache && cache.put(cacheKey, JSON.stringify(summary), CLAIM_DRAWER_SUMMARY_CACHE_SECONDS); } catch (e) {}
+      return summary;
     }
 
     var values = sheet.getDataRange().getValues();
     if (values.length < 2) {
-      return {};
+      summary = {};
+      try { cache && cache.put(cacheKey, JSON.stringify(summary), CLAIM_DRAWER_SUMMARY_CACHE_SECONDS); } catch (e) {}
+      return summary;
     }
 
     var headers = values[0];
@@ -121,32 +143,40 @@ function getClaimWorkspaceSummary_(claimId) {
 
     if (!match) {
       Logger.log('Claim_Summaries match not found for: ' + claimId);
-      return {};
+      summary = {};
+      try { cache && cache.put(cacheKey, JSON.stringify(summary), CLAIM_DRAWER_SUMMARY_CACHE_SECONDS); } catch (e) {}
+      return summary;
     }
 
-    return {
+    summary = {
       lastActivityDate: match['Last Activity Date'] || null,
       lastActivityType: match['Last Activity Type'] || '',
       lastActivitySummary: match['Last Activity Summary'] || '',
       timelineEventCount: Number(match['Timeline Event Count'] || 0),
       openComplianceActions: Number(match['Open Compliance Actions'] || 0)
     };
+    try { cache && cache.put(cacheKey, JSON.stringify(summary), CLAIM_DRAWER_SUMMARY_CACHE_SECONDS); } catch (e) {}
+    return summary;
   } catch (error) {
-    return {};
+    summary = {};
+    try { cache && cache.put(cacheKey, JSON.stringify(summary), CLAIM_DRAWER_SUMMARY_CACHE_SECONDS); } catch (e) {}
+    return summary;
   }
 }
 
 function getClaimSummaryById_(claimId) {
   var claims = ClaimsQueryService.getAllClaimSummaries({});
 
-  var matches = claims.filter(function(claim) {
-    return String(claim.claimId) === String(claimId);
-  });
+  for (var i = 0; i < claims.length; i++) {
+    if (String(claims[i].claimId) === String(claimId)) {
+      return claims[i];
+    }
+  }
 
-  return matches.length ? matches[0] : null;
+  return null;
 }
 
-function buildRecommendedDrawerActions_(claim) {
+function buildRecommendedDrawerActions_(claim, externalLinkPayload) {
   var actions = [];
 
   actions.push({
@@ -154,7 +184,7 @@ function buildRecommendedDrawerActions_(claim) {
     label: 'Open Full Claim Workspace'
   });
 
-  var externalLinkPayload = ClaimExternalLinkService.getClaimExternalLinks(claim.claimId);
+  externalLinkPayload = externalLinkPayload || { missingLinks: [] };
 
   if ((externalLinkPayload.missingLinks || []).length > 0) {
     actions.push({

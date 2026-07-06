@@ -4,20 +4,37 @@
  * Phase 9
  * Claim External Link Service
  */
+var EXTERNAL_LINK_CACHE_SECONDS = 60;
 
 function getClaimExternalLinks(claimId) {
   if (!claimId) {
     throw new Error('claimId is required');
   }
 
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'externalLinks:' + claimId;
+
+  try {
+    var cached = cache.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
+
   var links = getExternalLinksForClaim_(claimId);
 
-  return {
+  var result = {
     claimId: claimId,
     totalLinks: links.length,
     links: links,
     missingLinks: determineMissingLinks_(links)
   };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(result), EXTERNAL_LINK_CACHE_SECONDS);
+  } catch (e) {}
+
+  return result;
 }
 
 function getExternalLinksForClaim_(claimId) {

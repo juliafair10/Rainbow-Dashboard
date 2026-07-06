@@ -1,5 +1,16 @@
+var CLAIM_SUMMARY_CACHE_SECONDS = 60;
 function getAllClaimSummaries(options) {
   options = options || {};
+
+  var cacheKey = 'claimSummaries:' + (options.includeTerminal === true ? 'all' : 'active');
+  var cache = CacheService.getScriptCache();
+
+  try {
+    var cached = cache.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
 
   var sheet = getClaimsDatabaseSheet_();
   var values = sheet.getDataRange().getValues();
@@ -15,7 +26,7 @@ function getAllClaimSummaries(options) {
 
   var includeTerminal = options.includeTerminal === true;
 
-  return rows
+  var result = rows
     .map(function(row) {
       return normalizeClaimRow_(headers, row, activeConditionsByClaim, activeAlertsByClaim);
     })
@@ -33,6 +44,12 @@ function getAllClaimSummaries(options) {
     .sort(function(a, b) {
       return new Date(b.createdDate || 0) - new Date(a.createdDate || 0);
     });
+
+  try {
+    cache.put(cacheKey, JSON.stringify(result), CLAIM_SUMMARY_CACHE_SECONDS);
+  } catch (e) {}
+
+  return result;
 }
 
 function getClaimsDatabaseSheet_() {

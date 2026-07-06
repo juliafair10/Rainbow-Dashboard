@@ -2,6 +2,38 @@
  * Low-level Google Sheets helpers for claims-service.
  */
 
+var CLAIMS_READ_CACHE_SECONDS = 30;
+
+function getReadCache_() {
+  return CacheService.getScriptCache();
+}
+
+function getCachedJson_(key) {
+  try {
+    var value = getReadCache_().get(key);
+    return value ? JSON.parse(value) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function putCachedJson_(key, value) {
+  try {
+    getReadCache_().put(key, JSON.stringify(value), CLAIMS_READ_CACHE_SECONDS);
+  } catch (e) {
+    // Non-fatal.
+  }
+}
+
+function invalidateSheetCache_(sheetName) {
+  try {
+    getReadCache_().remove('headers:' + sheetName);
+    getReadCache_().remove('rows:' + sheetName);
+  } catch (e) {
+    // Non-fatal.
+  }
+}
+
 function getClaimFoundationSpreadsheet_() {
   return SpreadsheetApp.openById(CLAIM_SERVICE.spreadsheetId);
 }
@@ -32,6 +64,10 @@ function normalizeHeaders_(headers) {
 }
 
 function getHeaders(sheetName) {
+  const cached = getCachedJson_('headers:' + sheetName);
+  if (cached) {
+    return cached;
+  }
   const sheet = getSheet(sheetName);
   const lastColumn = sheet.getLastColumn();
 
@@ -39,10 +75,16 @@ function getHeaders(sheetName) {
     return [];
   }
 
-  return normalizeHeaders_(sheet.getRange(1, 1, 1, lastColumn).getValues()[0]);
+  const headers = normalizeHeaders_(sheet.getRange(1, 1, 1, lastColumn).getValues()[0]);
+  putCachedJson_('headers:' + sheetName, headers);
+  return headers;
 }
 
 function getRows(sheetName) {
+  const cached = getCachedJson_('rows:' + sheetName);
+  if (cached) {
+    return cached;
+  }
   const sheet = getSheet(sheetName);
   const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
@@ -54,9 +96,12 @@ function getRows(sheetName) {
   const headers = getHeaders(sheetName);
   const values = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
 
-  return values.map(function(row) {
+  const rows = values.map(function(row) {
     return objectFromHeaders_(headers, row);
   });
+
+  putCachedJson_('rows:' + sheetName, rows);
+  return rows;
 }
 
 function appendRow(sheetName, object) {
@@ -65,6 +110,7 @@ function appendRow(sheetName, object) {
   const values = valuesFromObject_(headers, object);
 
   sheet.appendRow(values);
+  invalidateSheetCache_(sheetName);
 
   return successResponse({
     sheetName: sheetName,
@@ -116,6 +162,7 @@ function updateRowByKey(sheetName, keyColumn, keyValue, updates) {
       const updatedValues = valuesFromObject_(headers, updatedObject);
 
       sheet.getRange(rowNumber, 1, 1, headers.length).setValues([updatedValues]);
+      invalidateSheetCache_(sheetName);
 
       return successResponse({
         sheetName: sheetName,

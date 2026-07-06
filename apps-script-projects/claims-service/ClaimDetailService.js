@@ -21,6 +21,13 @@ function getClaimDetail(claimId) {
     });
   }
 
+  function formatDetailTimingLabel_(label) {
+    return String(label || '')
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .replace(/_+/g, '_') || 'unknown';
+  }
+
   var timingStartedAt = new Date().getTime();
   var drawer = ClaimDrawerService.getClaimDrawer(claimId);
   markDetailTiming_('ClaimDrawerService.getClaimDrawer', timingStartedAt);
@@ -169,7 +176,18 @@ function getClaimDetail(claimId) {
   }));
 
   if (totalMs > 1000) {
-    Logger.log('CLAIM_DETAIL_SLOW ' + claimId + ' ' + totalMs + 'ms');
+    var slowParts = [
+      'CLAIM_DETAIL_SLOW',
+      'surface=getClaimDetail',
+      'claimId=' + claimId,
+      'total=' + totalMs
+    ];
+
+    detailTimings.forEach(function(timing) {
+      slowParts.push(formatDetailTimingLabel_(timing.label) + '=' + timing.ms + 'ms');
+    });
+
+    Logger.log(slowParts.join(' '));
   }
 
   return detail;
