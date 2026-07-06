@@ -33,7 +33,8 @@
       </div>
 
       <div class="rainbow-search-wrap">
-        <input id="homepageSearchInput" class="rainbow-search" type="search" placeholder="Search claims, customers, claim numbers..." />
+        <input id="homepageSearchInput" class="rainbow-search" type="search" placeholder="Search claims, customers, claim numbers..." autocomplete="off" />
+        <div id="homepageSearchResults" class="rainbow-search-results" style="display:none;"></div>
       </div>
     </header>
 
@@ -45,10 +46,6 @@
       <div class="rainbow-card rainbow-kpi-card">
         <div class="rainbow-card-label">Recent Activity Claims</div>
         <div class="rainbow-kpi-value" data-kpi="recentActivityClaims">—</div>
-      </div>
-      <div class="rainbow-card rainbow-kpi-card">
-        <div class="rainbow-card-label">Timeline Events</div>
-        <div class="rainbow-kpi-value" data-kpi="timelineEvents">—</div>
       </div>
       <div class="rainbow-card rainbow-kpi-card">
         <div class="rainbow-card-label">Open Compliance Actions</div>

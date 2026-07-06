@@ -4,8 +4,116 @@
 
   document.addEventListener('DOMContentLoaded', function() {
     bindHomepageNavRoutes();
+    bindHomepageSearch();
     loadHomepageData();
   });
+
+  function bindHomepageSearch() {
+    const input = document.getElementById('homepageSearchInput');
+    const results = document.getElementById('homepageSearchResults');
+
+    if (!input || !results) {
+      return;
+    }
+
+    let searchTimer = null;
+    let latestQueryToken = 0;
+
+    function runSearch(query) {
+      const trimmed = String(query || '').trim();
+
+      if (trimmed.length < 2) {
+        results.style.display = 'none';
+        results.innerHTML = '';
+        return;
+      }
+
+      const queryToken = ++latestQueryToken;
+      results.style.display = 'block';
+      results.innerHTML = '<div class="rainbow-search-result rainbow-search-empty">Searching…</div>';
+
+      google.script.run
+        .withSuccessHandler(function(response) {
+          // Ignore out-of-order responses from earlier keystrokes.
+          if (queryToken !== latestQueryToken) {
+            return;
+          }
+          renderHomepageSearchResults(response && response.results ? response.results : []);
+        })
+        .withFailureHandler(function() {
+          if (queryToken !== latestQueryToken) {
+            return;
+          }
+          results.innerHTML = '<div class="rainbow-search-result rainbow-search-empty">Search failed. Try again.</div>';
+        })
+        .searchHomepageClaims(trimmed);
+    }
+
+    function renderHomepageSearchResults(items) {
+      if (!items || !items.length) {
+        results.innerHTML = '<div class="rainbow-search-result rainbow-search-empty">No matching claims.</div>';
+        return;
+      }
+
+      results.innerHTML = items.map(function(item) {
+        const subtitle = [item.claimNumber || item.jobNumber || '', item.propertyAddress || '']
+          .filter(Boolean).join(' • ');
+        const badge = item.isActive ? '' : ' <span class="rainbow-search-badge">Closed</span>';
+
+        return [
+          '<a class="rainbow-search-result" href="javascript:void(0)" ',
+          'data-search-claim-id="', escapeHtml(item.claimId), '">',
+          '<span class="rainbow-search-result-title">', escapeHtml(item.customerName || item.claimId), badge, '</span>',
+          subtitle ? '<span class="rainbow-search-result-sub">' + escapeHtml(subtitle) + '</span>' : '',
+          '</a>'
+        ].join('');
+      }).join('');
+
+      results.querySelectorAll('[data-search-claim-id]').forEach(function(el) {
+        el.addEventListener('click', function() {
+          const claimId = el.getAttribute('data-search-claim-id') || '';
+          if (claimId) {
+            navigateToRainbowRoute_('?view=fullClaim&claimId=' + encodeURIComponent(claimId));
+          }
+        });
+      });
+    }
+
+    input.addEventListener('input', function() {
+      const value = input.value;
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+      }
+      searchTimer = setTimeout(function() {
+        runSearch(value);
+      }, 220);
+    });
+
+    input.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        results.style.display = 'none';
+      }
+
+      // Enter opens the first result, if any.
+      if (event.key === 'Enter') {
+        const first = results.querySelector('[data-search-claim-id]');
+        if (first) {
+          event.preventDefault();
+          const claimId = first.getAttribute('data-search-claim-id') || '';
+          if (claimId) {
+            navigateToRainbowRoute_('?view=fullClaim&claimId=' + encodeURIComponent(claimId));
+          }
+        }
+      }
+    });
+
+    // Hide the dropdown when clicking elsewhere.
+    document.addEventListener('click', function(event) {
+      if (event.target !== input && !results.contains(event.target)) {
+        results.style.display = 'none';
+      }
+    });
+  }
 
   function bindHomepageNavRoutes() {
     document.querySelectorAll('[data-homepage-route]').forEach(function(button) {
@@ -180,7 +288,6 @@
 
     setKpiValue('activeClaims', activeClaims);
     setKpiValue('recentActivityClaims', kpis.recentActivityClaims || homepageData.recentActivityClaimCount || homepageData.recentActivityClaims || 0);
-    setKpiValue('timelineEvents', kpis.timelineEvents || homepageData.timelineEventCount || homepageData.timelineEventsCount || 0);
     setKpiValue('openComplianceActions', kpis.openComplianceActions || homepageData.openComplianceActionCount || homepageData.openComplianceActionsCount || 0);
   }
 
@@ -483,9 +590,13 @@
 
     const groupedAlerts = buildHomepageOperationalAlertGroups_(alertItems);
 
+    const ALERT_GROUP_VISIBLE_LIMIT = 3;
+
     container.innerHTML = groupedAlerts.map(function(group, groupIndex) {
-      const visibleItems = group.items.slice(0, 3);
-      const hiddenCount = Math.max(group.items.length - visibleItems.length, 0);
+      // Render every item; items beyond the visible limit start hidden and are
+      // revealed by the "+X more" toggle so the full blocker list is reachable.
+      const visibleItems = group.items;
+      const hiddenCount = Math.max(group.items.length - ALERT_GROUP_VISIBLE_LIMIT, 0);
 
       return [
         '<div class="rainbow-alert-group rainbow-alert-group--' + escapeHtml(group.groupId) + '">',
@@ -510,13 +621,17 @@
           const alertType = item.alertType || item.alertCategory || 'Alert';
           const reason = item.reason || item.recommendedAction || alertType;
           const action = getHomepageAlertActionText_(item);
-          const rowClass = isNavigable
+          const isHidden = itemIndex >= ALERT_GROUP_VISIBLE_LIMIT;
+          const rowClass = (isNavigable
             ? 'rainbow-alert-mini-row rainbow-alert-mini-row--clickable'
-            : 'rainbow-alert-mini-row';
+            : 'rainbow-alert-mini-row') + (isHidden ? ' rainbow-alert-mini-row--collapsed' : '');
+          const hiddenAttr = isHidden
+            ? ' data-alert-group-hidden="' + groupIndex + '" style="display:none;"'
+            : '';
           const href = isNavigable ? buildRainbowAbsoluteUrl_(item.targetRoute) : '';
           const openTag = isNavigable
-            ? '<a class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '">'
-            : '<div class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '">';
+            ? '<a class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '" href="javascript:void(0)" data-target-url="' + escapeHtml(href) + '"' + hiddenAttr + '>'
+            : '<div class="' + rowClass + '" data-homepage-alert-index="' + navigationIndex + '"' + hiddenAttr + '>';
           const closeTag = isNavigable ? '</a>' : '</div>';
 
           return [
@@ -529,7 +644,7 @@
             closeTag
           ].join('');
         }).join(''),
-        hiddenCount > 0 ? '<div class="rainbow-alert-group-more">+' + hiddenCount + ' more in this group</div>' : '',
+        hiddenCount > 0 ? '<button type="button" class="rainbow-alert-group-more" data-alert-expand-group="' + groupIndex + '">+' + hiddenCount + ' more in this group</button>' : '',
         '</div>',
         '</div>'
       ].join('');
@@ -643,8 +758,24 @@
     const alertLookup = {};
 
     groupedAlerts.forEach(function(group, groupIndex) {
-      group.items.slice(0, 3).forEach(function(item, itemIndex) {
+      group.items.forEach(function(item, itemIndex) {
         alertLookup[groupIndex + '-' + itemIndex] = item;
+      });
+    });
+
+    // "+X more" toggles: reveal the collapsed rows in that group and remove the button.
+    container.querySelectorAll('[data-alert-expand-group]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const groupIndex = button.getAttribute('data-alert-expand-group');
+        container.querySelectorAll('[data-alert-group-hidden="' + groupIndex + '"]').forEach(function(row) {
+          row.style.display = '';
+          row.classList.remove('rainbow-alert-mini-row--collapsed');
+        });
+
+        button.parentNode.removeChild(button);
       });
     });
 

@@ -435,16 +435,36 @@
       return;
     }
 
-    const items = ['insuranceIntake', 'asbestos', 'itel']
+    const allItems = ['insuranceIntake', 'asbestos', 'itel']
       .map(function(key) { return workflows[key]; })
       .filter(function(item) { return !!item; });
 
-    if (!items.length) {
+    if (!allItems.length) {
       container.innerHTML = '<div class="intake-empty-state">No workflow health returned.</div>';
       return;
     }
 
-    container.innerHTML = items.map(function(workflow) {
+    // Reduce noise: only surface workflows that need attention (Warning /
+    // Critical / Unavailable). Healthy workflows are hidden by default and
+    // summarized in a single line so the workspace highlights problems only.
+    const isHealthyWorkflow = function(workflow) {
+      return String(workflow.health || '').toLowerCase() === 'healthy';
+    };
+    const items = allItems.filter(function(workflow) { return !isHealthyWorkflow(workflow); });
+    const healthyCount = allItems.length - items.length;
+
+    if (!items.length) {
+      container.innerHTML = '<div class="intake-empty-state intake-empty-state-healthy">' +
+        'All ' + allItems.length + ' intake workflows healthy.</div>';
+      return;
+    }
+
+    const healthyNote = healthyCount > 0
+      ? '<div class="intake-workflow-healthy-note">' + healthyCount +
+        ' healthy workflow' + (healthyCount === 1 ? '' : 's') + ' hidden.</div>'
+      : '';
+
+    container.innerHTML = healthyNote + items.map(function(workflow) {
       return [
         '<article class="intake-workflow-row">',
           '<div>',

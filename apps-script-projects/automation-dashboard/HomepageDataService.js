@@ -318,6 +318,64 @@ function getHomepageKpis() {
   return getHomepageClaimSummaryData().kpis;
 }
 
+/**
+ * Homepage search endpoint.
+ *
+ * Reads the Claims sheet live and returns claims matching the query across
+ * customer name, claim number, claim ID, job number, and property address.
+ * The homepage search bar calls this via google.script.run and navigates to
+ * the selected claim's Full Claim Workspace.
+ */
+function searchHomepageClaims(query) {
+  var normalizedQuery = String(query || '').trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return { success: true, query: '', results: [] };
+  }
+
+  var claims = getHomepageSheetRows_(HOMEPAGE_CLAIM_SHEET_NAMES.claims).map(normalizeHomepageClaim_);
+
+  var results = claims.filter(function(claim) {
+    var haystack = [
+      claim.Customer_Name,
+      claim.Display_Name,
+      claim.Claim_Number,
+      claim.Claim_ID,
+      claim.Job_Number,
+      claim.Property_Address
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    return haystack.indexOf(normalizedQuery) !== -1;
+  }).map(function(claim) {
+    return {
+      claimId: claim.Claim_ID || '',
+      customerName: claim.Customer_Name || claim.Display_Name || '',
+      claimNumber: claim.Claim_Number || '',
+      jobNumber: claim.Job_Number || '',
+      propertyAddress: claim.Property_Address || '',
+      lifecycleState: claim.Lifecycle_State || '',
+      healthLevel: getHomepageClaimHealthLevel_(claim, 'Not Evaluated'),
+      isActive: isHomepageActiveClaim_(claim),
+      displayLabel: getHomepageClaimDisplayName_(claim),
+      targetRoute: buildHomepageTargetRoute_('claim', claim.Claim_ID || '')
+    };
+  }).filter(function(result) {
+    return !!result.claimId;
+  }).sort(function(a, b) {
+    // Active claims first, then alphabetical by customer name.
+    if (a.isActive !== b.isActive) {
+      return a.isActive ? -1 : 1;
+    }
+    return String(a.customerName).localeCompare(String(b.customerName));
+  }).slice(0, 15);
+
+  return {
+    success: true,
+    query: query,
+    results: results
+  };
+}
+
 function getHomepageSheetRows_(sheetName) {
   const ss = SpreadsheetApp.openById(HOMEPAGE_CLAIM_FOUNDATION_SPREADSHEET_ID);
   const sheet = ss.getSheetByName(sheetName);
@@ -1437,12 +1495,33 @@ function getHomepageRecentActivity_(claims, timeline) {
     }
   });
 
+  // Collapse noisy duplicate EOJ activity. The EOJ interpreter writes both an
+  // "EOJ Submitted" event and a visit-specific event per submission, so a single
+  // claim can produce several near-identical EOJ rows. Keep only the most recent
+  // EOJ event per claim; non-EOJ events pass through unchanged.
+  const seenEojClaimIds = {};
+
   return (timeline || []).filter(function(event) {
     return event.Claim_ID && activeClaimIds[event.Claim_ID];
   }).sort(function(a, b) {
     const aDate = new Date(a.Event_Date || a.Created_At || 0).getTime();
     const bDate = new Date(b.Event_Date || b.Created_At || 0).getTime();
     return bDate - aDate;
+  }).filter(function(event) {
+    const haystack = String(event.Event_Type || '') + ' ' +
+      String(event.Summary || '') + ' ' +
+      String(event.Related_Workflow || '');
+
+    if (haystack.toLowerCase().indexOf('eoj') === -1) {
+      return true;
+    }
+
+    if (seenEojClaimIds[event.Claim_ID]) {
+      return false;
+    }
+
+    seenEojClaimIds[event.Claim_ID] = true;
+    return true;
   }).slice(0, 8).map(function(event) {
     const claim = claimMap[event.Claim_ID] || {};
 
@@ -2017,8 +2096,8 @@ function buildHomepageAwarenessPriorityCards_(claims) {
       'Follow-Ups Due',
       'medium',
       'Claims that are stale or have exceeded the 14-day follow-up threshold.',
-      '',
-      '?view=claimShell',
+      'needsAttention',
+      '?view=claimShell&lensId=needsAttention',
       claims,
       function(c) {
         return c.staleRisk === true || (c.daysSinceMeaningfulActivity || 0) > 14;
@@ -2073,8 +2152,8 @@ function buildHomepageAwarenessPriorityCards_(claims) {
       'Operational Alerts',
       'medium',
       'Claims with one or more active operational alerts.',
-      '',
-      '?view=claimShell',
+      'needsAttention',
+      '?view=claimShell&lensId=needsAttention',
       claims,
       function(c) {
         return (c.alertCount || 0) > 0;

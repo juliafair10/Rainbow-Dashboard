@@ -67,7 +67,7 @@ Grant the fresh chat access to the repo root: `/Users/JuliaFair/Rainbow-Dashboar
 - **11D** — intake automation-grid execution cards run in-process via `runDashboardAutomation` dispatch; flag `USE_INTERNAL_INTAKE_MODULE` (default true). `runAutomation` untouched.
 - **EOJ visibility detour** — Extension Poles, tomorrow's-calendar question, history expansion, full Google Chat report. Needs `repairEOJLogColumns()` run after deploy.
 
-**Deployment status:** 11C, 11D, and the EOJ detour are **coded on disk but not yet pushed/deployed**. The working tree has a large uncommitted pile (11A–11D + EOJ) and a stale `.git/index.lock`. See the issue tracker (`Rainbow_Systems_Check_Issue_Tracker.xlsx`) for the full open list. **11.5A should assume none of these are live yet unless verified.**
+**Deployment status:** 11A–11D + the EOJ detour are **committed to git** (as of 2026-07-06). They are **not yet `clasp push`ed / redeployed** to the live Apps Script projects, so a commit ≠ live. See the issue tracker (`Rainbow_Systems_Check_Issue_Tracker.xlsx`) for the open list. **11.5A should still assume none of these are live in the deployed web apps unless verified via the `/dev` URL or a fresh deployment.**
 
 ---
 
@@ -135,4 +135,4 @@ Other constraints (from the prompt): no UI redesign, no new architecture, no cac
 - After changes: `clasp push` the `automation-dashboard` project, then **redeploy the web app** (or use `/dev`) — otherwise nothing appears.
 - The homepage reads the Claims DB sheets directly (`getHomepageSheetRows_`), so "current data" means live sheet reads; confirm no stale source.
 - Keep `USE_CLAIMS_SERVICE_EXTERNAL_LINKS` and `USE_INTERNAL_INTAKE_MODULE` as-is unless the phase explicitly requires otherwise; 11.5A is stabilization, not a flip.
-- Consider committing the outstanding 11A–11D + EOJ work first (clear the stale `.git/index.lock`) so 11.5A changes land on a clean boundary.
+- 11A–11D + EOJ are already committed, so 11.5A changes land on a clean boundary. Remaining gate is deployment (`clasp push` + web-app redeploy), not commits.
